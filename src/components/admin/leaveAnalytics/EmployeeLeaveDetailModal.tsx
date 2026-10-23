@@ -413,22 +413,7 @@ export const EmployeeLeaveDetailModal: React.FC<EmployeeLeaveDetailModalProps> =
                       {/* Multi-Tier Approval Chain Status */}
                       <div className="pt-2 border-t border-slate-800/40 flex flex-wrap items-center gap-2 text-[10px]">
                         <span className="text-slate-500 uppercase font-bold tracking-wider mr-1">Approvals:</span>
-                        
-                        <span className={`px-2 py-0.5 rounded-md border font-bold ${
-                          req.pmStatus === 'Approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                          req.pmStatus === 'Rejected' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                          'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}>
-                          PM: {req.pmStatus || 'N/A'}
-                        </span>
 
-                        <span className={`px-2 py-0.5 rounded-md border font-bold ${
-                          req.hrStatus === 'Approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
-                          req.hrStatus === 'Rejected' ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
-                          'bg-slate-800 text-slate-400 border-slate-700'
-                        }`}>
-                          HR: {req.hrStatus || 'N/A'}
-                        </span>
 
                         <span className={`px-2 py-0.5 rounded-md border font-bold ${
                           req.ceoStatus === 'Approved' ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :

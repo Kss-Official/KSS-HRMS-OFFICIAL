@@ -1,4 +1,5 @@
 import React, { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
+import { toast } from 'sonner';
 import { shouldRunMonthlyAutoCredit, setMonthlyCreditLatch, runMonthlyAutoCredit, getMonthKey } from '../lib/leaveBalanceService';
 import { User, signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
 import {
@@ -559,23 +560,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
     return base.map((r: any) => {
-      const isApplicantPmOrHr = r.employeeRole === 'PROJECT_MANAGER' || r.employeeRole === 'HR_ADMIN' ||
-        (r.department || '').toLowerCase().includes('hr') ||
-        (r.employeeName || '').toLowerCase().includes('koushik') ||
-        (r.employeeName || '').toLowerCase().includes('abhinaya');
+      // In the new hierarchy (Employee -> CEO -> CTO), approval requires CEO and CTO.
+      // Rejection at any stage terminates the request.
+      const ceoStatus = r.ceoStatus || (r.status === 'Pending' ? 'Pending' : 'N/A');
+      const ctoStatus = r.ctoStatus || (ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
+      const pmStatus = r.pmStatus || 'N/A';
+      const hrStatus = r.hrStatus || 'N/A';
+      let status: 'Pending' | 'Approved' | 'Rejected' | 'Cancelled' = r.status || 'Pending';
 
-      let pmStatus = isApplicantPmOrHr ? 'N/A' : (r.pmStatus || 'Pending');
-      let hrStatus = isApplicantPmOrHr ? 'N/A' : (r.hrStatus || (pmStatus === 'Approved' ? 'Pending' : 'Waiting PM'));
-      let ceoStatus = r.ceoStatus || (isApplicantPmOrHr ? 'Pending' : (hrStatus === 'Approved' ? 'Pending' : 'Waiting HR'));
-      let ctoStatus = r.ctoStatus || (ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
-      let status: 'Pending' | 'Approved' | 'Rejected' = r.status || 'Pending';
+      const isCeoPassed = ceoStatus === 'Approved' || ceoStatus === 'N/A' || ceoStatus === 'Bypassed';
+      const isCtoPassed = ctoStatus === 'Approved' || ctoStatus === 'N/A' || ctoStatus === 'Bypassed';
 
-      const isPmPassed = pmStatus === 'Approved' || pmStatus === 'N/A';
-      const isHrPassed = hrStatus === 'Approved' || hrStatus === 'N/A';
-
-      if (pmStatus === 'Rejected' || hrStatus === 'Rejected' || ceoStatus === 'Rejected' || ctoStatus === 'Rejected' || r.status === 'Rejected') {
+      if (r.status === 'Cancelled') {
+        status = 'Cancelled';
+      } else if (
+        r.status === 'Rejected' ||
+        ceoStatus === 'Rejected' ||
+        ctoStatus === 'Rejected' ||
+        pmStatus === 'Rejected' ||
+        hrStatus === 'Rejected'
+      ) {
         status = 'Rejected';
-      } else if (isPmPassed && isHrPassed && ceoStatus === 'Approved' && ctoStatus === 'Approved') {
+      } else if (r.status === 'Approved' || (isCeoPassed && isCtoPassed && ceoStatus === 'Approved' && ctoStatus === 'Approved')) {
         status = 'Approved';
       } else {
         status = 'Pending';
@@ -1442,7 +1448,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
               }
 
-              // LIVE AUTOCORRECT SATYA RANJAN DAS (Software Engineer designation & Software Engineer employmentType)
+              // LIVE AUTOCORRECT SATYA RANJAN DAS (Software Engineer designation & Employee employmentType)
               const isSatyaLiveRecord =
                 data.id === 'emp-KSS2407012' ||
                 data.id === 'emp-1785997525850' ||
@@ -1454,15 +1460,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   data.designation = 'Software Engineer';
                   satyaChanged = true;
                 }
-                if (data.employmentType !== 'Software Engineer') {
-                  data.employmentType = 'Software Engineer';
+                if (data.employmentType !== 'Employee') {
+                  data.employmentType = 'Employee';
                   satyaChanged = true;
                 }
                 if (satyaChanged && canMigrate && !migratedEmployeeIds.has(`satya-live-${data.id}`)) {
                   migratedEmployeeIds.add(`satya-live-${data.id}`);
                   setDoc(doc(db, 'employees', data.id), {
                     designation: 'Software Engineer',
-                    employmentType: 'Software Engineer',
+                    employmentType: 'Employee',
                     updatedAt: serverTimestamp()
                   }, { merge: true }).catch(() => { });
                 }
@@ -2051,21 +2057,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 return;
               }
 
-              const isApplicantPmOrHr = raw.employeeRole === 'PROJECT_MANAGER' ||
-                raw.employeeRole === 'HR_ADMIN' ||
-                raw.employeeRole === 'SUPER_ADMIN' ||
-                (raw.department || '').toLowerCase().includes('hr') ||
-                (raw.department || '').toLowerCase().includes('management') ||
-                (raw.employeeName || '').toLowerCase().includes('koushik') ||
-                (raw.employeeName || '').toLowerCase().includes('abhinaya');
-
-              const pmStatus = isApplicantPmOrHr ? 'N/A' : (raw.pmStatus || 'Pending');
-              const hrStatus = isApplicantPmOrHr ? 'N/A' : (raw.hrStatus || (pmStatus === 'Approved' ? 'Pending' : 'Waiting PM'));
-              const ceoStatus = raw.ceoStatus || (isApplicantPmOrHr ? 'Pending' : (hrStatus === 'Approved' ? 'Pending' : 'Waiting HR'));
+              const ceoStatus = raw.ceoStatus || (raw.status === 'Pending' ? 'Pending' : 'N/A');
               const ctoStatus = raw.ctoStatus || (ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
+              const pmStatus = raw.pmStatus || 'N/A';
+              const hrStatus = raw.hrStatus || 'N/A';
 
-              const isPmPassed = pmStatus === 'Approved' || pmStatus === 'N/A' || pmStatus === 'Bypassed';
-              const isHrPassed = hrStatus === 'Approved' || hrStatus === 'N/A' || hrStatus === 'Bypassed';
               const isCeoPassed = ceoStatus === 'Approved' || ceoStatus === 'N/A' || ceoStatus === 'Bypassed';
               const isCtoPassed = ctoStatus === 'Approved' || ctoStatus === 'N/A' || ctoStatus === 'Bypassed';
 
@@ -2073,14 +2069,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               if (raw.status === 'Cancelled') {
                 status = 'Cancelled';
               } else if (
-                pmStatus === 'Rejected' || 
-                hrStatus === 'Rejected' || 
+                raw.status === 'Rejected' || 
                 ceoStatus === 'Rejected' || 
                 ctoStatus === 'Rejected' || 
-                raw.status === 'Rejected'
+                pmStatus === 'Rejected' || 
+                hrStatus === 'Rejected'
               ) {
                 status = 'Rejected';
-              } else if (isPmPassed && isHrPassed && isCeoPassed && isCtoPassed) {
+              } else if (raw.status === 'Approved' || (isCeoPassed && isCtoPassed && ceoStatus === 'Approved' && ctoStatus === 'Approved')) {
                 status = 'Approved';
               } else {
                 status = 'Pending';
@@ -2489,22 +2485,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setDoc(doc(db, 'employees', e.id), { earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
         }
       } else if (isSatya) {
-        // Satya Ranjan Das: EL=3, SL=1, WFH=0 (Sep, Oct, Nov credited), Software Engineer & Software Engineer
+        // Satya Ranjan Das: EL=3, SL=1, WFH=0 (Sep, Oct, Nov credited), Software Engineer & Employee
         const needsEl = typeof e.earnLeaveBalance !== 'number' || e.earnLeaveBalance < 3;
         const needsSl = typeof e.sickLeaveBalance !== 'number';
         const needsDesig = e.designation !== 'Software Engineer';
-        const needsEmpType = e.employmentType !== 'Software Engineer';
+        const needsEmpType = e.employmentType !== 'Employee';
         if (needsEl || needsSl || needsDesig || needsEmpType) {
           e.earnLeaveBalance = 3;
           if (needsSl) e.sickLeaveBalance = 1;
           e.designation = 'Software Engineer';
-          e.employmentType = 'Software Engineer';
+          e.employmentType = 'Employee';
           changed = true;
           setDoc(doc(db, 'employees', e.id), { 
             earnLeaveBalance: 3, 
             sickLeaveBalance: e.sickLeaveBalance, 
             designation: 'Software Engineer',
-            employmentType: 'Software Engineer',
+            employmentType: 'Employee',
             updatedAt: serverTimestamp() 
           }, { merge: true }).catch(() => {});
         }
@@ -2712,7 +2708,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       const hasApprovedNonWfhLeave = nextLeaveRequests.some(r =>
         !isWfhType(r.type) && !isWfhType(r.leaveCategory) &&
-        (r.status === 'Approved' || ((r.pmStatus === 'Approved' || r.pmStatus === 'N/A' || r.pmStatus === 'Bypassed') && (r.hrStatus === 'Approved' || r.hrStatus === 'N/A' || r.hrStatus === 'Bypassed') && (r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) &&
+        (r.status === 'Approved' || ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) &&
         ((!!r.employeeId && (r.employeeId === emp.id || r.employeeId === emp.employeeId)) ||
          (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id)) ||
          (!!r.employeeName && !!emp.fullName && (
@@ -2747,7 +2743,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (isBadWfh || (!companyWfhDatesList.includes(rec.date) && !(emp.approvedWfhDates || []).includes(rec.date))) {
         const hasApprovedWfhLeave = nextLeaveRequests.some(r =>
           (isWfhType(r.type) || isWfhType(r.leaveCategory)) &&
-          (r.status === 'Approved' || ((r.pmStatus === 'Approved' || r.pmStatus === 'N/A' || r.pmStatus === 'Bypassed') && (r.hrStatus === 'Approved' || r.hrStatus === 'N/A' || r.hrStatus === 'Bypassed') && (r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) &&
+          (r.status === 'Approved' || ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) &&
           ((!!r.employeeId && (r.employeeId === emp.id || r.employeeId === emp.employeeId)) ||
            (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id)) ||
            (!!r.employeeName && !!emp.fullName && (
@@ -3113,6 +3109,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
             addAuditLog('USER_LOGIN', matched.fullName, `Firebase Auth Login (${assignedRole})`);
             clearLockout(matched.id);
+            try {
+              if (localStorage.getItem('kss_remember_me') !== 'false') {
+                localStorage.setItem('kss_saved_credentials', JSON.stringify({ email: cleanEmail, password: cleanPass }));
+                localStorage.setItem('kss_last_login_email', cleanEmail);
+              }
+            } catch {}
             setIsLoading(false);
             return { success: true, message: `Welcome back, ${matched.fullName}!` };
           }
@@ -3233,6 +3235,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         addAuditLog('USER_LOGIN', targetEmp.fullName, `Local Login (${assignedRole})`);
         clearLockout(targetEmp.id);
+        try {
+          if (localStorage.getItem('kss_remember_me') !== 'false') {
+            localStorage.setItem('kss_saved_credentials', JSON.stringify({ email: cleanEmail, password: cleanPass }));
+            localStorage.setItem('kss_last_login_email', cleanEmail);
+          }
+        } catch {}
         setIsLoading(false);
         return { success: true, message: `Welcome back, ${targetEmp.fullName}!` };
       }
@@ -3336,6 +3344,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async () => {
     const empId = activeEmployee?.id || activeEmployee?.employeeId;
+    const lastEmail = activeEmployee?.email || '';
+    if (lastEmail) {
+      try {
+        localStorage.setItem('kss_last_login_email', lastEmail);
+      } catch {}
+    }
     if (empId) {
       await unregisterFcmToken(empId).catch(() => {});
     }
@@ -4598,11 +4612,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const empUid = data.employeeUid || emp?.uid || user?.uid || '';
     const pmUid = data.pmUid || emp?.pmUid || emp?.reportingManagerUid || 'uid-KSS2407003';
 
-    const isPmOrHrOrExec = empRole === 'PROJECT_MANAGER' || empRole === 'HR_ADMIN' || empRole === 'SUPER_ADMIN' ||
-      empDept.toLowerCase().includes('hr') || empDept.toLowerCase().includes('management') ||
-      (emp?.designation || '').toLowerCase().includes('project manager') ||
-      empName.toLowerCase().includes('koushik') || empName.toLowerCase().includes('abhinaya');
-
     const result = await LeaveService.submitLeaveRequest({
       ...data,
       employeeUid: empUid,
@@ -4611,9 +4620,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       department: empDept,
       employeeRole: empRole,
       pmUid: pmUid,
-      pmStatus: isPmOrHrOrExec ? 'N/A' : 'Pending',
-      hrStatus: isPmOrHrOrExec ? 'N/A' : 'Waiting PM',
-      ceoStatus: isPmOrHrOrExec ? 'Pending' : 'Waiting HR',
+      pmStatus: 'N/A',
+      hrStatus: 'N/A',
+      ceoStatus: 'Pending',
       ctoStatus: 'Waiting CEO',
     });
 
@@ -4623,13 +4632,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     sendKssNotification(
       eventType,
       isWfh ? `🏠 WFH Request: ${empName}` : `📋 Leave Request: ${empName}`,
-      `${empName} requested ${data.type} (${data.startDate} to ${data.endDate}). Reason: "${data.reason}". ${isPmOrHrOrExec ? 'Pending CEO & CTO approval.' : 'Pending PM, HR, CEO & CTO approval.'}`,
+      `${empName} requested ${data.type} (${data.startDate} to ${data.endDate}). Reason: "${data.reason}". Pending CEO & CTO approval.`,
       {
         actorId: empId,
         actorName: empName,
         targetEmployeeId: empId,
         targetEmployeeName: empName,
-        overrideAudience: ['SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER'],
+        overrideAudience: ['SUPER_ADMIN'],
         metadata: {
           requestId: result.id,
           requestType: data.type,
@@ -4654,6 +4663,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     startDate?: string,
     endDate?: string
   ) => {
+    // PM and HR are strictly removed from the leave approval hierarchy
+    if (stage === 'PM' || stage === 'HR') {
+      console.warn(`[AuthContext] ${stage} stage is removed from leave approvals. Workflow is strictly Employee -> CEO -> CTO.`);
+      return;
+    }
+
     const targetReq = leaveRequests.find(r => r.id === id);
     const empId = employeeId || targetReq?.employeeId || '';
     const sDate = startDate || targetReq?.startDate || '';
@@ -4661,6 +4676,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const revUid = user?.uid || activeEmployee?.uid || 'uid-exec';
     const nowIso = new Date().toISOString();
     const isApproved = decision === 'Approved';
+
+    // Guard: CTO cannot approve a request before CEO approval has been granted!
+    if (stage === 'CTO' && isApproved && targetReq?.ceoStatus !== 'Approved') {
+      toast.error('CTO cannot approve request before CEO approval has been granted.');
+      return;
+    }
 
     // 1. INSTANT 0ms Optimistic State Update for ultra-fast, smooth UI
     setLeaveRequests(prev => {
@@ -4671,32 +4692,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: nowIso 
         };
 
-        if (stage === 'PM') {
-          copy.pmStatus = decision;
-          copy.pmRecommendation = decision;
-          copy.pmReviewedBy = revUid;
-          copy.pmReviewedAt = nowIso;
-          copy.pmNotes = notes || '';
-          copy.hrStatus = isApproved ? 'Pending' : (copy.hrStatus || 'Waiting PM');
-          if (!isApproved) copy.status = 'Rejected';
-        } else if (stage === 'HR') {
-          copy.hrStatus = decision;
-          copy.hrReviewedBy = revUid;
-          copy.hrReviewedAt = nowIso;
-          copy.hrNotes = notes || '';
-          copy.ceoStatus = isApproved ? 'Pending' : (copy.ceoStatus || 'Waiting HR');
-          // If PM was pending, mark PM sanctioned as well
-          if (copy.pmStatus === 'Pending' && isApproved) {
-            copy.pmStatus = 'Approved';
-          }
-          if (!isApproved) copy.status = 'Rejected';
-        } else if (stage === 'CEO') {
+        if (stage === 'CEO') {
           copy.ceoStatus = decision;
           copy.ceoReviewedBy = revUid;
           copy.ceoReviewedAt = nowIso;
           copy.ceoNotes = notes || '';
-          copy.ctoStatus = isApproved ? 'Pending' : (copy.ctoStatus || 'Waiting CEO');
-          if (!isApproved) copy.status = 'Rejected';
+          copy.ctoStatus = isApproved ? 'Pending' : 'Waiting CEO';
+          copy.status = isApproved ? 'Pending' : 'Rejected';
         } else if (stage === 'CTO') {
           copy.ctoStatus = decision;
           copy.ctoReviewedBy = revUid;
@@ -4722,15 +4724,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // 3. Persist to Firestore via LeaveService asynchronously
     try {
-      if (stage === 'PM') {
-        await LeaveService.reviewPmStage(id, decision, revUid, reviewerName, notes, empId, sDate, eDate);
-      } else if (stage === 'HR') {
-        await LeaveService.reviewHrStage(id, decision, revUid, reviewerName, notes, empId, sDate, eDate);
-      } else if (stage === 'CEO') {
+      if (stage === 'CEO') {
         await LeaveService.reviewCeoStage(id, decision, revUid, reviewerName, notes, empId, sDate, eDate);
       } else if (stage === 'CTO') {
         // Resolve the employee's Firestore doc ID and leave type for balance deduction.
-        // employeeDocId: prefer UID-matched employee's Firestore doc.id, fall back to empId.
         const targetEmpForDeduct = employees.find(e =>
           (e.uid && targetReq?.employeeUid && e.uid === targetReq.employeeUid) ||
           e.id === empId ||
@@ -4751,28 +4748,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const fallbackUpdates: Partial<LeaveRequest> = {
           updatedAt: nowIso
         };
-        if (stage === 'PM') {
-          fallbackUpdates.pmStatus = decision;
-          fallbackUpdates.pmRecommendation = decision;
-          fallbackUpdates.pmReviewedBy = revUid;
-          fallbackUpdates.pmReviewedAt = nowIso;
-          fallbackUpdates.pmNotes = notes || '';
-          fallbackUpdates.hrStatus = isApproved ? 'Pending' : 'Waiting PM';
-          if (!isApproved) fallbackUpdates.status = 'Rejected';
-        } else if (stage === 'HR') {
-          fallbackUpdates.hrStatus = decision;
-          fallbackUpdates.hrReviewedBy = revUid;
-          fallbackUpdates.hrReviewedAt = nowIso;
-          fallbackUpdates.hrNotes = notes || '';
-          fallbackUpdates.ceoStatus = isApproved ? 'Pending' : 'Waiting HR';
-          if (!isApproved) fallbackUpdates.status = 'Rejected';
-        } else if (stage === 'CEO') {
+        if (stage === 'CEO') {
           fallbackUpdates.ceoStatus = decision;
           fallbackUpdates.ceoReviewedBy = revUid;
           fallbackUpdates.ceoReviewedAt = nowIso;
           fallbackUpdates.ceoNotes = notes || '';
           fallbackUpdates.ctoStatus = isApproved ? 'Pending' : 'Waiting CEO';
-          if (!isApproved) fallbackUpdates.status = 'Rejected';
+          fallbackUpdates.status = isApproved ? 'Pending' : 'Rejected';
         } else if (stage === 'CTO') {
           fallbackUpdates.ctoStatus = decision;
           fallbackUpdates.ctoReviewedBy = revUid;
@@ -4787,7 +4769,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // 4. Dispatch real-time in-app notification for stage decision
+    // 4. Dispatch real-time in-app notification for stage decision (Employee + CEO/CTO Super Admin)
     sendKssNotification(
       decision === 'Approved' ? 'LEAVE_REQUEST_APPROVED' : 'LEAVE_REQUEST_REJECTED',
       decision === 'Approved' ? `✅ ${targetReq?.type || 'Request'} Approved (${stage} Stage)` : `❌ ${targetReq?.type || 'Request'} Rejected (${stage} Stage)`,
@@ -4797,7 +4779,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         actorName: reviewerName,
         targetEmployeeId: targetReq?.employeeId || '',
         targetEmployeeName: targetReq?.employeeName || '',
-        overrideAudience: ['SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER', 'EMPLOYEE'],
+        overrideAudience: ['SUPER_ADMIN', 'EMPLOYEE'],
         metadata: {
           requestId: id,
           stage,
@@ -4807,9 +4789,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    // If final CTO or Executive approval and WFH, add to approvedWfhDates
+    // If final CTO approval and WFH, add to approvedWfhDates
     const isWfhDecision = isWfhType(targetReq?.type) || isWfhType(targetReq?.leaveCategory);
-    if ((stage === 'CTO' || stage === 'CEO' || stage === 'HR') && decision === 'Approved' && isWfhDecision) {
+    if (stage === 'CTO' && decision === 'Approved' && isWfhDecision) {
       const targetEmp = employees.find(e => 
         (!!targetReq.employeeId && (e.employeeId === targetReq.employeeId || e.id === targetReq.employeeId)) ||
         (!!targetReq.employeeName && !!e.fullName && (
@@ -4839,31 +4821,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     reviewNotes?: string,
     targetStage?: 'PM' | 'HR' | 'CEO' | 'CTO'
   ) => {
-    let stage: 'PM' | 'CEO' | 'CTO' | 'HR' = targetStage || 'HR';
+    let stage: 'CEO' | 'CTO' = targetStage === 'CTO' ? 'CTO' : 'CEO';
 
-    if (!targetStage) {
+    if (!targetStage || targetStage === 'PM' || targetStage === 'HR') {
       const desig = (activeEmployee?.designation || '').toUpperCase();
       const empId = activeEmployee?.employeeId || activeEmployee?.id || '';
-      const empRole = activeEmployee?.role || role;
       const name = (activeEmployee?.fullName || '').toLowerCase();
-
       const req = leaveRequests.find(r => r.id === id);
 
-      if (name.includes('gaurav') || desig.includes('CTO') || desig.includes('CIO') || empId === 'CTO001' || empId === 'KSS2407001') {
+      if (name.includes('gaurav') || desig.includes('CTO') || desig.includes('CIO') || empId === 'CTO001' || empId === 'KSS2407001' || activeEmployee?.executiveRole === 'CTO') {
         stage = 'CTO';
-      } else if (name.includes('akshit') || desig.includes('CEO') || empId === 'CEO001' || empId === 'KSS2407002') {
+      } else if (name.includes('akshit') || desig.includes('CEO') || empId === 'CEO001' || empId === 'KSS2407002' || activeEmployee?.executiveRole === 'CEO') {
         stage = 'CEO';
-      } else if (empRole === 'PROJECT_MANAGER' || desig.includes('PROJECT MANAGER') || name.includes('koushik')) {
-        stage = 'PM';
-      } else if (empRole === 'HR_ADMIN' || desig.includes('HR') || name.includes('abhinaya')) {
-        stage = 'HR';
-      } else if (empRole === 'SUPER_ADMIN') {
-        if (req) {
-          if (req.ctoStatus === 'Pending') stage = 'CTO';
-          else if (req.ceoStatus === 'Pending') stage = 'CEO';
-          else if (req.hrStatus === 'Pending') stage = 'HR';
-          else if (req.pmStatus === 'Pending') stage = 'PM';
-          else stage = 'CEO';
+      } else {
+        // SuperAdmin fallback: If CEO has already approved, stage is CTO; otherwise CEO
+        if (req && req.ceoStatus === 'Approved') {
+          stage = 'CTO';
         } else {
           stage = 'CEO';
         }

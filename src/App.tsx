@@ -42,7 +42,6 @@ const PMProfileView        = lazyWithRetry(() => import('./components/pm/PMProfi
 const FeedbackHub          = lazyWithRetry(() => import('./components/feedback/FeedbackHub').then(m => ({ default: m.FeedbackHub })), 'FeedbackHub');
 const EmployeeTeamDirectory = lazyWithRetry(() => import('./components/employee/EmployeeTeamDirectory').then(m => ({ default: m.EmployeeTeamDirectory })), 'EmployeeTeamDirectory');
 const ExecutiveProfileView  = lazyWithRetry(() => import('./components/admin/ExecutiveProfileView').then(m => ({ default: m.ExecutiveProfileView })), 'ExecutiveProfileView');
-const LeaveAnalyticsDashboard = lazyWithRetry(() => import('./components/admin/leaveAnalytics/LeaveAnalyticsDashboard').then(m => ({ default: m.LeaveAnalyticsDashboard })), 'LeaveAnalyticsDashboard');
 
 // Minimal spinner used as Suspense fallback inside the app (not a splash)
 const ViewLoader = () => (
@@ -172,10 +171,13 @@ const MainLayout: React.FC = () => {
         return 'pm_dashboard';
       }
     } else if (roleToUse === 'HR_ADMIN') {
-      const allowedHRTabs = ['dashboard', 'hr_dashboard', 'hr_profile', 'feedback_hub', 'employees', 'attendance', 'leave_approvals', 'leave_analytics', 'hr_payroll', 'company_rules', 'notifications', 'reports', 'audit_logs', 'my_id_card', 'documents'];
+      const allowedHRTabs = ['dashboard', 'hr_dashboard', 'hr_profile', 'feedback_hub', 'employees', 'attendance', 'leave_approvals', 'hr_payroll', 'company_rules', 'notifications', 'reports', 'audit_logs', 'my_id_card', 'documents'];
       if (!allowedHRTabs.includes(tab) && !tab.startsWith('emp_') && !tab.startsWith('hr_')) {
         return 'dashboard';
       }
+    }
+    if (tab === 'leave_analytics') {
+      return 'dashboard';
     }
     return tab;
   };
@@ -215,7 +217,7 @@ const MainLayout: React.FC = () => {
             onCloseMobile={() => setIsMobileSidebarOpen(false)}
           />
 
-          <main className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 pb-24 md:pb-8 overflow-y-auto overscroll-y-contain h-full bg-slate-950">
+          <main className="flex-1 min-w-0 p-3 sm:p-6 lg:p-8 pb-24 md:pb-8 overflow-y-auto overflow-x-hidden overscroll-y-contain h-full bg-slate-950">
             {!currentTab.startsWith('emp_') && currentTab !== 'notifications' && currentTab !== 'company_rules' && !(currentTab === 'feedback_hub' && isAuthorizedTechLead(activeEmployee)) && (role === 'EMPLOYEE' || activeEmployee?.role === 'EMPLOYEE') ? (
               <div className="bg-slate-900 border border-rose-900/50 rounded-3xl p-8 max-w-2xl mx-auto my-12 text-center space-y-5 shadow-2xl">
                 <div className="w-16 h-16 rounded-2xl bg-rose-500/20 text-rose-400 border border-rose-500/30 flex items-center justify-center mx-auto">
@@ -305,7 +307,6 @@ const MainLayout: React.FC = () => {
                 {currentTab === 'leave_approvals' && (
                   role === 'HR_ADMIN' ? <HRLeaveWfhApprovals /> : <LeaveApprovalsView />
                 )}
-                {currentTab === 'leave_analytics' && <LeaveAnalyticsDashboard onNavigateTab={handleNavigateTab} />}
 
                 {currentTab.startsWith('emp_') && (
                   <EmployeePortal activeTab={currentTab} setActiveTab={setActiveTab} />

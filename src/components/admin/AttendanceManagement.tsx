@@ -26,7 +26,8 @@ import {
   Layers,
   Users,
   Stethoscope,
-  Coffee
+  Coffee,
+  ArrowUpDown
 } from 'lucide-react';
 import { generateAttendanceReportPdf } from '../../lib/pdfGenerator';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
@@ -39,6 +40,7 @@ import { EmployeeIdCardModal } from './EmployeeIdCardModal';
 import { isAuthorizedTechLead } from '../../lib/hierarchy';
 import { toast } from 'sonner';
 import { generateAndDownloadPayrollCycleExcel, getCyclePresetList } from '../../lib/payrollCycleExporter';
+import { computeLeaveLopSummary, LeaveLopFilterOption } from '../../lib/leaveLopSummaryService';
 
 // ─── Dropdown Constants ────────────────────────────────────────────────────────
 
@@ -62,7 +64,7 @@ const DESIGNATIONS = [
 ];
 
 const EMPLOYMENT_TYPES = [
-  'Intern', 'Trainee', 'Software Engineer', 'Full-Time', 'Part-Time', 'Contract',
+  'Intern', 'Trainee', 'Employee', 'Software Engineer', 'Full-Time', 'Part-Time', 'Contract',
 ];
 
 // Specializations grouped for smart UX
@@ -250,6 +252,9 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
   const [designationFilter, setDesignationFilter] = useState('ALL');
   const [empTypeFilter, setEmpTypeFilter] = useState('ALL');
   const [specializationFilter, setSpecializationFilter] = useState('ALL');
+  const [leaveFilterPeriod, setLeaveFilterPeriod] = useState<LeaveLopFilterOption>('7d');
+  const [sortField, setSortField] = useState<'default' | 'fullName' | 'lopDays' | 'elDays' | 'slDays' | 'totalLeaveDays'>('default');
+  const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
 
   // Shift Editing Modal State
   const [editingShiftEmployee, setEditingShiftEmployee] = useState<Employee | null>(null);
@@ -454,6 +459,69 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
     });
   }, [employees, searchTerm, deptFilter, designationFilter, empTypeFilter, specializationFilter]);
 
+  // ─── Compute Leave & LOP Summary for Attendance Ledger ──────────────────────
+  const leaveSummary = useMemo(() => {
+    return computeLeaveLopSummary(
+      employees || [],
+      leaveRequests || [],
+      attendance || [],
+      settings,
+      leaveFilterPeriod
+    );
+  }, [employees, leaveRequests, attendance, settings, leaveFilterPeriod]);
+
+  const leaveStatsByEmpId = useMemo(() => {
+    const map = new Map<string, { lopDays: number; elDays: number; slDays: number; totalLeaveDays: number }>();
+    leaveSummary.items.forEach(item => {
+      if (item.employeeId) map.set(item.employeeId, item);
+      if (item.employeeCode) map.set(item.employeeCode, item);
+    });
+    return map;
+  }, [leaveSummary]);
+
+  const handleSort = (field: 'fullName' | 'lopDays' | 'elDays' | 'slDays' | 'totalLeaveDays') => {
+    triggerHaptic();
+    if (sortField === field) {
+      setSortOrder(prev => (prev === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortField(field);
+      setSortOrder('desc');
+    }
+  };
+
+  const sortedEmployees = useMemo(() => {
+    if (sortField === 'default') return filteredEmployees;
+    return [...filteredEmployees].sort((a, b) => {
+      const statsA = leaveStatsByEmpId.get(a.id) || leaveStatsByEmpId.get(a.employeeId || '') || { lopDays: 0, elDays: 0, slDays: 0, totalLeaveDays: 0 };
+      const statsB = leaveStatsByEmpId.get(b.id) || leaveStatsByEmpId.get(b.employeeId || '') || { lopDays: 0, elDays: 0, slDays: 0, totalLeaveDays: 0 };
+
+      let diff = 0;
+      if (sortField === 'fullName') {
+        diff = (a.fullName || '').localeCompare(b.fullName || '');
+      } else {
+        diff = (statsA[sortField] || 0) - (statsB[sortField] || 0);
+      }
+      return sortOrder === 'desc' ? -diff : diff;
+    });
+  }, [filteredEmployees, sortField, sortOrder, leaveStatsByEmpId]);
+
+  // Aggregate totals for the ledger footer
+  const ledgerTotals = useMemo(() => {
+    return sortedEmployees.reduce(
+      (acc, emp) => {
+        const stats = leaveStatsByEmpId.get(emp.id) || leaveStatsByEmpId.get(emp.employeeId || '');
+        if (stats) {
+          acc.lopDays += stats.lopDays;
+          acc.elDays += stats.elDays;
+          acc.slDays += stats.slDays;
+          acc.totalLeaveDays += stats.totalLeaveDays;
+        }
+        return acc;
+      },
+      { lopDays: 0, elDays: 0, slDays: 0, totalLeaveDays: 0 }
+    );
+  }, [sortedEmployees, leaveStatsByEmpId]);
+
   const handleOpenShiftEdit = (emp: Employee) => {
     triggerHaptic();
     setEditingShiftEmployee(emp);
@@ -538,10 +606,10 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
   };
 
   return (
-    <div className="space-y-6 pb-28 md:pb-8 animate-in fade-in zoom-in-95 duration-300">
+    <div className="space-y-6 pb-28 md:pb-8 animate-in fade-in zoom-in-95 duration-300 max-w-full">
 
       {/* Top Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+      <div className="flex flex-col gap-4">
         <div>
           <div className="flex items-center gap-2">
             <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest bg-blue-500/10 px-2.5 py-0.5 rounded-md border border-blue-500/20">
@@ -550,17 +618,18 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
             <span className="text-xs text-slate-500 font-mono">Live Sync Active</span>
           </div>
           <h1 className="text-xl sm:text-3xl font-black text-white tracking-tight mt-1">Attendance Ledger Master</h1>
-          <p className="text-xs text-slate-400 mt-0.5 leading-relaxed">
+          <p className="text-xs text-slate-400 mt-0.5 leading-relaxed max-w-4xl">
             Manage assigned shift schedules (10:00 AM – 7:00 PM), monthly leave balance accrual (Zero-base, 1 leave credited on 1st of month), and shift logs for all personnel ({filteredEmployees.length} records).
           </p>
         </div>
 
-        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+        {/* Action Buttons - Brought to Left Side */}
+        <div className="flex flex-wrap items-center justify-start gap-2.5 w-full">
           {canEditShifts && (
             <button
               onClick={handleSyncAllEmployeeShifts}
               disabled={isSyncingAll}
-              className="flex items-center justify-center gap-2 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md w-full sm:w-auto shrink-0 disabled:opacity-50"
+              className="flex items-center justify-center gap-2 px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-amber-300 border border-amber-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md disabled:opacity-50"
               title="Update all employees to 10:00 AM – 7:00 PM shift"
             >
               <Sparkles className="w-4 h-4 text-amber-400" />
@@ -569,14 +638,14 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
           )}
           <button
             onClick={handleExportLedgerExcel}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-900/40 w-full sm:w-auto shrink-0"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-900/40"
           >
             <FileSpreadsheet className="w-4 h-4" />
             <span>Export Excel</span>
           </button>
           <button
             onClick={() => generateAttendanceReportPdf(attendance, settings, 'Attendance Master Roster Statement')}
-            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-blue-900/40 w-full sm:w-auto shrink-0"
+            className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-blue-900/40"
           >
             <FileDown className="w-4 h-4" />
             <span>Export PDF</span>
@@ -613,10 +682,10 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
       )}
 
       {/* ── Filters & Search Bar ── */}
-      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 shadow-xl space-y-3">
-        {/* Row 1: Search + Department */}
-        <div className="flex flex-col md:flex-row items-center gap-3">
-          <div className="relative w-full md:w-72">
+      <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-4 shadow-xl space-y-3 max-w-full">
+        {/* Row 1: Search + Department + All Filters (flex-wrap so it never overflows) */}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="relative w-full sm:w-64 md:w-72">
             <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
             <input
               type="text"
@@ -628,25 +697,49 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
           </div>
 
           {/* Department */}
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Building2 className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <select
               value={deptFilter}
               onChange={e => setDeptFilter(e.target.value)}
-              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full md:w-auto"
+              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full sm:w-auto"
             >
               <option value="ALL">All Departments</option>
               {DEPARTMENTS.map(d => <option key={d} value={d}>{d}</option>)}
             </select>
           </div>
 
+          {/* Leave Summary Period Selector */}
+          <div className="flex items-center gap-1.5 w-full sm:w-auto">
+            <span className="text-[10px] text-slate-500 font-bold uppercase tracking-wider hidden sm:inline">Leave Window:</span>
+            <div className="flex items-center gap-1 bg-slate-950 p-1 rounded-xl border border-slate-800 shrink-0">
+              {(['7d', '15d', '30d'] as const).map(p => (
+                <button
+                  key={p}
+                  type="button"
+                  onClick={() => {
+                    triggerHaptic();
+                    setLeaveFilterPeriod(p);
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-bold transition-all cursor-pointer ${
+                    leaveFilterPeriod === p
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-400 hover:text-white'
+                  }`}
+                >
+                  {p === '7d' ? 'Last 7D' : p === '15d' ? 'Last 15D' : 'Last 30D'}
+                </button>
+              ))}
+            </div>
+          </div>
+
           {/* Designation */}
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Tag className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <select
               value={designationFilter}
               onChange={e => setDesignationFilter(e.target.value)}
-              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full md:w-auto"
+              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full sm:w-auto"
             >
               <option value="ALL">All Designations</option>
               {DESIGNATIONS.map(d => <option key={d} value={d}>{d}</option>)}
@@ -654,12 +747,12 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
           </div>
 
           {/* Employment Type */}
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Users className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <select
               value={empTypeFilter}
               onChange={e => setEmpTypeFilter(e.target.value)}
-              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full md:w-auto"
+              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full sm:w-auto"
             >
               <option value="ALL">All Types</option>
               {EMPLOYMENT_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
@@ -667,12 +760,12 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
           </div>
 
           {/* Specialization */}
-          <div className="flex items-center gap-2 w-full md:w-auto">
+          <div className="flex items-center gap-2 w-full sm:w-auto">
             <Layers className="w-3.5 h-3.5 text-slate-500 shrink-0" />
             <select
               value={specializationFilter}
               onChange={e => setSpecializationFilter(e.target.value)}
-              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full md:w-auto"
+              className="px-3 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-slate-200 font-medium focus:outline-hidden focus:border-blue-500 cursor-pointer w-full sm:w-auto"
             >
               <option value="ALL">All Specializations</option>
               {SPECIALIZATION_GROUPS.map(group => (
@@ -715,28 +808,79 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
       {/* ── Attendance Ledger Table ── */}
       <div className="bg-slate-900/90 rounded-3xl border border-slate-800 overflow-hidden shadow-xl">
         <div className="overflow-x-auto">
-          <table className="w-full border-collapse" style={{ minWidth: '1000px' }}>
+          <table className="w-full border-collapse" style={{ minWidth: '1200px' }}>
             <thead>
               <tr className="bg-slate-950/80 border-b border-slate-800 text-[10px] font-black text-slate-400 uppercase tracking-wider">
-                <th className="py-3.5 px-4 text-left whitespace-nowrap">Employee Name</th>
+                <th
+                  onClick={() => handleSort('fullName')}
+                  className="py-3.5 px-4 text-left whitespace-nowrap cursor-pointer hover:text-white transition-colors select-none"
+                >
+                  <div className="flex items-center gap-1.5">
+                    <span>Employee Name</span>
+                    <ArrowUpDown className="w-3 h-3 text-slate-500" />
+                  </div>
+                </th>
                 <th className="py-3.5 px-3 text-center whitespace-nowrap">Employee ID</th>
                 <th className="py-3.5 px-3 text-center whitespace-nowrap">Department</th>
                 <th className="py-3.5 px-3 text-center whitespace-nowrap">Designation</th>
                 <th className="py-3.5 px-3 text-center whitespace-nowrap">Employment Type</th>
                 <th className="py-3.5 px-3 text-center whitespace-nowrap">Specialization</th>
+
+                {/* ── 4 Leave & LOP Columns (after Specialization) ── */}
+                <th
+                  onClick={() => handleSort('lopDays')}
+                  className="py-3.5 px-3 text-center whitespace-nowrap cursor-pointer hover:text-rose-300 text-rose-400 transition-colors select-none"
+                  title="Loss of Pay Days (Unexcused / Unpaid)"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>LOP Days</span>
+                    <ArrowUpDown className="w-3 h-3 text-rose-500/60" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('elDays')}
+                  className="py-3.5 px-3 text-center whitespace-nowrap cursor-pointer hover:text-blue-300 text-blue-400 transition-colors select-none"
+                  title="Earned Leave Days"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>EL Days</span>
+                    <ArrowUpDown className="w-3 h-3 text-blue-500/60" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('slDays')}
+                  className="py-3.5 px-3 text-center whitespace-nowrap cursor-pointer hover:text-amber-300 text-amber-400 transition-colors select-none"
+                  title="Sick Leave Days"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>SL Days</span>
+                    <ArrowUpDown className="w-3 h-3 text-amber-500/60" />
+                  </div>
+                </th>
+                <th
+                  onClick={() => handleSort('totalLeaveDays')}
+                  className="py-3.5 px-3 text-center whitespace-nowrap cursor-pointer hover:text-white text-white transition-colors select-none"
+                  title="Total Days Taken"
+                >
+                  <div className="flex items-center justify-center gap-1">
+                    <span>Total Days</span>
+                    <ArrowUpDown className="w-3 h-3 text-slate-400" />
+                  </div>
+                </th>
+
                 <th className="py-3.5 px-3 text-center whitespace-nowrap">Status</th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800 text-xs">
-              {filteredEmployees.length === 0 ? (
+              {sortedEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={8} className="py-14 text-center text-slate-500 font-medium">
+                  <td colSpan={12} className="py-14 text-center text-slate-500 font-medium">
                     No employees match your search criteria.
                   </td>
                 </tr>
               ) : (
-                filteredEmployees.map(emp => {
+                sortedEmployees.map(emp => {
                   // Today's attendance record for this employee
                   const todayRec =
                     todayRecordByEmpId.get(emp.id) ||
@@ -816,13 +960,15 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
                         {(() => {
                           const isSatyaEmp = emp.employeeId === 'KSS2407012' || (emp.fullName && (emp.fullName.toLowerCase().includes('satya') || emp.fullName.toLowerCase().includes('ranjan')));
                           const rawEmpType = computeEmploymentType(emp);
-                          const effectiveEmpType = isSatyaEmp || rawEmpType === 'Software Developer' ? 'Software Engineer' : rawEmpType;
+                          const effectiveEmpType = isSatyaEmp ? 'Employee' : (rawEmpType === 'Software Developer' ? 'Software Engineer' : rawEmpType);
                           return (
                             <span className={`px-2.5 py-1 rounded-lg text-[11px] font-bold border whitespace-nowrap inline-block ${
                               effectiveEmpType === 'Intern'
                                 ? 'bg-cyan-500/10 text-cyan-300 border-cyan-500/25'
                                 : effectiveEmpType === 'Trainee'
                                 ? 'bg-amber-500/10 text-amber-300 border-amber-500/25'
+                                : effectiveEmpType === 'Employee'
+                                ? 'bg-blue-500/10 text-blue-300 border-blue-500/25'
                                 : effectiveEmpType === 'Software Engineer'
                                 ? 'bg-blue-500/10 text-blue-300 border-blue-500/25'
                                 : effectiveEmpType === 'Full Stack Development'
@@ -858,6 +1004,64 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
                           )}
                         </div>
                       </td>
+
+                      {/* ── 4 Leave & LOP Cells (after Specialization) ── */}
+                      {(() => {
+                        const empLeave = leaveStatsByEmpId.get(emp.id) || leaveStatsByEmpId.get(emp.employeeId || '') || {
+                          lopDays: 0,
+                          elDays: 0,
+                          slDays: 0,
+                          totalLeaveDays: 0
+                        };
+
+                        return (
+                          <>
+                            {/* LOP Days */}
+                            <td className="py-3 px-3 text-center whitespace-nowrap font-mono font-bold">
+                              {empLeave.lopDays > 0 ? (
+                                <span className="text-rose-400 bg-rose-500/10 px-2 py-0.5 rounded-md border border-rose-500/20 text-xs inline-block">
+                                  {empLeave.lopDays}d
+                                </span>
+                              ) : (
+                                <span className="text-slate-600 text-xs font-semibold">0</span>
+                              )}
+                            </td>
+
+                            {/* EL Days */}
+                            <td className="py-3 px-3 text-center whitespace-nowrap font-mono font-bold">
+                              {empLeave.elDays > 0 ? (
+                                <span className="text-blue-400 bg-blue-500/10 px-2 py-0.5 rounded-md border border-blue-500/20 text-xs inline-block">
+                                  {empLeave.elDays}d
+                                </span>
+                              ) : (
+                                <span className="text-slate-600 text-xs font-semibold">0</span>
+                              )}
+                            </td>
+
+                            {/* SL Days */}
+                            <td className="py-3 px-3 text-center whitespace-nowrap font-mono font-bold">
+                              {empLeave.slDays > 0 ? (
+                                <span className="text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded-md border border-amber-500/20 text-xs inline-block">
+                                  {empLeave.slDays}d
+                                </span>
+                              ) : (
+                                <span className="text-slate-600 text-xs font-semibold">0</span>
+                              )}
+                            </td>
+
+                            {/* Total Days Taken */}
+                            <td className="py-3 px-3 text-center whitespace-nowrap font-mono font-black">
+                              {empLeave.totalLeaveDays > 0 ? (
+                                <span className="text-white text-xs bg-slate-800 px-2.5 py-1 rounded-md border border-slate-700 inline-block">
+                                  {empLeave.totalLeaveDays}d
+                                </span>
+                              ) : (
+                                <span className="text-slate-600 text-xs font-normal">0</span>
+                              )}
+                            </td>
+                          </>
+                        );
+                      })()}
 
                       {/* 7. Status */}
                       <td className="py-3 px-3 text-center whitespace-nowrap">
@@ -913,6 +1117,28 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
                 })
               )}
             </tbody>
+            {sortedEmployees.length > 0 && (
+              <tfoot>
+                <tr className="bg-slate-950/95 border-t-2 border-slate-800 text-xs font-mono font-bold text-slate-300">
+                  <td colSpan={6} className="py-3.5 px-4 text-right uppercase tracking-wider text-[10px] font-bold text-slate-400">
+                    Total ({sortedEmployees.length} staff):
+                  </td>
+                  <td className="py-3.5 px-3 text-center font-mono font-bold text-rose-400 text-xs whitespace-nowrap">
+                    {ledgerTotals.lopDays > 0 ? `${ledgerTotals.lopDays}d` : '0d'}
+                  </td>
+                  <td className="py-3.5 px-3 text-center font-mono font-bold text-blue-400 text-xs whitespace-nowrap">
+                    {ledgerTotals.elDays > 0 ? `${ledgerTotals.elDays}d` : '0d'}
+                  </td>
+                  <td className="py-3.5 px-3 text-center font-mono font-bold text-amber-400 text-xs whitespace-nowrap">
+                    {ledgerTotals.slDays > 0 ? `${ledgerTotals.slDays}d` : '0d'}
+                  </td>
+                  <td className="py-3.5 px-3 text-center font-mono font-black text-white text-xs whitespace-nowrap">
+                    {ledgerTotals.totalLeaveDays > 0 ? `${ledgerTotals.totalLeaveDays}d` : '0d'}
+                  </td>
+                  <td colSpan={2}></td>
+                </tr>
+              </tfoot>
+            )}
           </table>
         </div>
       </div>

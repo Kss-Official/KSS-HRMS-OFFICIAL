@@ -118,8 +118,13 @@ test('summary intervals: generates 7d, 15d, and 30d periods accurately', () => {
 
 test('summary engine: aggregates unique employees, total days, and breakdown rows correctly', () => {
   const { startDate, endDate, dateList } = getSummaryIntervalDates('7d');
-  const midDate1 = dateList[2]; // Guaranteed inside 7-day range
-  const midDate2 = dateList[4];
+  // Pick working days within the 7-day range (avoid Sunday / gazetted holidays)
+  const workingDays = dateList.filter(d => {
+    const dt = new Date(d + 'T12:00:00Z');
+    return dt.getUTCDay() !== 0 && !['2026-10-02', '2026-10-20', '2026-10-21'].includes(d);
+  });
+  const midDate1 = workingDays[0] || dateList[0];
+  const midDate2 = workingDays[1] || dateList[1] || midDate1;
 
   const employees = [
     { id: 'emp_1', employeeId: 'EMP001', fullName: 'Alice Sharma', department: 'Engineering' },

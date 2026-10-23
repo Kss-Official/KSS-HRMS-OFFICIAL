@@ -72,7 +72,7 @@ export const HRLeaveWfhApprovals: React.FC = () => {
             <span>Leave &amp; WFH Approvals Inbox</span>
           </h2>
           <p className="text-xs text-slate-400 mt-1 leading-relaxed">
-            Sequential Approval Cycle: Employee Request → PM Approval → CTO Approval → CEO Final Sanction.
+            Direct Executive Approval Workflow: Employee Request → CEO Review → CTO Final Sanction (HR Read-Only Tracking Ledger).
           </p>
         </div>
 
@@ -238,12 +238,10 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                 (req.department || '').toLowerCase().includes('hr') ||
                 (req.department || '').toLowerCase().includes('management');
 
-              const pmState = isApplicantPmOrHr ? 'N/A' : (req.pmStatus || 'Pending');
-              const hrState = isApplicantPmOrHr ? 'N/A' : (req.hrStatus || (pmState === 'Approved' ? 'Pending' : 'Waiting PM'));
-              const ceoState = req.ceoStatus || (isApplicantPmOrHr ? 'Pending' : hrState === 'Approved' ? 'Pending' : 'Waiting HR');
+              const ceoState = req.ceoStatus || 'Pending';
               const ctoState = req.ctoStatus || (ceoState === 'Approved' ? 'Pending' : 'Waiting CEO');
-              const isFullyApproved = (pmState === 'Approved' || pmState === 'N/A') && (hrState === 'Approved' || hrState === 'N/A') && ceoState === 'Approved' && ctoState === 'Approved';
-              const isRejected = pmState === 'Rejected' || hrState === 'Rejected' || ceoState === 'Rejected' || ctoState === 'Rejected';
+              const isFullyApproved = req.status === 'Approved' || (ceoState === 'Approved' && ctoState === 'Approved');
+              const isRejected = req.status === 'Rejected' || ceoState === 'Rejected' || ctoState === 'Rejected';
 
               return (
                 <div key={req.id} className="p-4 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-3">
@@ -270,14 +268,8 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                     {req.reason}
                   </p>
 
-                  {/* 4-Stage Approval Pipeline Tracker */}
+                  {/* 2-Stage Approval Pipeline Tracker (CEO -> CTO) */}
                   <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
-                    <span className={`px-2 py-0.5 rounded border ${pmState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' : pmState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' : pmState === 'N/A' ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-amber-950/60 text-amber-400 border-amber-500/30'}`}>
-                      PM: {pmState}
-                    </span>
-                    <span className={`px-2 py-0.5 rounded border ${hrState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' : hrState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' : hrState === 'N/A' ? 'bg-slate-800 text-slate-400 border-slate-700' : 'bg-blue-950/60 text-blue-400 border-blue-500/30'}`}>
-                      HR: {hrState}
-                    </span>
                     <span className={`px-2 py-0.5 rounded border ${ceoState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' : ceoState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' : 'bg-purple-950/60 text-purple-400 border-purple-500/30'}`}>
                       CEO: {ceoState}
                     </span>
@@ -286,7 +278,7 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                     </span>
                   </div>
 
-                  {/* Actions Row */}
+                  {/* Status Row */}
                   <div className="flex items-center justify-between pt-1 border-t border-slate-800">
                     <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold border ${
                       isFullyApproved ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30' : isRejected ? 'bg-rose-500/10 text-rose-400 border-rose-500/30' : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
@@ -294,37 +286,18 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                       ● {isFullyApproved ? 'Approved' : isRejected ? 'Rejected' : 'Pending'}
                     </span>
 
-                    {hrState === 'Approved' || isFullyApproved ? (
-                      <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-300">
-                        <Check className="w-3.5 h-3.5 text-emerald-400" /> HR Sanctioned {ceoState === 'Approved' && ctoState === 'Approved' ? '(Completed)' : '(Sent to CEO)'}
+                    {isFullyApproved ? (
+                      <span className="px-2.5 py-1 rounded-xl bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] font-bold flex items-center gap-1.5">
+                        <Check className="w-3.5 h-3.5 text-emerald-400" /> Fully Sanctioned
                       </span>
-                    ) : hrState === 'Rejected' || isRejected ? (
-                      <span className="px-2.5 py-1 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[11px] font-bold flex items-center gap-1.5 animate-in fade-in zoom-in-95 duration-300">
+                    ) : isRejected ? (
+                      <span className="px-2.5 py-1 rounded-xl bg-rose-500/10 border border-rose-500/30 text-rose-400 text-[11px] font-bold flex items-center gap-1.5">
                         <X className="w-3.5 h-3.5 text-rose-400" /> Rejected
                       </span>
                     ) : (
-                      <div className="flex items-center gap-2 animate-in fade-in duration-300">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateLeaveRequestStage(req.id, 'HR', 'Approved', activeEmployee?.fullName || 'HR Admin', 'HR Sanction Granted');
-                          }}
-                          className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-md shadow-emerald-950/40 active:scale-95"
-                        >
-                          <Check className="w-3.5 h-3.5" /> Approve
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            updateLeaveRequestStage(req.id, 'HR', 'Rejected', activeEmployee?.fullName || 'HR Admin', 'HR Rejected');
-                          }}
-                          className="px-3 py-1.5 bg-rose-600 hover:bg-rose-500 text-white border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1 shadow-md shadow-rose-950/40 active:scale-95"
-                        >
-                          <X className="w-3.5 h-3.5" /> Reject
-                        </button>
-                      </div>
+                      <span className="px-2.5 py-1 rounded-xl bg-slate-900 border border-slate-800 text-slate-400 text-[11px] font-bold flex items-center gap-1.5">
+                        <Clock className="w-3.5 h-3.5 text-purple-400" /> {ceoState === 'Approved' ? 'Awaiting CTO Final' : 'Awaiting CEO'}
+                      </span>
                     )}
                   </div>
                 </div>
@@ -342,35 +315,25 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                 <th className="py-3.5 px-4 w-24">TYPE</th>
                 <th className="py-3.5 px-4 w-48">DATES</th>
                 <th className="py-3.5 px-4 w-48">REASON</th>
-                <th className="py-3.5 px-4 w-28">PM STATUS</th>
-                <th className="py-3.5 px-4 w-28">HR STATUS</th>
                 <th className="py-3.5 px-4 w-28">CEO STATUS</th>
-                <th className="py-3.5 px-4 w-28">CTO/MD STATUS</th>
+                <th className="py-3.5 px-4 w-28">CTO STATUS</th>
                 <th className="py-3.5 px-4 w-24">STATUS</th>
-                <th className="py-3.5 px-4 text-right w-36">ACTIONS</th>
+                <th className="py-3.5 px-4 text-right w-44">WORKFLOW STAGE</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-800/60 font-medium">
               {filteredRequests.length === 0 ? (
                 <tr>
-                  <td colSpan={10} className="py-12 text-center text-slate-500">
+                  <td colSpan={8} className="py-12 text-center text-slate-500">
                     <p className="text-sm font-semibold">No requests match the current filters.</p>
                   </td>
                 </tr>
               ) : (
                 filteredRequests.map(req => {
-                  const isApplicantPmOrHr = req.employeeRole === 'PROJECT_MANAGER' || 
-                    req.employeeRole === 'HR_ADMIN' ||
-                    req.employeeRole === 'SUPER_ADMIN' ||
-                    (req.department || '').toLowerCase().includes('hr') ||
-                    (req.department || '').toLowerCase().includes('management');
-
-                  const pmState = isApplicantPmOrHr ? 'N/A' : (req.pmStatus || 'Pending');
-                  const hrState = isApplicantPmOrHr ? 'N/A' : (req.hrStatus || (pmState === 'Approved' ? 'Pending' : 'Waiting PM'));
-                  const ceoState = req.ceoStatus || (isApplicantPmOrHr ? 'Pending' : hrState === 'Approved' ? 'Pending' : 'Waiting HR');
+                  const ceoState = req.ceoStatus || 'Pending';
                   const ctoState = req.ctoStatus || (ceoState === 'Approved' ? 'Pending' : 'Waiting CEO');
-                  const isFullyApproved = (pmState === 'Approved' || pmState === 'N/A') && (hrState === 'Approved' || hrState === 'N/A') && ceoState === 'Approved' && ctoState === 'Approved';
-                  const isRejected = pmState === 'Rejected' || hrState === 'Rejected' || ceoState === 'Rejected' || ctoState === 'Rejected';
+                  const isFullyApproved = req.status === 'Approved' || (ceoState === 'Approved' && ctoState === 'Approved');
+                  const isRejected = req.status === 'Rejected' || ceoState === 'Rejected' || ctoState === 'Rejected';
 
                   return (
                     <tr key={req.id} className="hover:bg-slate-800/40 transition-colors">
@@ -395,29 +358,6 @@ export const HRLeaveWfhApprovals: React.FC = () => {
 
                       <td className="py-3.5 px-4 text-slate-300 max-w-xs truncate" title={req.reason}>
                         {req.reason}
-                      </td>
-
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                          pmState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
-                          pmState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
-                          pmState === 'N/A' || pmState === 'Bypassed' ? 'bg-slate-800 text-slate-400 border-slate-700' :
-                          'bg-amber-950/60 text-amber-400 border-amber-500/30'
-                        }`}>
-                          {pmState}
-                        </span>
-                      </td>
-
-                      <td className="py-3.5 px-4 whitespace-nowrap">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-bold border ${
-                          hrState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
-                          hrState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
-                          hrState === 'N/A' || hrState === 'Bypassed' ? 'bg-slate-800 text-slate-400 border-slate-700' :
-                          hrState === 'Pending' ? 'bg-blue-950/60 text-blue-400 border-blue-500/30' :
-                          'bg-slate-900 text-slate-500 border-slate-800'
-                        }`}>
-                          {hrState}
-                        </span>
                       </td>
 
                       <td className="py-3.5 px-4 whitespace-nowrap">
@@ -453,37 +393,18 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                       </td>
 
                       <td className="py-3.5 px-4 text-right whitespace-nowrap">
-                        {hrState === 'Approved' || isFullyApproved ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20 animate-in fade-in zoom-in-95 duration-300">
-                            <Check className="w-3 h-3 text-emerald-400" /> HR Sanctioned {ceoState === 'Approved' && ctoState === 'Approved' ? '(Completed)' : '(Sent to CEO)'}
+                        {isFullyApproved ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-400 bg-emerald-500/10 px-2.5 py-1 rounded-lg border border-emerald-500/20">
+                            <Check className="w-3 h-3 text-emerald-400" /> Fully Sanctioned
                           </span>
-                        ) : hrState === 'Rejected' || isRejected ? (
-                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-400 bg-rose-500/10 px-2.5 py-1 rounded-lg border border-rose-500/20 animate-in fade-in zoom-in-95 duration-300">
+                        ) : isRejected ? (
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-rose-400 bg-rose-500/10 px-2.5 py-1 rounded-lg border border-rose-500/20">
                             <X className="w-3 h-3 text-rose-400" /> Rejected
                           </span>
                         ) : (
-                          <div className="flex items-center justify-end gap-1.5 animate-in fade-in duration-300">
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                updateLeaveRequestStage(req.id, 'HR', 'Approved', activeEmployee?.fullName || 'HR Admin', 'HR Sanction Granted');
-                              }}
-                              className="px-2.5 py-1 bg-emerald-600 hover:bg-emerald-500 text-white border border-emerald-500/30 text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-sm active:scale-95 flex items-center gap-1"
-                            >
-                              <Check className="w-3 h-3" /> Approve
-                            </button>
-                            <button
-                              type="button"
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                updateLeaveRequestStage(req.id, 'HR', 'Rejected', activeEmployee?.fullName || 'HR Admin', 'HR Rejected');
-                              }}
-                              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white border border-rose-500/30 text-[11px] font-bold rounded-lg transition-all cursor-pointer shadow-sm active:scale-95 flex items-center gap-1"
-                            >
-                              <X className="w-3 h-3" /> Reject
-                            </button>
-                          </div>
+                          <span className="inline-flex items-center gap-1 text-[11px] font-bold text-slate-400 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800">
+                            <Clock className="w-3 h-3 text-purple-400" /> {ceoState === 'Approved' ? 'Awaiting CTO Final' : 'Awaiting CEO'}
+                          </span>
                         )}
                       </td>
                     </tr>

@@ -30,8 +30,39 @@ export const AuthView: React.FC<AuthViewProps> = () => {
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
 
   // Sign In state
-  const [loginEmail, setLoginEmail] = useState('');
-  const [loginPassword, setLoginPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState<boolean>(() => {
+    try {
+      return localStorage.getItem('kss_remember_me') !== 'false';
+    } catch {
+      return true;
+    }
+  });
+
+  const [loginEmail, setLoginEmail] = useState(() => {
+    try {
+      const saved = localStorage.getItem('kss_saved_credentials');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.email || '';
+      }
+      return localStorage.getItem('kss_last_login_email') || '';
+    } catch {
+      return '';
+    }
+  });
+
+  const [loginPassword, setLoginPassword] = useState(() => {
+    try {
+      const saved = localStorage.getItem('kss_saved_credentials');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        return parsed.password || '';
+      }
+      return '';
+    } catch {
+      return '';
+    }
+  });
 
   // Forgot password modal
   const [isForgotModalOpen, setIsForgotModalOpen] = useState(false);
@@ -39,6 +70,29 @@ export const AuthView: React.FC<AuthViewProps> = () => {
   const [resetSent, setResetSent] = useState(false);
   const [resetLoading, setResetLoading] = useState(false);
   const [resetError, setResetError] = useState<string | null>(null);
+
+  const handleEmailChange = (val: string) => {
+    setLoginEmail(val);
+    if (rememberMe) {
+      try {
+        const saved = JSON.parse(localStorage.getItem('kss_saved_credentials') || '{}');
+        saved.email = val.trim();
+        localStorage.setItem('kss_saved_credentials', JSON.stringify(saved));
+        localStorage.setItem('kss_last_login_email', val.trim());
+      } catch {}
+    }
+  };
+
+  const handlePasswordChange = (val: string) => {
+    setLoginPassword(val);
+    if (rememberMe) {
+      try {
+        const saved = JSON.parse(localStorage.getItem('kss_saved_credentials') || '{}');
+        saved.password = val;
+        localStorage.setItem('kss_saved_credentials', JSON.stringify(saved));
+      } catch {}
+    }
+  };
 
   const handleSignIn = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -56,6 +110,16 @@ export const AuthView: React.FC<AuthViewProps> = () => {
       setFeedback({ type: 'error', message: res.message });
     } else {
       triggerHaptic('success');
+      try {
+        if (rememberMe) {
+          localStorage.setItem('kss_saved_credentials', JSON.stringify({ email: loginEmail.trim(), password: loginPassword }));
+          localStorage.setItem('kss_last_login_email', loginEmail.trim());
+          localStorage.setItem('kss_remember_me', 'true');
+        } else {
+          localStorage.removeItem('kss_saved_credentials');
+          localStorage.setItem('kss_remember_me', 'false');
+        }
+      } catch {}
     }
   };
 
@@ -191,7 +255,7 @@ export const AuthView: React.FC<AuthViewProps> = () => {
                   autoFocus
                   autoComplete="email"
                   value={loginEmail}
-                  onChange={e => setLoginEmail(e.target.value)}
+                  onChange={e => handleEmailChange(e.target.value)}
                   placeholder="name@kalpanaaa.in"
                   className="w-full bg-zinc-900/80 border border-zinc-800 focus:border-white focus:ring-1 focus:ring-white rounded-xl pl-10 pr-4 h-11 text-sm text-white placeholder-zinc-500 focus:outline-none transition-all shadow-inner"
                 />
@@ -218,7 +282,7 @@ export const AuthView: React.FC<AuthViewProps> = () => {
                   required
                   autoComplete="current-password"
                   value={loginPassword}
-                  onChange={e => setLoginPassword(e.target.value)}
+                  onChange={e => handlePasswordChange(e.target.value)}
                   placeholder="••••••••"
                   className="w-full bg-zinc-900/80 border border-zinc-800 focus:border-white focus:ring-1 focus:ring-white rounded-xl pl-10 pr-10 h-11 text-sm text-white placeholder-zinc-500 focus:outline-none transition-all shadow-inner"
                 />
@@ -231,6 +295,50 @@ export const AuthView: React.FC<AuthViewProps> = () => {
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
               </div>
+            </div>
+
+            {rememberMe && loginEmail && loginPassword && (
+              <div className="flex items-center justify-between px-3 py-2 rounded-xl bg-emerald-950/30 border border-emerald-800/40 text-xs text-emerald-300">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
+                  Credentials cached for quick login
+                </span>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setLoginEmail('');
+                    setLoginPassword('');
+                    try {
+                      localStorage.removeItem('kss_saved_credentials');
+                      localStorage.removeItem('kss_last_login_email');
+                    } catch {}
+                  }}
+                  className="text-zinc-400 hover:text-white transition-colors cursor-pointer text-[11px]"
+                >
+                  Clear
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center justify-between text-xs pt-1">
+              <label className="flex items-center gap-2 cursor-pointer select-none text-zinc-400 hover:text-zinc-200 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={rememberMe}
+                  onChange={e => {
+                    triggerHaptic('light');
+                    setRememberMe(e.target.checked);
+                    try {
+                      localStorage.setItem('kss_remember_me', e.target.checked ? 'true' : 'false');
+                      if (!e.target.checked) {
+                        localStorage.removeItem('kss_saved_credentials');
+                      }
+                    } catch {}
+                  }}
+                  className="w-4 h-4 rounded border-zinc-700 bg-zinc-900 text-white focus:ring-0 focus:ring-offset-0 cursor-pointer accent-white"
+                />
+                <span>Remember credentials on this device</span>
+              </label>
             </div>
 
             <div className="pt-2">

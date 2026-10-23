@@ -170,7 +170,7 @@ export const EmployeeLeaveTab: React.FC = () => {
             <span>My Leave &amp; WFH Requests</span>
           </h2>
           <p className="text-slate-400 text-xs mt-1 leading-relaxed">
-            Submit Earn Leave, Sick Leave, or WFH requests and track your 4-stage approval status.
+            Submit Earn Leave, Sick Leave, or WFH requests and track your direct CEO → CTO approval status.
           </p>
         </div>
         <div className="grid grid-cols-3 gap-2 w-full sm:w-auto shrink-0">
@@ -519,18 +519,11 @@ export const EmployeeLeaveTab: React.FC = () => {
               className="space-y-3"
             >
               {uniqueFilteredRequests.map((req) => {
-                const isApplicantPmOrHr = req.employeeRole === 'PROJECT_MANAGER' || req.employeeRole === 'HR_ADMIN' ||
-                  (req.department || '').toLowerCase().includes('hr') ||
-                  (req.employeeName || '').toLowerCase().includes('koushik') ||
-                  (req.employeeName || '').toLowerCase().includes('abhinaya');
-
-                const pmState = isApplicantPmOrHr ? 'N/A' : (req.pmStatus || 'Pending');
-                const hrState = isApplicantPmOrHr ? 'N/A' : (req.hrStatus || (pmState === 'Approved' ? 'Pending' : 'Waiting PM'));
-                const ceoState = req.ceoStatus || (isApplicantPmOrHr ? 'Pending' : hrState === 'Approved' ? 'Pending' : 'Waiting HR');
+                const ceoState = req.ceoStatus || 'Pending';
                 const ctoState = req.ctoStatus || (ceoState === 'Approved' ? 'Pending' : 'Waiting CEO');
 
-                const isFullyApproved = (pmState === 'Approved' || pmState === 'N/A') && (hrState === 'Approved' || hrState === 'N/A') && ceoState === 'Approved' && ctoState === 'Approved';
-                const isRejected = pmState === 'Rejected' || hrState === 'Rejected' || ceoState === 'Rejected' || ctoState === 'Rejected';
+                const isFullyApproved = req.status === 'Approved' || (ceoState === 'Approved' && ctoState === 'Approved');
+                const isRejected = req.status === 'Rejected' || ceoState === 'Rejected' || ctoState === 'Rejected';
                 const currentStatus = isFullyApproved ? 'Approved' : isRejected ? 'Rejected' : 'Pending';
 
                 const statusColor = 
@@ -575,22 +568,14 @@ export const EmployeeLeaveTab: React.FC = () => {
                       </span>
                     </div>
 
-                    {/* 4-Stage Pipeline Progress Tracker */}
-                    <div className="flex items-center gap-1 my-2 text-[10px] font-bold flex-wrap">
-                      <span className={`px-1.5 py-0.5 rounded border ${pmState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : pmState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : pmState === 'N/A' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-amber-500/10 border-amber-500/30 text-amber-400'}`}>
-                        PM: {pmState}
+                    {/* Direct CEO → CTO Approval Pipeline Tracker */}
+                    <div className="flex items-center gap-1.5 my-2 text-[10px] font-bold flex-wrap">
+                      <span className={`px-2 py-0.5 rounded border ${ceoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ceoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-purple-500/10 border-purple-500/30 text-purple-400'}`}>
+                        Stage 1 (CEO): {ceoState === 'Approved' ? 'Approved' : ceoState === 'Rejected' ? 'Rejected' : 'Pending'}
                       </span>
-                      <ChevronRight className="w-3 h-3 text-slate-600" />
-                      <span className={`px-1.5 py-0.5 rounded border ${hrState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : hrState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : hrState === 'N/A' ? 'bg-slate-800 border-slate-700 text-slate-400' : 'bg-blue-500/10 border-blue-500/30 text-blue-400'}`}>
-                        HR: {hrState === 'Approved' ? 'Approved' : hrState === 'Rejected' ? 'Rejected' : hrState === 'N/A' ? 'N/A' : pmState === 'Approved' ? 'Pending' : 'Waiting PM'}
-                      </span>
-                      <ChevronRight className="w-3 h-3 text-slate-600" />
-                      <span className={`px-1.5 py-0.5 rounded border ${ceoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ceoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : (hrState === 'Approved' || isApplicantPmOrHr) ? 'bg-purple-500/10 border-purple-500/30 text-purple-400' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-                        CEO: {ceoState === 'Approved' ? 'Approved' : ceoState === 'Rejected' ? 'Rejected' : (hrState === 'Approved' || isApplicantPmOrHr) ? 'Pending' : 'Waiting HR'}
-                      </span>
-                      <ChevronRight className="w-3 h-3 text-slate-600" />
-                      <span className={`px-1.5 py-0.5 rounded border ${ctoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ctoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : ceoState === 'Approved' ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-                        CTO: {ctoState === 'Approved' ? 'Approved' : ctoState === 'Rejected' ? 'Rejected' : ceoState === 'Approved' ? 'Pending' : 'Waiting CEO'}
+                      <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
+                      <span className={`px-2 py-0.5 rounded border ${ctoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ctoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : ceoState === 'Approved' ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                        Stage 2 (CTO Final): {ctoState === 'Approved' ? 'Approved' : ctoState === 'Rejected' ? 'Rejected' : ceoState === 'Approved' ? 'Pending' : 'Waiting CEO'}
                       </span>
                     </div>
 

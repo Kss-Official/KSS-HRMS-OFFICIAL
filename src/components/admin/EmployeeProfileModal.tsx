@@ -238,11 +238,12 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                       {(() => {
                         const isSatya = (employee.fullName && (employee.fullName.toLowerCase().includes('satya') || employee.fullName.toLowerCase().includes('ranjan'))) || employee.employeeId === 'KSS2407012';
                         const rawType = computeEmploymentType(employee);
-                        const effectiveType = isSatya || rawType === 'Software Developer' ? 'Software Engineer' : rawType;
+                        const effectiveType = isSatya ? 'Employee' : (rawType === 'Software Developer' ? 'Software Engineer' : rawType);
                         return (
                           <span className={`font-bold ${
                             effectiveType === 'Intern' ? 'text-cyan-400' :
                             effectiveType === 'Trainee' ? 'text-amber-400' :
+                            effectiveType === 'Employee' ? 'text-blue-400' :
                             effectiveType === 'Software Engineer' ? 'text-blue-400' :
                             effectiveType === 'Full Stack Development' ? 'text-purple-400' :
                             'text-emerald-400'

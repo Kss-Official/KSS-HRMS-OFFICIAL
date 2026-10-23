@@ -122,7 +122,7 @@ const DEFAULT_PROJECTS: Project[] = [
 ];
 
 export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
-  const { employees, leaveRequests, attendance, activeEmployee, updateLeaveRequestStage, startBreak, endBreak, isAuthenticated, settings, companyWideWfhDates, applyAttendanceCorrection, checkIn, checkOut, updateEmployee } = useAuth();
+  const { employees, leaveRequests, attendance, activeEmployee, startBreak, endBreak, isAuthenticated, settings, companyWideWfhDates, applyAttendanceCorrection, checkIn, checkOut, updateEmployee, updateLeaveRequestStage } = useAuth();
   const { triggerHaptic } = useHaptic();
 
   const todayStr = getWorkDate(new Date());
@@ -1339,6 +1339,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
 
       {/* ── 3.5. EXECUTIVE ATTENDANCE & SALARY DISBURSEMENT STATEMENT (26TH TO 26TH) ── */}
       <PMAttendanceCycleSection />
+
 
       {/* ── 4. FULL LIVE WORKFORCE ROSTER TABLE MODAL ── */}
       {isRosterModalOpen && (

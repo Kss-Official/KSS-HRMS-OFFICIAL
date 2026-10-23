@@ -4,12 +4,21 @@
 //   node tests/run.mjs
 import esbuild from 'esbuild';
 import { spawnSync } from 'node:child_process';
-import { mkdtempSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const OUT = mkdtempSync(join(tmpdir(), 'kss-regression-'));
-const entries = ['errors', 'safeStorage', 'attendanceEngine', 'hierarchy', 'leaveAnalyticsService', 'leaveHistorySummaryService'];
+let baseDir = tmpdir();
+try {
+  const localTmp = join(process.cwd(), 'node_modules', '.tmp');
+  if (!existsSync(localTmp)) mkdirSync(localTmp, { recursive: true });
+  baseDir = localTmp;
+} catch {
+  baseDir = tmpdir();
+}
+
+const OUT = mkdtempSync(join(baseDir, 'kss-regression-'));
+const entries = ['errors', 'safeStorage', 'attendanceEngine', 'hierarchy', 'leaveAnalyticsService', 'leaveHistorySummaryService', 'leaveLopSummaryService'];
 
 for (const name of entries) {
   esbuild.buildSync({
@@ -17,6 +26,7 @@ for (const name of entries) {
     bundle: true,
     format: 'cjs',
     platform: 'node',
+    external: ['exceljs'],
     outfile: join(OUT, `${name}.cjs`)
   });
 }
@@ -28,7 +38,8 @@ const testFiles = [
   join('tests', 'hierarchy.test.mjs'),
   join('tests', 'leave.test.mjs'),
   join('tests', 'leaveAnalytics.test.mjs'),
-  join('tests', 'leaveHistorySummary.test.mjs')
+  join('tests', 'leaveHistorySummary.test.mjs'),
+  join('tests', 'leaveLopSummary.test.mjs')
 ];
 
 const testRes = spawnSync(

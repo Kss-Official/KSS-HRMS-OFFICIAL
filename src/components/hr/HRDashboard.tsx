@@ -121,7 +121,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     return rec?.status === 'On Leave' || rec?.status === 'Leave' ||
       leaveRequests.some(r => 
         !isWfhType(r.type) && !isWfhType(r.leaveCategory) && 
-        (r.status === 'Approved' || ((r.pmStatus === 'Approved' || r.pmStatus === 'N/A' || r.pmStatus === 'Bypassed') && (r.hrStatus === 'Approved' || r.hrStatus === 'N/A' || r.hrStatus === 'Bypassed') && (r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) && 
+        (r.status === 'Approved' || ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) && 
         ((!!r.employeeId && (r.employeeId === emp.id || r.employeeId === emp.employeeId)) ||
          (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id)) ||
          (!!r.employeeName && !!emp.fullName && (
@@ -194,12 +194,11 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     }, 0);
   }, [operationalEmployees, attendance, leaveRequests]);
 
-  const hrPendingRequests = leaveRequests.filter(r => 
+  const executivePendingRequests = leaveRequests.filter(r => 
     r.status === 'Pending' && 
-    (r.pmStatus === 'Approved' || r.pmStatus === 'N/A' || r.pmStatus === 'Bypassed') && 
-    (r.hrStatus === 'Pending' || r.ceoStatus === 'Pending' || r.ctoStatus === 'Pending')
+    (r.ceoStatus === 'Pending' || r.ctoStatus === 'Pending' || (!r.ceoStatus && r.status === 'Pending'))
   );
-  const pendingApprovalsCount = hrPendingRequests.length;
+  const executivePendingCount = executivePendingRequests.length;
 
   // HR Personal Attendance Record for today
   const hrAttendanceRecord = resolveAttendanceRecord(attendance, targetEmployee, todayStr);
@@ -370,14 +369,14 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
             </div>
           )}
 
-          {/* Approvals Pending Pill */}
+          {/* Executive Review Pipeline Pill */}
           <button
             onClick={() => onNavigateTab('leave_approvals')}
-            className="flex items-center gap-2 px-4 py-2 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 text-xs font-bold rounded-xl border border-amber-500/30 transition-all cursor-pointer shadow-sm"
+            className="flex items-center gap-2 px-4 py-2 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 text-xs font-bold rounded-xl border border-purple-500/30 transition-all cursor-pointer shadow-sm"
           >
-            <Clock className="w-4 h-4 text-amber-400" />
-            <span>{pendingApprovalsCount} Approvals Pending</span>
-            <ChevronRight className="w-3.5 h-3.5 text-amber-400" />
+            <Clock className="w-4 h-4 text-purple-400" />
+            <span>{executivePendingCount} In Executive Review</span>
+            <ChevronRight className="w-3.5 h-3.5 text-purple-400" />
           </button>
         </div>
       </div>
@@ -466,54 +465,57 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
       {/* Zone 3: Split View — Pending Approvals Inbox & Today's Attendance Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         
-        {/* Left: Pending Approvals Inbox (60%) */}
+        {/* Left: Executive Leave Pipeline Ledger (60%) */}
         <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-md flex flex-col justify-between">
           <div className="flex items-center justify-between pb-4 border-b border-slate-800">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
-              <Clock className="w-4 h-4 text-amber-400" /> Pending Approvals Inbox
+              <Clock className="w-4 h-4 text-purple-400" /> Executive Leave &amp; WFH Pipeline (CEO → CTO)
             </h3>
             <button 
               onClick={() => onNavigateTab('leave_approvals')}
-              className="text-xs font-bold text-blue-400 hover:text-blue-300 transition-colors cursor-pointer"
+              className="text-xs font-bold text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
             >
-              View All ({pendingApprovalsCount}) →
+              View Ledger ({executivePendingCount}) →
             </button>
           </div>
 
           <div className="space-y-3 py-4">
-            {hrPendingRequests.length === 0 ? (
+            {executivePendingRequests.length === 0 ? (
               <div className="py-8 text-center text-slate-500 border border-slate-800 border-dashed rounded-2xl bg-slate-950/40">
                 <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto mb-2 opacity-60" />
-                <p className="text-xs font-bold text-slate-400">All pending approvals cleared!</p>
+                <p className="text-xs font-bold text-slate-400">All leave &amp; WFH requests sanctioned!</p>
               </div>
             ) : (
-              hrPendingRequests.slice(0, 4).map(req => (
-                <div key={req.id} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between gap-4">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <span className="text-xs font-bold text-white">{req.employeeName}</span>
-                      <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
-                        req.type === 'Leave' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
-                      }`}>
-                        {req.type}
-                      </span>
-                      {req.pmRecommendation && (
-                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-md bg-purple-500/20 text-purple-300 border border-purple-500/30">
-                          PM: {req.pmRecommendation}
+              executivePendingRequests.slice(0, 4).map(req => {
+                const ceoDone = req.ceoStatus === 'Approved';
+                return (
+                  <div key={req.id} className="p-4 rounded-xl bg-slate-950/60 border border-slate-800/80 flex items-center justify-between gap-4">
+                    <div>
+                      <div className="flex items-center gap-2 mb-1">
+                        <span className="text-xs font-bold text-white">{req.employeeName}</span>
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
+                          req.type === 'Leave' || req.type === 'Earn Leave' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                        }`}>
+                          {req.type}
                         </span>
-                      )}
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
+                          ceoDone ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                        }`}>
+                          {ceoDone ? 'Awaiting CTO Final' : 'Awaiting CEO'}
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-slate-400">{req.reason} ({req.startDate} to {req.endDate})</p>
                     </div>
-                    <p className="text-[11px] text-slate-400">{req.reason} ({req.startDate} to {req.endDate})</p>
-                  </div>
 
-                  <button
-                    onClick={() => onNavigateTab('leave_approvals')}
-                    className="px-3 py-1.5 bg-blue-600/20 text-blue-300 border border-blue-500/30 font-bold text-[10px] rounded-lg hover:bg-blue-600/30 transition-colors cursor-pointer"
-                  >
-                    Review
-                  </button>
-                </div>
-              ))
+                    <button
+                      onClick={() => onNavigateTab('leave_approvals')}
+                      className="px-3 py-1.5 bg-slate-800 text-slate-300 border border-slate-700 font-bold text-[10px] rounded-lg hover:bg-slate-700 transition-colors cursor-pointer"
+                    >
+                      View
+                    </button>
+                  </div>
+                );
+              })
             )}
           </div>
         </div>
@@ -570,6 +572,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         </div>
 
       </div>
+
 
       {/* Face Capture Biometric Verification Modal for HR Check-In (Fixes H18 & H19 Security Requirements) */}
       {targetEmployee && (

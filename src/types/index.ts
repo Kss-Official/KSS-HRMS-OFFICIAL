@@ -1,6 +1,6 @@
 export type UserRole = 'SUPER_ADMIN' | 'HR_ADMIN' | 'PROJECT_MANAGER' | 'EMPLOYEE';
 
-export type EmploymentType = 'Full-Time' | 'Part-Time' | 'Contract' | 'Intern' | 'Trainee' | 'Software Developer' | 'Software Engineer' | 'Full Stack Development';
+export type EmploymentType = 'Full-Time' | 'Part-Time' | 'Contract' | 'Intern' | 'Trainee' | 'Software Developer' | 'Software Engineer' | 'Full Stack Development' | 'Employee';
 
 export type EmployeeStatus = 'Active' | 'On Leave' | 'Inactive' | 'Suspended' | 'Terminated';
 
@@ -59,7 +59,18 @@ export interface LeaveRequest {
   createdAt?: string;
   updatedAt?: string;
   
-  // Multi-tier Approval Cycle fields (PM -> HR -> CEO -> CTO)
+  // Multi-tier Approval Cycle fields (Employee -> CEO -> CTO -> Final Decision)
+  ceoStatus?: 'Pending' | 'Approved' | 'Rejected' | 'N/A' | 'Bypassed';
+  ceoNotes?: string;
+  ceoReviewedBy?: string;
+  ceoReviewedAt?: string;
+
+  ctoStatus?: 'Pending' | 'Approved' | 'Rejected' | 'Waiting CEO' | 'N/A' | 'Bypassed';
+  ctoNotes?: string;
+  ctoReviewedBy?: string;
+  ctoReviewedAt?: string;
+
+  // Legacy approval fields retained for backward compatibility with historical records
   pmStatus?: 'Pending' | 'Approved' | 'Rejected' | 'N/A' | 'Bypassed';
   pmRecommendation?: 'Approved' | 'Rejected';
   pmNotes?: string;
@@ -70,16 +81,6 @@ export interface LeaveRequest {
   hrNotes?: string;
   hrReviewedBy?: string;
   hrReviewedAt?: string;
-
-  ceoStatus?: 'Pending' | 'Approved' | 'Rejected' | 'Waiting PM' | 'Waiting HR' | 'N/A' | 'Bypassed';
-  ceoNotes?: string;
-  ceoReviewedBy?: string;
-  ceoReviewedAt?: string;
-
-  ctoStatus?: 'Pending' | 'Approved' | 'Rejected' | 'Waiting CEO' | 'N/A' | 'Bypassed';
-  ctoNotes?: string;
-  ctoReviewedBy?: string;
-  ctoReviewedAt?: string;
 
   // Audited Emergency SuperAdmin Override fields
   isEmergencyOverride?: boolean;

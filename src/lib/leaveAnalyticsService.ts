@@ -253,13 +253,11 @@ export function isAuthoritativeApprovedLeave(r: LeaveRequest): boolean {
   if (r.status === 'Rejected' || r.status === 'Cancelled') return false;
   if (r.status === 'Approved') return true;
 
-  // Check multi-tier approval state
-  const pmApproved = r.pmStatus === 'Approved' || r.pmStatus === 'N/A' || r.pmStatus === 'Bypassed';
-  const hrApproved = r.hrStatus === 'Approved' || r.hrStatus === 'N/A' || r.hrStatus === 'Bypassed';
+  // Check CEO -> CTO approval state
   const ceoApproved = r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed';
   const ctoApproved = r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed';
 
-  return pmApproved && hrApproved && ceoApproved && ctoApproved;
+  return ceoApproved && ctoApproved;
 }
 
 /**

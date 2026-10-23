@@ -53,25 +53,9 @@ export const LeaveApprovalsView: React.FC = () => {
     setTimeout(() => setWfhFeedback(null), 5000);
   };
 
-  const getActivePendingStage = (req: LeaveRequest): 'PM' | 'HR' | 'CEO' | 'CTO' => {
-    const isApplicantPmOrHr = req.employeeRole === 'PROJECT_MANAGER' ||
-      req.employeeRole === 'HR_ADMIN' ||
-      req.employeeRole === 'SUPER_ADMIN' ||
-      (req.department || '').toLowerCase().includes('hr') ||
-      (req.department || '').toLowerCase().includes('management') ||
-      (req.employeeName || '').toLowerCase().includes('koushik') ||
-      (req.employeeName || '').toLowerCase().includes('abhinaya');
-
-    if (isApplicantPmOrHr) {
-      if (req.ceoStatus === 'Approved') return 'CTO';
-      return 'CEO';
-    }
-
-    if (req.pmStatus === 'Pending' || !req.pmStatus) return 'PM';
-    if (req.hrStatus === 'Pending' || req.hrStatus === 'Waiting PM') return 'HR';
-    if (req.ceoStatus === 'Pending' || req.ceoStatus === 'Waiting HR' || (req.hrStatus === 'Approved' && req.ceoStatus !== 'Approved')) return 'CEO';
-    if (req.ctoStatus === 'Pending' || req.ctoStatus === 'Waiting CEO' || (req.ceoStatus === 'Approved' && req.ctoStatus !== 'Approved')) return 'CTO';
-    return 'CEO';
+  const getActivePendingStage = (req: LeaveRequest): 'CEO' | 'CTO' => {
+    if (req.ceoStatus !== 'Approved') return 'CEO';
+    return 'CTO';
   };
 
   const canPerformStageAction = (req: LeaveRequest) => {
@@ -87,55 +71,33 @@ export const LeaveApprovalsView: React.FC = () => {
     const desig = (activeEmployee?.designation || '').toUpperCase();
     const empId = activeEmployee?.employeeId || activeEmployee?.id || '';
     const name = (activeEmployee?.fullName || '').toLowerCase();
+    const execRole = activeEmployee?.executiveRole;
 
-    const isApplicantPmOrHr = req.employeeRole === 'PROJECT_MANAGER' ||
-      req.employeeRole === 'HR_ADMIN' ||
-      req.employeeRole === 'SUPER_ADMIN' ||
-      (req.department || '').toLowerCase().includes('hr') ||
-      (req.department || '').toLowerCase().includes('management') ||
-      (req.employeeName || '').toLowerCase().includes('koushik') ||
-      (req.employeeName || '').toLowerCase().includes('abhinaya');
+    const isCto = execRole === 'CTO' || name.includes('gaurav') || hasTitle(desig, 'CTO') || hasTitle(desig, 'CIO') || empId === 'CTO001' || empId === 'KSS2407001';
+    const isCeo = execRole === 'CEO' || name.includes('akshit') || hasTitle(desig, 'CEO') || empId === 'CEO001' || empId === 'KSS2407002';
 
-    const isCto = name.includes('gaurav') || hasTitle(desig, 'CTO') || hasTitle(desig, 'CIO') || empId === 'CTO001' || empId === 'KSS2407001';
-    const isCeo = name.includes('akshit') || hasTitle(desig, 'CEO') || empId === 'CEO001' || empId === 'KSS2407002';
-    const isPmUser = userRole === 'PROJECT_MANAGER' || hasTitle(desig, 'PROJECT MANAGER') || name.includes('koushik');
-    const isHrUser = userRole === 'HR_ADMIN' || hasTitle(desig, 'HR') || name.includes('abhinaya');
-
-    // 1. PM Stage:
-    if (isPmUser && !isCeo && !isCto && !isHrUser) {
-      if (isApplicantPmOrHr) return false;
-      return req.pmStatus === 'Pending' || !req.pmStatus;
+    // PM and HR are strictly removed from approval authority
+    if (!isCeo && !isCto && userRole !== 'SUPER_ADMIN') {
+      return false;
     }
 
-    // 2. HR Stage:
-    if (isHrUser && !isCeo && !isCto) {
-      if (isApplicantPmOrHr) return false;
-      const isPmPassed = req.pmStatus === 'Approved' || req.pmStatus === 'N/A' || req.pmStatus === 'Bypassed';
-      return isPmPassed && (req.hrStatus === 'Pending' || req.hrStatus === 'Waiting PM');
-    }
-
-    // 3. CEO Stage (Akshit):
-    // CEO can approve once PM & HR stages have passed AND CEO has not yet approved
+    // 1. CEO Stage (Akshit):
+    // CEO can approve/reject directly without waiting for PM or HR
     if (isCeo) {
-      if (isApplicantPmOrHr) {
-        return req.ceoStatus !== 'Approved';
-      }
-      const isPmPassed = req.pmStatus === 'Approved' || req.pmStatus === 'N/A' || req.pmStatus === 'Bypassed';
-      const isHrPassed = req.hrStatus === 'Approved' || req.hrStatus === 'N/A' || req.hrStatus === 'Bypassed';
-      return isPmPassed && isHrPassed && req.ceoStatus !== 'Approved';
+      return req.ceoStatus !== 'Approved';
     }
 
-    // 4. CTO Stage (Gaurav):
+    // 2. CTO Stage (Gaurav):
     // CTO can approve ONLY after CEO has approved!
     if (isCto) {
-      const isCeoPassed = req.ceoStatus === 'Approved' || req.ceoStatus === 'N/A' || req.ceoStatus === 'Bypassed';
+      const isCeoPassed = req.ceoStatus === 'Approved';
       return isCeoPassed && req.ctoStatus !== 'Approved';
     }
 
-    // 5. Generic Super Admin (fallback)
+    // 3. Generic Super Admin (fallback)
     if (userRole === 'SUPER_ADMIN') {
-      const isCeoDone = (req.ceoStatus as string) === 'Approved';
-      return !isCeoDone || (req.ctoStatus as string) !== 'Approved';
+      const isCeoDone = req.ceoStatus === 'Approved';
+      return !isCeoDone || req.ctoStatus !== 'Approved';
     }
 
     return false;
@@ -189,27 +151,11 @@ export const LeaveApprovalsView: React.FC = () => {
 
   const isRequestFullyApproved = (req: LeaveRequest) => {
     if (req.status === 'Approved') return true;
-
-    const isApplicantPmOrHr = req.employeeRole === 'PROJECT_MANAGER' || req.employeeRole === 'HR_ADMIN' ||
-      (req.department || '').toLowerCase().includes('hr') ||
-      (req.employeeName || '').toLowerCase().includes('koushik') ||
-      (req.employeeName || '').toLowerCase().includes('abhinaya');
-
-    const pmState = isApplicantPmOrHr ? 'N/A' : (req.pmStatus || 'Pending');
-    const hrState = isApplicantPmOrHr ? 'N/A' : (req.hrStatus || (pmState === 'Approved' ? 'Pending' : 'Waiting PM'));
-    const ceoState = req.ceoStatus || (isApplicantPmOrHr ? 'Pending' : hrState === 'Approved' ? 'Pending' : 'Waiting HR');
-    const ctoState = req.ctoStatus || (ceoState === 'Approved' ? 'Pending' : 'Waiting CEO');
-
-    const isPmPassed = pmState === 'Approved' || pmState === 'N/A';
-    const isHrPassed = hrState === 'Approved' || hrState === 'N/A';
-
-    return isPmPassed && isHrPassed && ceoState === 'Approved' && ctoState === 'Approved';
+    return req.ceoStatus === 'Approved' && req.ctoStatus === 'Approved';
   };
 
   const isRequestRejected = (req: LeaveRequest) => {
     return req.status === 'Rejected' || 
-      req.pmStatus === 'Rejected' || 
-      req.hrStatus === 'Rejected' || 
       req.ceoStatus === 'Rejected' || 
       req.ctoStatus === 'Rejected';
   };
@@ -223,23 +169,6 @@ export const LeaveApprovalsView: React.FC = () => {
       return false;
     }
 
-    if (isPm) {
-      const isHrEmployee = (req.department || '').toLowerCase().includes('hr') ||
-        (req.employeeRole || '').toLowerCase().includes('hr') ||
-        (() => {
-          const emp = employees.find(e => e.id === req.employeeId || e.employeeId === req.employeeId || e.fullName === req.employeeName);
-          return emp?.department?.toLowerCase().includes('hr') || emp?.role === 'HR_ADMIN';
-        })();
-      if (isHrEmployee) return false;
-
-      if (req.pmStatus === 'N/A' || req.employeeRole === 'PROJECT_MANAGER' || req.employeeId === activeEmployee?.id || req.employeeId === activeEmployee?.employeeId || req.employeeName === activeEmployee?.fullName) {
-        return false;
-      }
-    } else if (isHr) {
-      // HR should only see requests after PM approval (or if PM stage is N/A for HR/PM/Exec applicants)
-      const isPmStagePassed = req.pmStatus === 'Approved' || req.pmStatus === 'N/A' || req.pmStatus === 'Bypassed';
-      if (!isPmStagePassed) return false;
-    }
     return true;
   });
 
@@ -252,15 +181,6 @@ export const LeaveApprovalsView: React.FC = () => {
       return false;
     }
 
-    if (isPm) {
-      const isHrEmployee = (req.department || '').toLowerCase().includes('hr') ||
-        (req.employeeRole || '').toLowerCase().includes('hr') ||
-        (() => {
-          const emp = employees.find(e => e.id === req.employeeId || e.employeeId === req.employeeId || e.fullName === req.employeeName);
-          return emp?.department?.toLowerCase().includes('hr') || emp?.role === 'HR_ADMIN';
-        })();
-      if (isHrEmployee) return false;
-    }
     return true;
   });
 
@@ -308,7 +228,7 @@ export const LeaveApprovalsView: React.FC = () => {
               return (
                 <div className="inline-flex items-center gap-1.5 mt-1 px-3 py-1 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 text-[11px] sm:text-xs font-extrabold leading-snug break-words max-w-full">
                   <ShieldCheck className="w-3.5 h-3.5 shrink-0" /> 
-                  <span>CTO/MD Final Sanction Portal — Logged in as {activeEmployee?.fullName || 'Gaurav Kumar Tripathi'}</span>
+                  <span>CTO Final Sanction Portal — Logged in as {activeEmployee?.fullName || 'Gaurav Kumar Tripathi'}</span>
                 </div>
               );
             }
@@ -324,7 +244,7 @@ export const LeaveApprovalsView: React.FC = () => {
               return (
                 <div className="inline-flex items-center gap-1.5 mt-1 px-3 py-1 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-[11px] sm:text-xs font-extrabold leading-snug break-words max-w-full">
                   <ShieldCheck className="w-3.5 h-3.5 shrink-0" /> 
-                  <span>PM Team Review Portal — Logged in as {activeEmployee?.fullName || 'D. Koushik'}</span>
+                  <span>PM Read-Only Observer View — Logged in as {activeEmployee?.fullName || 'Project Manager'}</span>
                 </div>
               );
             }
@@ -530,17 +450,7 @@ export const LeaveApprovalsView: React.FC = () => {
             const isWfh = isWfhType(req.type) || isWfhType(req.leaveCategory);
             const statusColor = req.status === 'Approved' ? 'var(--accent-emerald)' : req.status === 'Rejected' ? 'var(--accent-rose)' : 'var(--accent-amber)';
 
-            const isApplicantPmOrHr = req.employeeRole === 'PROJECT_MANAGER' ||
-              req.employeeRole === 'HR_ADMIN' ||
-              req.employeeRole === 'SUPER_ADMIN' ||
-              (req.department || '').toLowerCase().includes('hr') ||
-              (req.department || '').toLowerCase().includes('management') ||
-              (req.employeeName || '').toLowerCase().includes('koushik') ||
-              (req.employeeName || '').toLowerCase().includes('abhinaya');
-
-            const displayPmStatus = isApplicantPmOrHr ? 'N/A' : (req.pmStatus || 'Pending');
-            const displayHrStatus = isApplicantPmOrHr ? 'N/A' : (req.hrStatus || (displayPmStatus === 'Approved' ? 'Pending' : 'Waiting PM'));
-            const displayCeoStatus = req.ceoStatus || (isApplicantPmOrHr ? 'Pending' : (displayHrStatus === 'Approved' ? 'Pending' : 'Waiting HR'));
+            const displayCeoStatus = req.ceoStatus || 'Pending';
             const displayCtoStatus = req.ctoStatus || (displayCeoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
 
             return (
@@ -620,23 +530,6 @@ export const LeaveApprovalsView: React.FC = () => {
                       </span>
                       <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
                         <span className={`px-2 py-0.5 rounded-md border ${
-                          displayPmStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
-                          displayPmStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
-                          displayPmStatus === 'N/A' || displayPmStatus === 'Bypassed' ? 'bg-slate-800/80 text-slate-400 border-slate-700' :
-                          'bg-amber-950/60 text-amber-400 border-amber-500/30'
-                        }`}>
-                          PM: {displayPmStatus}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-md border ${
-                          displayHrStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
-                          displayHrStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
-                          displayHrStatus === 'N/A' || displayHrStatus === 'Bypassed' ? 'bg-slate-800/80 text-slate-400 border-slate-700' :
-                          displayHrStatus === 'Pending' ? 'bg-blue-950/60 text-blue-400 border-blue-500/30' :
-                          'bg-slate-900 text-slate-500 border-slate-800'
-                        }`}>
-                          HR: {displayHrStatus}
-                        </span>
-                        <span className={`px-2 py-0.5 rounded-md border ${
                           displayCeoStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
                           displayCeoStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
                           displayCeoStatus === 'Pending' ? 'bg-purple-950/60 text-purple-400 border-purple-500/30' :
@@ -650,7 +543,7 @@ export const LeaveApprovalsView: React.FC = () => {
                           displayCtoStatus === 'Pending' ? 'bg-cyan-950/60 text-cyan-400 border-cyan-500/30' :
                           'bg-slate-900 text-slate-500 border-slate-800'
                         }`}>
-                          CTO/MD: {displayCtoStatus}
+                          CTO: {displayCtoStatus}
                         </span>
                       </div>
                       {req.status !== 'Pending' && (
@@ -717,31 +610,23 @@ export const LeaveApprovalsView: React.FC = () => {
                     <div className="mt-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] font-bold text-slate-400 flex items-center justify-between">
                       {req.employeeId === activeEmployee?.id || req.employeeId === activeEmployee?.employeeId || req.employeeName === activeEmployee?.fullName ? (
                         <span className="text-amber-400 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" /> Self-Request — Awaiting Executive Review (CEO &amp; CTO/MD)
+                          <Clock className="w-3.5 h-3.5" /> Self-Request — Awaiting Executive Review (CEO &amp; CTO)
                         </span>
                       ) : role === 'HR_ADMIN' || activeEmployee?.role === 'HR_ADMIN' ? (
                         <span className="text-blue-400 flex items-center gap-1.5">
                           <ShieldCheck className="w-3.5 h-3.5" /> HR Observer Mode (Read-Only Status Ledger)
                         </span>
-                      ) : (req.pmStatus === 'N/A' || req.employeeRole === 'PROJECT_MANAGER' || req.employeeRole === 'HR_ADMIN') && req.ceoStatus === 'Pending' ? (
-                        <span className="text-purple-400 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" /> 🔒 PM / HR Request — Directly Awaiting CEO Review
-                        </span>
-                      ) : req.pmStatus === 'Pending' ? (
+                      ) : role === 'PROJECT_MANAGER' || activeEmployee?.role === 'PROJECT_MANAGER' ? (
                         <span className="text-amber-400 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" /> 🔒 Awaiting PM Approval Stage
+                          <ShieldCheck className="w-3.5 h-3.5" /> PM Observer Mode (Read-Only Status Ledger)
                         </span>
-                      ) : req.hrStatus === 'Pending' || req.hrStatus === 'Waiting PM' ? (
-                        <span className="text-blue-400 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" /> 🔒 Awaiting HR Approval Stage
-                        </span>
-                      ) : req.ceoStatus === 'Pending' || req.ceoStatus === 'Waiting HR' ? (
+                      ) : req.ceoStatus !== 'Approved' ? (
                         <span className="text-purple-400 flex items-center gap-1.5">
                           <Clock className="w-3.5 h-3.5" /> 🔒 Awaiting CEO Sanction Stage
                         </span>
                       ) : (
                         <span className="text-cyan-400 flex items-center gap-1.5">
-                          <Clock className="w-3.5 h-3.5" /> 🔒 Awaiting CTO/MD Final Sanction Stage
+                          <Clock className="w-3.5 h-3.5" /> 🔒 Awaiting CTO Final Sanction Stage
                         </span>
                       )}
                     </div>

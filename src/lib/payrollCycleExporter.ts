@@ -296,9 +296,7 @@ export function computeEmployeeCycleMetrics(
       leaveRequests.some(r => {
         if (!r || isWfhType(r.type) || isWfhType(r.leaveCategory)) return false;
         const isApp = r.status === 'Approved' ||
-          ((r.pmStatus === 'Approved' || r.pmStatus === 'N/A' || r.pmStatus === 'Bypassed') &&
-           (r.hrStatus === 'Approved' || r.hrStatus === 'N/A' || r.hrStatus === 'Bypassed') &&
-           (r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') &&
+          ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') &&
            (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'));
         if (!isApp) return false;
         const matchesEmp =

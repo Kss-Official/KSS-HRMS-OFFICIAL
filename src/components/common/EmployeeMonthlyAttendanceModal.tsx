@@ -752,10 +752,8 @@ const LeaveBalanceKpiBox: React.FC<{
                       <div className="space-y-2.5">
                         {filtered.map((req: any) => {
                           const isApproved = req.status === 'Approved' ||
-                            (['Approved','N/A','Bypassed'].includes(req.pmStatus) &&
-                             ['Approved','N/A','Bypassed'].includes(req.hrStatus) &&
-                             req.ceoStatus === 'Approved' && req.ctoStatus === 'Approved');
-                          const isRejected = req.status === 'Rejected' || req.pmStatus === 'Rejected' || req.hrStatus === 'Rejected' || req.ceoStatus === 'Rejected' || req.ctoStatus === 'Rejected';
+                            (req.ceoStatus === 'Approved' && req.ctoStatus === 'Approved');
+                          const isRejected = req.status === 'Rejected' || req.ceoStatus === 'Rejected' || req.ctoStatus === 'Rejected';
                           const rType = req.type || req.leaveCategory || 'Leave';
                           return (
                             <div key={req.id} className="bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
@@ -773,10 +771,8 @@ const LeaveBalanceKpiBox: React.FC<{
                               </div>
                               <div className="flex items-center gap-3 shrink-0 self-end sm:self-center">
                                 <div className="hidden lg:flex items-center gap-1 text-[10px] text-slate-500">
-                                  <span className="bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">PM: {req.pmStatus || '—'}</span>
-                                  <span className="bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">HR: {req.hrStatus || '—'}</span>
-                                  <span className="bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">CEO: {req.ceoStatus || '—'}</span>
-                                  <span className="bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">CTO: {req.ctoStatus || '—'}</span>
+                                  <span className="bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">CEO: {req.ceoStatus || 'Pending'}</span>
+                                  <span className="bg-slate-950 px-1.5 py-0.5 rounded border border-slate-800">CTO: {req.ctoStatus || (req.ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO')}</span>
                                 </div>
                                 {isApproved
                                   ? <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-xs font-bold bg-emerald-500/15 text-emerald-300 border border-emerald-500/30"><CheckCircle2 className="w-3.5 h-3.5" />Approved</span>

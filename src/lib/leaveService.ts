@@ -509,10 +509,10 @@ export class LeaveService {
       ...data,
       id: deterministicId,
       status: 'Pending',
-      pmStatus: data.pmStatus || 'Pending',
-      hrStatus: data.hrStatus || 'Waiting PM',
-      ceoStatus: data.ceoStatus || 'Waiting HR',
-      ctoStatus: data.ctoStatus || 'Waiting CEO',
+      ceoStatus: 'Pending',
+      ctoStatus: 'Waiting CEO',
+      pmStatus: data.pmStatus || 'N/A',
+      hrStatus: data.hrStatus || 'N/A',
       requestDate: nowIso,
       createdAt: nowIso,
       updatedAt: nowIso,
@@ -633,76 +633,42 @@ export class LeaveService {
   }
 
   /**
-   * Tier 1: Project Manager stage review.
+   * Deprecated: Project Manager stage review has been removed.
+   * Leave approval hierarchy is strictly Employee -> CEO -> CTO.
    */
   static async reviewPmStage(
-    requestId: string,
-    decision: 'Approved' | 'Rejected',
-    reviewerUid: string,
-    reviewerName: string,
-    notes?: string,
-    employeeId?: string,
-    startDate?: string,
-    endDate?: string
+    _requestId: string,
+    _decision: 'Approved' | 'Rejected',
+    _reviewerUid: string,
+    _reviewerName: string,
+    _notes?: string,
+    _employeeId?: string,
+    _startDate?: string,
+    _endDate?: string
   ): Promise<void> {
-    const nowIso = new Date().toISOString();
-    const isApproved = decision === 'Approved';
-
-    const updates: Partial<LeaveRequest> = {
-      pmStatus: decision,
-      pmRecommendation: decision,
-      pmReviewedBy: reviewerUid,
-      pmReviewedAt: nowIso,
-      pmNotes: notes || '',
-      hrStatus: isApproved ? 'Pending' : 'Waiting PM',
-      ceoStatus: 'Waiting HR',
-      ctoStatus: 'Waiting CEO',
-      status: isApproved ? 'Pending' : 'Rejected',
-      updatedAt: nowIso,
-    };
-
-    await setDoc(doc(db, 'leaveRequests', requestId), cleanFirestorePayload(updates), { merge: true });
-
-    if (!isApproved && employeeId && startDate && endDate) {
-      await this.releaseDateLocks(employeeId, startDate, endDate).catch(e => console.warn('[LeaveService] Lock release warning:', e));
-    }
+    throw new Error('Project Manager review stage has been removed. Leave approval sequence is strictly Employee -> CEO -> CTO.');
   }
 
   /**
-   * Tier 2: HR Admin stage review.
+   * Deprecated: HR Admin stage review has been removed.
+   * Leave approval hierarchy is strictly Employee -> CEO -> CTO.
    */
   static async reviewHrStage(
-    requestId: string,
-    decision: 'Approved' | 'Rejected',
-    reviewerUid: string,
-    reviewerName: string,
-    notes?: string,
-    employeeId?: string,
-    startDate?: string,
-    endDate?: string
+    _requestId: string,
+    _decision: 'Approved' | 'Rejected',
+    _reviewerUid: string,
+    _reviewerName: string,
+    _notes?: string,
+    _employeeId?: string,
+    _startDate?: string,
+    _endDate?: string
   ): Promise<void> {
-    const nowIso = new Date().toISOString();
-    const isApproved = decision === 'Approved';
-
-    const updates: Partial<LeaveRequest> = {
-      hrStatus: decision,
-      hrReviewedBy: reviewerUid,
-      hrReviewedAt: nowIso,
-      hrNotes: notes || '',
-      ceoStatus: isApproved ? 'Pending' : 'Waiting HR',
-      status: isApproved ? 'Pending' : 'Rejected',
-      updatedAt: nowIso,
-    };
-
-    await setDoc(doc(db, 'leaveRequests', requestId), cleanFirestorePayload(updates), { merge: true });
-
-    if (!isApproved && employeeId && startDate && endDate) {
-      await this.releaseDateLocks(employeeId, startDate, endDate).catch(e => console.warn('[LeaveService] Lock release warning:', e));
-    }
+    throw new Error('HR Admin review stage has been removed. Leave approval sequence is strictly Employee -> CEO -> CTO.');
   }
 
   /**
-   * Tier 3: CEO stage review.
+   * Tier 1 (Executive): CEO stage review.
+   * Moves directly to CTO on approval, or terminates workflow on rejection.
    */
   static async reviewCeoStage(
     requestId: string,
@@ -735,7 +701,8 @@ export class LeaveService {
   }
 
   /**
-   * Tier 4: CTO final sanction.
+   * Tier 2 (Executive): CTO final sanction.
+   * CTO sees requests approved by the CEO. CTO must not approve before CEO approval.
    * On approval, atomically deducts leave balance and records a ledger entry.
    * This is the ONLY place where leave balance is decremented on approval.
    */
@@ -753,6 +720,18 @@ export class LeaveService {
   ): Promise<void> {
     const nowIso = new Date().toISOString();
     const isApproved = decision === 'Approved';
+
+    // Security check: CTO cannot approve a request before CEO approval!
+    if (isApproved) {
+      const reqSnap = await getDoc(doc(db, 'leaveRequests', requestId));
+      if (!reqSnap.exists()) {
+        throw new Error(`Leave request ${requestId} not found.`);
+      }
+      const currentReqData = reqSnap.data() as LeaveRequest;
+      if (currentReqData.ceoStatus !== 'Approved') {
+        throw new Error('CTO cannot approve request before CEO approval has been granted.');
+      }
+    }
 
     const updates: Partial<LeaveRequest> = {
       ctoStatus: decision,
