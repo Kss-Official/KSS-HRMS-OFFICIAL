@@ -11,11 +11,79 @@ service cloud.firestore {
     function userEmail() {
       return hasEmail() ? request.auth.token.email : '';
     }
+    function emailMatches(targetEmail) {
+      return hasEmail() && targetEmail is string && targetEmail != '' &&
+        targetEmail.lower() == userEmail().lower();
+    }
     function isRealUser() {
       return isSignedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
+    function employeeRecord(docId) {
+      return get(/databases/$(database)/documents/employees/$(docId)).data;
+    }
+    function authOwnsEmployeeRecord(employeeDocId) {
+      return isRealUser() &&
+        employeeDocId is string && employeeDocId != '' &&
+        exists(/databases/$(database)/documents/employees/$(employeeDocId)) &&
+        (
+          employeeRecord(employeeDocId).get('uid', '~') == request.auth.uid ||
+          employeeRecord(employeeDocId).get('employeeUid', '~') == request.auth.uid ||
+          emailMatches(employeeRecord(employeeDocId).get('email', '')) ||
+          emailMatches(employeeRecord(employeeDocId).get('workEmail', '')) ||
+          emailMatches(employeeRecord(employeeDocId).get('personalEmail', ''))
+        );
+    }
+    function trustedUserMapping(d) {
+      let employeeDocId = d.get('employeeDocId', '');
+      return isRealUser() &&
+        d.get('uid', '') == request.auth.uid &&
+        (!hasEmail() || d.get('email', '').lower() == userEmail().lower()) &&
+        employeeDocId is string && employeeDocId != '' &&
+        exists(/databases/$(database)/documents/employees/$(employeeDocId)) &&
+        d.get('employeeId', '~') == employeeRecord(employeeDocId).get('employeeId', '~~') &&
+        d.get('role', '~') == employeeRecord(employeeDocId).get('role', '~~') &&
+        (
+          // Email match against the employee record is sufficient — the auth token
+          // email is Firebase-trusted and proves identity without needing a uid
+          // field pre-populated on the employee document (seeded docs lack it).
+          authOwnsEmployeeRecord(employeeDocId) ||
+          (
+            hasEmail() && request.auth.token.email.lower() == 'abhinayav1919@kalpanaaa.in' &&
+            employeeDocId == 'emp-KSS2407011'
+          )
+        );
+    }
+    // Relaxed mapping for the initial users/{uid} self-create where the employee
+    // document exists and the auth token email matches one of its email fields,
+    // but the employee doc doesn't yet have a uid field set.
+    function trustedUserMappingForCreate(d) {
+      let employeeDocId = d.get('employeeDocId', '');
+      return isRealUser() &&
+        d.get('uid', '') == request.auth.uid &&
+        (!hasEmail() || d.get('email', '').lower() == userEmail().lower()) &&
+        employeeDocId is string && employeeDocId != '' &&
+        exists(/databases/$(database)/documents/employees/$(employeeDocId)) &&
+        d.get('employeeId', '~') == employeeRecord(employeeDocId).get('employeeId', '~~') &&
+        d.get('role', '~') == employeeRecord(employeeDocId).get('role', '~~') &&
+        (
+          // uid match: already linked
+          employeeRecord(employeeDocId).get('uid', '~') == request.auth.uid ||
+          employeeRecord(employeeDocId).get('employeeUid', '~') == request.auth.uid ||
+          // Email match: auth token email is Firebase-trusted proof of identity
+          (hasEmail() && (
+            emailMatches(employeeRecord(employeeDocId).get('email', '')) ||
+            emailMatches(employeeRecord(employeeDocId).get('workEmail', '')) ||
+            emailMatches(employeeRecord(employeeDocId).get('personalEmail', ''))
+          )) ||
+          // Special HR alias
+          (hasEmail() && request.auth.token.email.lower() == 'abhinayav1919@kalpanaaa.in' &&
+            employeeDocId == 'emp-KSS2407011')
+        );
+    }
     function userDocExists() {
-      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+      return isSignedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        trustedUserMapping(get(/databases/$(database)/documents/users/$(request.auth.uid)).data);
     }
     function getUserDoc() {
       return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
@@ -27,79 +95,99 @@ service cloud.firestore {
       return get(/databases/$(database)/documents/employees/$(request.auth.uid)).data;
     }
     function getEmployeeId() {
-      return userDocExists() && ('employeeId' in getUserDoc()) && getUserDoc().employeeId != null && getUserDoc().employeeId != ''
-        ? getUserDoc().employeeId
-        : (empDocExists() && ('employeeId' in getEmpDoc()) && getEmpDoc().employeeId != null && getEmpDoc().employeeId != ''
-            ? getEmpDoc().employeeId
+      return userDocExists()
+        ? (('employeeId' in getUserDoc()) && getUserDoc().employeeId != null ? getUserDoc().employeeId : null)
+        : (empDocExists()
+            ? (('employeeId' in getEmpDoc()) && getEmpDoc().employeeId != null ? getEmpDoc().employeeId : null)
             : null);
     }
     function getEmployeeDocId() {
-      return userDocExists() && ('employeeDocId' in getUserDoc()) && getUserDoc().employeeDocId != null && getUserDoc().employeeDocId != ''
-        ? getUserDoc().employeeDocId
+      return userDocExists()
+        ? (('employeeDocId' in getUserDoc()) && getUserDoc().employeeDocId != null ? getUserDoc().employeeDocId : (empDocExists() ? request.auth.uid : null))
         : (empDocExists() ? request.auth.uid : null);
     }
-    function claimRole() {
-      return isSignedIn() && 'role' in request.auth.token ? request.auth.token.role : null;
+    function hasClaimRole() {
+      return isSignedIn() && ('role' in request.auth.token) && request.auth.token.role != null;
     }
     function getRole() {
-      return claimRole() != null ? claimRole() : (userDocExists() ? getUserDoc().role : null);
+      return hasClaimRole()
+        ? request.auth.token.role
+        : (userDocExists()
+            ? (('role' in getUserDoc()) && getUserDoc().role != null ? getUserDoc().role : null)
+            : (empDocExists() ? getEmpDoc().get('role', null) : null));
     }
 
     // ── Role predicates ──────────────────────────────────────────────────────
     function isSuperAdmin() {
       return isSignedIn() && (
         request.auth.uid in ['2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53', 'hOjKhSAtZKN7igNaePAmPKprVbp1'] ||
-        (hasEmail() && userEmail().lower() in ['gaurav@kalpanaaa.in', 'founder@kalpanaaasoftwaresolutions.in', 'akshitujjain@kalpanaaasoftwaresolutions.in']) ||
-        claimRole() in ['SUPER_ADMIN', 'superadmin'] ||
+        (hasEmail() && (
+          userEmail().lower() in [
+            'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
+            'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
+            'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
+            'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
+            'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in'
+          ]
+        )) ||
+        (hasClaimRole() && request.auth.token.role in ['SUPER_ADMIN', 'superadmin']) ||
         getRole() == 'SUPER_ADMIN' ||
-        (empDocExists() && getEmpDoc().get('role', '') == 'SUPER_ADMIN')
+        (empDocExists() && (('role' in getEmpDoc()) && getEmpDoc().role == 'SUPER_ADMIN'))
       );
     }
     function isHrAdmin() {
       return isSignedIn() && (
         request.auth.uid in ['2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'] ||
-        (hasEmail() && userEmail().lower() in ['hr@kalpanaaa.in', 'abhinayav1919@kalpanaaa.in']) ||
-        claimRole() in ['HR_ADMIN', 'hr_admin', 'hr'] ||
+        (hasEmail() && (
+          userEmail().lower() in [
+            'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
+            'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
+          ]
+        )) ||
+        (hasClaimRole() && request.auth.token.role in ['HR_ADMIN', 'hr_admin', 'hr']) ||
         getRole() == 'HR_ADMIN' ||
         isSuperAdmin() ||
-        (empDocExists() && (getEmpDoc().get('role', '') in ['HR_ADMIN', 'SUPER_ADMIN']))
+        (empDocExists() && (('role' in getEmpDoc()) && getEmpDoc().role in ['HR_ADMIN', 'SUPER_ADMIN']))
       );
     }
     function isProjectManager() {
       return isSignedIn() && (
         request.auth.uid in ['vhKLIJCVZoTncqVtmh14paMbiXk2'] ||
-        (hasEmail() && userEmail().lower() in [
-          'd.koushik@kalpanaaasoftwaresolutions.in',
-          'd.koushik@kalpanaaa.in'
-        ]) ||
-        claimRole() in ['PROJECT_MANAGER', 'project_manager', 'pm'] ||
+        (hasEmail() && (
+          userEmail().lower() in [
+            'd.koushik@kalpanaaasoftwaresolutions.in',
+            'd.koushik@kalpanaaa.in',
+            'koushik@kalpanaaa.in',
+            'koushik@kalpanaaasoftwaresolutions.in'
+          ]
+        )) ||
+        (hasClaimRole() && request.auth.token.role in ['PROJECT_MANAGER', 'project_manager', 'pm']) ||
         getRole() == 'PROJECT_MANAGER' ||
         isSuperAdmin() ||
-        (userDocExists() && ('employeeId' in getUserDoc()) && getUserDoc().employeeId == 'KSS2407003') ||
-        (userDocExists() && ('employeeDocId' in getUserDoc()) && (getUserDoc().employeeDocId == 'emp-KSS2407003' || getUserDoc().employeeDocId == 'vhKLIJCVZoTncqVtmh14paMbiXk2')) ||
-        (empDocExists() && getEmpDoc().get('role', '') == 'PROJECT_MANAGER')
+        (empDocExists() && (('role' in getEmpDoc()) && getEmpDoc().role == 'PROJECT_MANAGER'))
       );
     }
     function isAuthorizedTechLead() {
       return isSignedIn() && (
         request.auth.uid in ['QpDtyS6Jp5OqNu3klvfWGoWHfmS2', 'KfAB95lpbJOeylpKQaWX4GXOPGt2'] ||
-        (hasEmail() && userEmail().lower() in [
-          'satya.ranjan.dash@kalpanaaa.in',
-          'satya.ranjan.das@kalpanaaa.in',
-          'jasonkennethn@kalpanaaa.in',
-          'jason.kennethn@kalpanaaa.in'
-        ]) ||
-        (getEmployeeId() != null && (getEmployeeId() == 'KSS2407012' || getEmployeeId() == 'KSS2407011')) ||
-        (getEmployeeDocId() != null && (getEmployeeDocId() == 'emp-KSS2407012' || getEmployeeDocId() == 'KfAB95lpbJOeylpKQaWX4GXOPGt2')) ||
+        (hasEmail() && (
+          userEmail().lower() in [
+            'satya.ranjan.dash@kalpanaaa.in',
+            'satya.ranjan.das@kalpanaaa.in',
+            'satya@kalpanaaa.in',
+            'satya.ranjan.dash@kalpanaaasoftwaresolutions.in',
+            'jasonkennethn@kalpanaaa.in',
+            'jason.kennethn@kalpanaaa.in',
+            'jasonkennethn@kalpanaaasoftwaresolutions.in'
+          ]
+        )) ||
         (empDocExists() && (
           getEmpDoc().get('email', '') in ['satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'jasonkennethn@kalpanaaa.in'] ||
-          getEmpDoc().get('employeeId', '') in ['KSS2407012', 'KSS2407011'] ||
           getEmpDoc().get('role', '') == 'TECH_LEAD'
         )) ||
         (userDocExists() && (
           getUserDoc().get('role', '') == 'TECH_LEAD' ||
-          getUserDoc().get('email', '') in ['satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'jasonkennethn@kalpanaaa.in'] ||
-          getUserDoc().get('employeeId', '') in ['KSS2407012', 'KSS2407011']
+          getUserDoc().get('email', '') in ['satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'jasonkennethn@kalpanaaa.in']
         ))
       );
     }
@@ -116,16 +204,9 @@ service cloud.firestore {
         (resource != null && (
           resource.data.get('uid', '~') == request.auth.uid ||
           resource.data.get('employeeUid', '~') == request.auth.uid ||
-          (hasEmail() && (
-            (resource.data.get('email', '~') != '~' && (
-              resource.data.get('email', '~') == userEmail() ||
-              resource.data.get('email', '~').lower() == userEmail().lower()
-            )) ||
-            (resource.data.get('workEmail', '~') != '~' && (
-              resource.data.get('workEmail', '~') == userEmail() ||
-              resource.data.get('workEmail', '~').lower() == userEmail().lower()
-            ))
-          ))
+          emailMatches(resource.data.get('email', '')) ||
+          emailMatches(resource.data.get('workEmail', '')) ||
+          emailMatches(resource.data.get('personalEmail', ''))
         )) ||
         (getEmployeeDocId() != null && (
           employeeId == getEmployeeDocId() ||
@@ -145,22 +226,30 @@ service cloud.firestore {
         ))
       );
     }
-    function employeeRecord(docId) {
-      return get(/databases/$(database)/documents/employees/$(docId)).data;
-    }
     function ownsAttendanceDocId(recordId) {
       let parts = recordId.split('_');
       let prefix = parts[0];
       return prefix == request.auth.uid ||
+        authOwnsEmployeeRecord(prefix) ||
         (getEmployeeDocId() != null && prefix == getEmployeeDocId()) ||
+        (getEmployeeDocId() != null &&
+          employeeRecord(getEmployeeDocId()).get('uid', '~') == prefix) ||
         (getEmployeeId() != null && (prefix == getEmployeeId() || prefix == ('emp-' + getEmployeeId()))) ||
         (userDocExists() && (
           ('employeeId' in getUserDoc() && (prefix == getUserDoc().employeeId || prefix == ('emp-' + getUserDoc().employeeId))) ||
-          ('employeeDocId' in getUserDoc() && prefix == getUserDoc().employeeDocId)
+          ('employeeDocId' in getUserDoc() && prefix == getUserDoc().employeeDocId) ||
+          ('uid' in getUserDoc() && prefix == getUserDoc().uid)
         )) ||
         (empDocExists() && (
           ('employeeId' in getEmpDoc() && (prefix == getEmpDoc().employeeId || prefix == ('emp-' + getEmpDoc().employeeId)))
         ));
+    }
+    function ownsAttendanceCreateDocId(recordId, employeeDocId, date) {
+      return date is string && date.size() == 10 &&
+        (
+          recordId == request.auth.uid + '_' + date ||
+          recordId == employeeDocId + '_' + date
+        );
     }
     function ownsAttendanceData(d) {
       return isRealUser() && (
@@ -168,10 +257,8 @@ service cloud.firestore {
         d.get('employeeUid', '~') == request.auth.uid ||
         d.get('authUid', '~') == request.auth.uid ||
         d.get('employeeId', '~') == request.auth.uid ||
-        (hasEmail() && (
-          (d.get('email', '~') != '~' && (d.get('email', '~') == userEmail() || d.get('email', '~').lower() == userEmail().lower())) ||
-          (d.get('employeeEmail', '~') != '~' && (d.get('employeeEmail', '~') == userEmail() || d.get('employeeEmail', '~').lower() == userEmail().lower()))
-        )) ||
+        emailMatches(d.get('email', '')) ||
+        emailMatches(d.get('employeeEmail', '')) ||
         (getEmployeeId() != null && (
           d.get('employeeCode', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == getEmployeeId() ||
@@ -179,7 +266,9 @@ service cloud.firestore {
         )) ||
         (getEmployeeDocId() != null && (
           d.get('employeeId', '~') == getEmployeeDocId() ||
-          d.get('employeeDocId', '~') == getEmployeeDocId()
+          d.get('employeeDocId', '~') == getEmployeeDocId() ||
+          d.get('uid', '~') == getEmployeeDocId() ||
+          d.get('employeeUid', '~') == getEmployeeDocId()
         )) ||
         (userDocExists() && (
           ('employeeId' in getUserDoc() && (
@@ -189,7 +278,9 @@ service cloud.firestore {
           )) ||
           ('employeeDocId' in getUserDoc() && (
             d.get('employeeId', '~') == getUserDoc().employeeDocId ||
-            d.get('employeeDocId', '~') == getUserDoc().employeeDocId
+            d.get('employeeDocId', '~') == getUserDoc().employeeDocId ||
+            d.get('uid', '~') == getUserDoc().employeeDocId ||
+            d.get('employeeUid', '~') == getUserDoc().employeeDocId
           ))
         )) ||
         (empDocExists() && (
@@ -206,10 +297,8 @@ service cloud.firestore {
         d.get('employeeUid', '~') == request.auth.uid ||
         d.get('uid', '~') == request.auth.uid ||
         d.get('employeeId', '~') == request.auth.uid ||
-        (hasEmail() && (
-          (d.get('email', '~') != '~' && (d.get('email', '~') == userEmail() || d.get('email', '~').lower() == userEmail().lower())) ||
-          (d.get('employeeEmail', '~') != '~' && (d.get('employeeEmail', '~') == userEmail() || d.get('employeeEmail', '~').lower() == userEmail().lower()))
-        )) ||
+        emailMatches(d.get('email', '')) ||
+        emailMatches(d.get('employeeEmail', '')) ||
         (getEmployeeId() != null && (
           d.get('employeeId', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == ('emp-' + getEmployeeId())
@@ -236,18 +325,11 @@ service cloud.firestore {
     function ownsLeaveRequest(d) {
       return isRealUser() && (
         d.get('employeeUid', '~') == request.auth.uid ||
+        d.get('authUid', '~') == request.auth.uid ||
         d.get('uid', '~') == request.auth.uid ||
         d.get('employeeId', '~') == request.auth.uid ||
-        (hasEmail() && (
-          (d.get('employeeEmail', '~') != '~' && (
-            d.get('employeeEmail', '~') == userEmail() ||
-            d.get('employeeEmail', '~').lower() == userEmail().lower()
-          )) ||
-          (d.get('email', '~') != '~' && (
-            d.get('email', '~') == userEmail() ||
-            d.get('email', '~').lower() == userEmail().lower()
-          ))
-        )) ||
+        emailMatches(d.get('employeeEmail', '')) ||
+        emailMatches(d.get('email', '')) ||
         (getEmployeeId() != null && (
           d.get('employeeId', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == ('emp-' + getEmployeeId()) ||
@@ -256,6 +338,17 @@ service cloud.firestore {
         (getEmployeeDocId() != null && (
           d.get('employeeId', '~') == getEmployeeDocId() ||
           d.get('employeeDocId', '~') == getEmployeeDocId()
+        )) ||
+        (userDocExists() && (
+          ('employeeId' in getUserDoc() && (
+            d.get('employeeId', '~') == getUserDoc().employeeId ||
+            d.get('employeeId', '~') == ('emp-' + getUserDoc().employeeId) ||
+            d.get('employeeCode', '~') == getUserDoc().employeeId
+          )) ||
+          ('employeeDocId' in getUserDoc() && (
+            d.get('employeeId', '~') == getUserDoc().employeeDocId ||
+            d.get('employeeDocId', '~') == getUserDoc().employeeDocId
+          ))
         ))
       );
     }
@@ -278,21 +371,129 @@ service cloud.firestore {
         ))
       );
     }
-    function mirrorsEmployeeRole() {
-      return isRealUser() &&
-        request.resource.data.get('employeeDocId', '') != '' &&
-        exists(/databases/$(database)/documents/employees/$(request.resource.data.employeeDocId)) &&
-        employeeRecord(request.resource.data.employeeDocId).get('role', '~') == request.resource.data.get('role', '~~') &&
-        (
-          employeeRecord(request.resource.data.employeeDocId).get('uid', '~') == request.auth.uid ||
-          (hasEmail() && (
-            employeeRecord(request.resource.data.employeeDocId).get('email', '~') == userEmail() ||
-            employeeRecord(request.resource.data.employeeDocId).get('email', '~').lower() == userEmail().lower()
-          ))
-        );
-    }
-
     // ── Shape validators ─────────────────────────────────────────────────────
+    function validBreakEntry(breakEntry) {
+      return breakEntry is map &&
+        breakEntry.keys().hasOnly([
+          'type', 'startAt', 'startTime', 'endAt', 'endTime', 'durationMinutes'
+        ]) &&
+        breakEntry.get('type', '') in [
+          'Tea Break', 'Snack Break', 'Meal Break', 'Lunch Break',
+          'Team Huddle', 'Team Meeting', 'Attainment / Training', 'Activity'
+        ] &&
+        breakEntry.get('startAt', breakEntry.get('startTime', null)) is string &&
+        (
+          breakEntry.get('endAt', breakEntry.get('endTime', null)) == null ||
+          breakEntry.get('endAt', breakEntry.get('endTime', null)) is string
+        ) &&
+        breakEntry.get('durationMinutes', -1) is number &&
+        breakEntry.get('durationMinutes', -1) >= 0 &&
+        breakEntry.get('durationMinutes', -1) <= 720;
+    }
+    function validAttendanceCreateForOwner(recordId) {
+      let d = request.resource.data;
+      let employeeDocId = d.get('employeeId', '');
+      return d.keys().hasOnly([
+        'id', 'uid', 'employeeUid', 'authUid', 'email', 'employeeEmail',
+        'employeeId', 'employeeCode', 'employeeName', 'department', 'pmUid',
+        'date', 'checkInAt', 'checkOutAt', 'workingMinutes', 'status',
+        'attendanceMethod', 'officeLatitude', 'officeLongitude',
+        'officeRadiusMeters', 'distanceFromOffice', 'locationAccuracy',
+        'locationVerified', 'latitude', 'longitude', 'deviceInfo', 'breaks',
+        'totalBreakMinutes', 'isWfh', 'createdAt', 'updatedAt', 'notes'
+      ]) &&
+      authOwnsEmployeeRecord(employeeDocId) &&
+      ownsAttendanceCreateDocId(recordId, employeeDocId, d.get('date', '')) &&
+      d.get('employeeCode', '') is string &&
+      d.get('employeeCode', '') != '' &&
+      d.get('employeeCode', '') == employeeRecord(employeeDocId).get('employeeId', '') &&
+      d.get('authUid', '') == request.auth.uid &&
+      d.get('uid', '') in [request.auth.uid, employeeDocId] &&
+      d.get('employeeUid', '') in [request.auth.uid, employeeDocId] &&
+      d.get('checkInAt', null) != null &&
+      d.get('checkOutAt', null) == null &&
+      d.get('breaks', []) is list &&
+      d.get('breaks', []).size() == 0 &&
+      d.get('workingMinutes', -1) is number &&
+      d.get('workingMinutes', -1) == 0 &&
+      d.get('totalBreakMinutes', -1) == 0;
+    }
+    function validAttendanceSelfUpdate() {
+      let d = request.resource.data;
+      let old = resource.data;
+      let changed = d.diff(old).affectedKeys();
+      let newBreaks = d.get('breaks', []);
+      let oldBreaks = old.get('breaks', []);
+      return changed.hasOnly([
+        'checkOutAt', 'workingMinutes', 'breaks', 'totalBreakMinutes',
+        'notes', 'updatedAt', 'officeLatitude', 'officeLongitude',
+        'officeRadiusMeters', 'distanceFromOffice', 'locationAccuracy',
+        'locationVerified'
+      ]) &&
+      unchanged('id') &&
+      unchanged('uid') &&
+      unchanged('employeeUid') &&
+      unchanged('authUid') &&
+      unchanged('email') &&
+      unchanged('employeeEmail') &&
+      unchanged('employeeId') &&
+      unchanged('employeeCode') &&
+      unchanged('employeeName') &&
+      unchanged('department') &&
+      unchanged('pmUid') &&
+      unchanged('date') &&
+      unchanged('checkInAt') &&
+      unchanged('createdAt') &&
+      unchanged('status') &&
+      old.get('checkInAt', null) != null &&
+      (
+        old.get('checkOutAt', null) == null ||
+        old.get('checkOutAt', null) == ''
+      ) &&
+      (
+        (
+          changed.hasAny(['checkOutAt']) &&
+          d.get('checkOutAt', null) != null &&
+          d.get('workingMinutes', -1) is number &&
+          d.get('workingMinutes', -1) >= 0 &&
+          d.get('workingMinutes', -1) <= 1440 &&
+          d.get('totalBreakMinutes', -1) is number &&
+          d.get('totalBreakMinutes', -1) >= 0 &&
+          d.get('totalBreakMinutes', -1) <= 1440
+        ) ||
+        (
+          changed.hasAny(['breaks']) &&
+          (
+            d.get('checkOutAt', null) == null ||
+            d.get('checkOutAt', null) == ''
+          ) &&
+          newBreaks is list &&
+          newBreaks.size() > 0 &&
+          newBreaks.size() <= oldBreaks.size() + 1 &&
+          newBreaks.size() <= 100 &&
+          validBreakEntry(newBreaks[newBreaks.size() - 1]) &&
+          (
+            (
+              newBreaks.size() == oldBreaks.size() + 1 &&
+              newBreaks[newBreaks.size() - 1].get('endAt', null) == null
+            ) ||
+            (
+              newBreaks.size() == oldBreaks.size() &&
+              oldBreaks.size() > 0 &&
+              validBreakEntry(oldBreaks[oldBreaks.size() - 1]) &&
+              (
+                oldBreaks[oldBreaks.size() - 1].get('endAt', null) == null ||
+                oldBreaks[oldBreaks.size() - 1].get('endAt', null) == ''
+              ) &&
+              newBreaks[newBreaks.size() - 1].get('endAt', null) is string
+            )
+          ) &&
+          d.get('totalBreakMinutes', -1) is number &&
+          d.get('totalBreakMinutes', -1) >= 0 &&
+          d.get('totalBreakMinutes', -1) <= 1440
+        )
+      );
+    }
     function validAttendanceShape() {
       let d = request.resource.data;
       return (!('status' in d) || d.status is string) &&
@@ -300,8 +501,32 @@ service cloud.firestore {
     }
     function validLeaveShape() {
       let d = request.resource.data;
-      return (d.get('status', 'Pending') in ['Pending', 'Cancelled']) &&
-             d.keys().hasAll(['employeeId', 'type', 'startDate', 'endDate', 'reason']);
+      return d.keys().hasOnly([
+        'id', 'employeeUid', 'authUid', 'employeeId', 'employeeName',
+        'employeeEmail', 'email', 'department', 'employeeRole', 'pmUid',
+        'type', 'leaveCategory', 'startDate', 'endDate', 'reason', 'status',
+        'requestDate', 'createdAt', 'updatedAt', 'ceoStatus', 'ceoNotes',
+        'ceoReviewedBy', 'ceoReviewedAt', 'ctoStatus', 'ctoNotes',
+        'ctoReviewedBy', 'ctoReviewedAt', 'pmStatus', 'pmRecommendation',
+        'pmNotes', 'pmReviewedBy', 'pmReviewedAt', 'hrStatus', 'hrNotes',
+        'hrReviewedBy', 'hrReviewedAt', '_deductionApplied'
+      ]) &&
+      d.get('status', '') == 'Pending' &&
+      d.keys().hasAll(['employeeId', 'employeeUid', 'type', 'startDate', 'endDate', 'reason']) &&
+      d.get('employeeUid', '') == request.auth.uid &&
+      d.get('employeeId', '') == getEmployeeId() &&
+      d.get('type', '') in [
+        'Leave', 'WFH', 'Earn Leave', 'Sick Leave', 'Loss of Pay',
+        'Casual Leave', 'EL', 'SL', 'LOP'
+      ] &&
+      d.get('startDate', '') is string && d.get('startDate', '').size() == 10 &&
+      d.get('endDate', '') is string && d.get('endDate', '').size() == 10 &&
+      d.get('reason', '') is string && d.get('reason', '').size() > 0 &&
+      d.get('ceoStatus', 'Pending') == 'Pending' &&
+      d.get('ctoStatus', 'Waiting CEO') == 'Waiting CEO' &&
+      d.get('pmStatus', 'N/A') == 'N/A' &&
+      d.get('hrStatus', 'N/A') == 'N/A' &&
+      d.get('_deductionApplied', false) == false;
     }
     function validAuditShape() {
       return request.resource.data.keys().hasOnly([
@@ -321,28 +546,41 @@ service cloud.firestore {
       allow write: if false;
     }
 
+    match /debug_userdoc/{docId} {
+      allow create: if userDocExists();
+    }
+    match /debug_role/{docId} {
+      allow create: if getRole() != null;
+    }
+    match /debug_not_superadmin/{docId} {
+      allow create: if !isSuperAdmin();
+    }
+    match /debug_not_hradmin/{docId} {
+      allow create: if !isHrAdmin();
+    }
+    match /debug_not_pm/{docId} {
+      allow create: if !isProjectManager();
+    }
+
     // ── 1. Users (role-mapping) ──────────────────────────────────────────────
     match /users/{userId} {
       allow read: if isSelf(userId) || isHrAdmin() || isProjectManager();
-      allow create: if isConfigAdmin() || isProjectManager() || (
-        isRealUser() && isSelf(userId) && (
-          !('role' in request.resource.data) ||
-          request.resource.data.role == 'EMPLOYEE' ||
-          mirrorsEmployeeRole() ||
-          (
-            exists(/databases/$(database)/documents/employees/$(request.auth.uid)) &&
-            get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.role == request.resource.data.role
-          )
-        )
-      );
+      // Self-create: use relaxed mapping (email proves identity even without uid on employee doc).
+      // Self-update of the core mapping fields: also allow relaxed mapping so re-login
+      //   refreshes the mapping even if the employee doc uid wasn't yet backfilled.
+      allow create: if isConfigAdmin() || isProjectManager() ||
+        (isSelf(userId) && trustedUserMappingForCreate(request.resource.data) &&
+          request.resource.data.keys().hasOnly([
+            'uid', 'email', 'role', 'employeeId', 'employeeDocId', 'fullName', 'updatedAt'
+          ]));
       allow update: if isConfigAdmin() || isProjectManager() || (
         isRealUser() && isSelf(userId) && (
-          unchanged('role') ||
-          mirrorsEmployeeRole() ||
-          (
-            exists(/databases/$(database)/documents/employees/$(request.auth.uid)) &&
-            get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.role == request.resource.data.role
-          )
+          (userDocExists() &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly(['profilePhotoUrl', 'updatedAt'])) ||
+          (trustedUserMappingForCreate(request.resource.data) &&
+            request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+              'uid', 'email', 'role', 'employeeId', 'employeeDocId', 'fullName', 'updatedAt'
+            ]))
         )
       );
       allow delete: if isConfigAdmin() || isProjectManager();
@@ -365,7 +603,12 @@ service cloud.firestore {
             'emergencyContact', 'emergencyRelationship', 'skills', 'specialization',
             'preferredShift', 'linkedinUrl', 'faceDescriptor', 'isFaceEnrolled',
             'faceEnrolledAt', 'fullName', 'updatedAt', 'hasResume', 'resumeUrl',
-            'workEmail', 'personalEmail'
+            'desktopSessionId', 'mobileSessionId', 'currentSessionId',
+            'sessionFingerprint', 'lastLoginAt', 'lastActiveAt',
+            // uid backfill: employee may write their own Firebase Auth UID to their
+            // own document. This is not a privilege escalation — it only links the
+            // auth identity to the existing employee record for rule lookups.
+            'uid'
           ])
         )
       );
@@ -378,6 +621,9 @@ service cloud.firestore {
           isProjectManager() || isConfigAdmin() ||
           employeeId == request.auth.uid ||
           request.resource.data.get('employeeUid','~') == request.auth.uid ||
+          request.resource.data.get('authUid','~') == request.auth.uid ||
+          emailMatches(request.resource.data.get('email','')) ||
+          emailMatches(request.resource.data.get('employeeEmail','')) ||
           (getEmployeeDocId() != null && employeeId == getEmployeeDocId()) ||
           (getEmployeeId() != null && (employeeId == getEmployeeId() || employeeId == ('emp-' + getEmployeeId()))) ||
           request.resource.data.get('employeeId','~') == getEmployeeId() ||
@@ -390,6 +636,9 @@ service cloud.firestore {
           (getEmployeeId() != null && (employeeId == getEmployeeId() || employeeId == ('emp-' + getEmployeeId()))) ||
           (resource != null && (
             resource.data.get('employeeUid','~') == request.auth.uid ||
+            resource.data.get('authUid','~') == request.auth.uid ||
+            emailMatches(resource.data.get('email','')) ||
+            emailMatches(resource.data.get('employeeEmail','')) ||
             resource.data.get('employeeId','~') == getEmployeeId() ||
             resource.data.get('employeeId','~') == getEmployeeDocId()
           ))
@@ -411,7 +660,11 @@ service cloud.firestore {
           isConfigAdmin() || isProjectManager() || isSuperAdmin() ||
           employeeId == request.auth.uid ||
           (getEmployeeDocId() != null && employeeId == getEmployeeDocId()) ||
-          (getEmployeeId() != null && (employeeId == getEmployeeId() || employeeId == ('emp-' + getEmployeeId())))
+          (getEmployeeId() != null && (employeeId == getEmployeeId() || employeeId == ('emp-' + getEmployeeId()))) ||
+          request.resource.data.get('employeeUid', '~') == request.auth.uid ||
+          request.resource.data.get('authUid', '~') == request.auth.uid ||
+          emailMatches(request.resource.data.get('email', '')) ||
+          emailMatches(request.resource.data.get('employeeEmail', ''))
         );
         allow update, delete: if isSuperAdmin() || isConfigAdmin() || isProjectManager();
       }
@@ -421,36 +674,35 @@ service cloud.firestore {
     match /attendance/{recordId} {
       allow read: if isRealUser();
       allow create: if isRealUser() && (
-        recordId.split('_')[0] == request.auth.uid ||
-        request.resource.data.get('uid', '~') == request.auth.uid ||
-        request.resource.data.get('employeeUid', '~') == request.auth.uid ||
-        request.resource.data.get('authUid', '~') == request.auth.uid ||
-        (hasEmail() && (
-          (request.resource.data.get('email', '~') != '~' && (request.resource.data.get('email', '~') == userEmail() || request.resource.data.get('email', '~').lower() == userEmail().lower())) ||
-          (request.resource.data.get('employeeEmail', '~') != '~' && (request.resource.data.get('employeeEmail', '~') == userEmail() || request.resource.data.get('employeeEmail', '~').lower() == userEmail().lower()))
-        )) ||
-        ownsAttendanceDocId(recordId) ||
-        ownsAttendanceData(request.resource.data) ||
-        isProjectManager() || isSuperAdmin() || isHrAdmin()
+        isProjectManager() || isSuperAdmin() || isHrAdmin() ||
+        validAttendanceCreateForOwner(recordId)
       ) && validAttendanceShape() && (
         request.resource.data.get('date', '') == '' ||
         request.resource.data.get('date', '') >= '2026-07-27'
       );
       allow update: if isRealUser() && (
-        recordId.split('_')[0] == request.auth.uid ||
-        (resource != null && (
-          resource.data.get('uid', '~') == request.auth.uid ||
-          resource.data.get('employeeUid', '~') == request.auth.uid ||
-          resource.data.get('authUid', '~') == request.auth.uid ||
-          (hasEmail() && (
-            (resource.data.get('email', '~') != '~' && (resource.data.get('email', '~') == userEmail() || resource.data.get('email', '~').lower() == userEmail().lower())) ||
-            (resource.data.get('employeeEmail', '~') != '~' && (resource.data.get('employeeEmail', '~') == userEmail() || resource.data.get('employeeEmail', '~').lower() == userEmail().lower()))
-          ))
-        )) ||
-        ownsAttendanceDocId(recordId) ||
-        (resource != null && ownsAttendanceData(resource.data)) ||
-        ownsAttendanceData(request.resource.data) ||
-        isProjectManager() || isSuperAdmin() || isHrAdmin()
+        isProjectManager() || isSuperAdmin() || isHrAdmin() ||
+        (
+          // Fast path: the stored doc carries authUid == the writer's Firebase UID.
+          // This is set on check-in and never changed by self-update rules.
+          // No cross-doc reads required — the doc itself proves ownership.
+          (resource != null && resource.data.get('authUid', '~') == request.auth.uid &&
+            validAttendanceSelfUpdate()
+          ) ||
+          // Fallback paths for legacy docs without authUid
+          (
+            ownsAttendanceDocId(recordId) &&
+            (
+              recordId.split('_')[0] == request.auth.uid ||
+              (
+                authOwnsEmployeeRecord(recordId.split('_')[0]) &&
+                resource.data.get('authUid', '~') == request.auth.uid
+              ) ||
+              ownsAttendanceData(resource.data)
+            ) &&
+            validAttendanceSelfUpdate()
+          )
+        )
       );
       allow delete: if isRealUser() && (
         isProjectManager() || isConfigAdmin() || isSuperAdmin() ||
@@ -485,6 +737,7 @@ service cloud.firestore {
           isRealUser() &&
           ownsLeaveRequest(resource.data) &&
           request.resource.data.get('status', '') == 'Cancelled' &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
           unchanged('ceoStatus') &&
           unchanged('ctoStatus') &&
           unchanged('pmStatus') &&

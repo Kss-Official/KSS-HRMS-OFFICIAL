@@ -467,7 +467,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [authUid, setAuthUid] = useState<string | null>(null);
 
   // employeesRef always mirrors the current employees state for use in one-time effects
-  const employeesRef = useRef<Employee[]>([]);
+  const employeesRef = useRef<Employee[]>(employees);
 
   // attendanceRef mirrors live attendance for the auto-checkout effect.
   // Using a ref (instead of a closure over `attendance` state) prevents the
@@ -835,6 +835,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
   }, []);
 
+  const getAttendanceOwnerUid = (employee: Employee | undefined): string => {
+    const firebaseUid = auth.currentUser?.uid || user?.uid;
+    if (!employee || !firebaseUid) return getCanonicalEmployeeUid(employee, firebaseUid);
+
+    const active = activeEmployeeRef.current || activeEmployee;
+    const isActiveEmployee = !!active && (
+      employee.id === active.id ||
+      employee.employeeId === active.employeeId ||
+      (!!employee.uid && employee.uid === active.uid) ||
+      (!!employee.email && !!active.email && employee.email.toLowerCase() === active.email.toLowerCase())
+    );
+    const isFirebaseIdentity = employee.uid === firebaseUid || employee.id === firebaseUid;
+    if (isActiveEmployee || isFirebaseIdentity) {
+      return employee.uid === firebaseUid ? firebaseUid : (employee.id || firebaseUid);
+    }
+    return getCanonicalEmployeeUid(employee, firebaseUid);
+  };
+
   // Keep attendanceRef current so the stable auto-checkout interval always
   // reads the latest data without being in the effect's dep array.
   useEffect(() => {
@@ -1130,15 +1148,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
           const updatedNotes = (record.notes ? record.notes + ' | ' : '') + 'SYSTEM: Auto-checked out at 11:00 PM IST (Shift End Cutoff)';
 
-          // Auto close the record in Firestore
-          setDoc(doc(db, 'attendance', record.id), {
+          // Auto close the record in Firestore with authorization anchoring
+          const autoCheckoutPayload = cleanFirestorePayload({
             checkOutAt: forceCheckOutTime,
             workingMinutes: totalMins,
             breaks: updatedBreaks,
             totalBreakMinutes: totalBreakMins,
             notes: updatedNotes,
             updatedAt: serverTimestamp()
-          }, { merge: true })
+          });
+
+          updateDoc(doc(db, 'attendance', record.id), autoCheckoutPayload)
             .then(() => {
               // Audit only on confirmed success (fix 3).
               addAuditLogRef.current(
@@ -1150,16 +1170,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             .catch((err) => {
               // Bounded retry, and never retry a permanent authorization failure (fix 2).
               const code = String(err?.code || '');
-              const permanent = code === 'permission-denied' || code === 'unauthenticated' || code === 'invalid-argument';
+              const errMsg = String(err?.message || '').toLowerCase();
+              const permanent = code === 'permission-denied' || code === 'unauthenticated' || code === 'invalid-argument' || code === '403' ||
+                errMsg.includes('permission') || errMsg.includes('insufficient permissions') || errMsg.includes('permission-denied');
               const attempts = (attemptCounts.get(record.id) || 0) + 1;
               attemptCounts.set(record.id, attempts);
+              handleFirestoreError(err, OperationType.UPDATE, `attendance/${record.id}`);
               if (!permanent && attempts < MAX_ATTEMPTS) {
                 processedIds.delete(record.id);
               }
-              console.warn(
-                `[AuthContext] Auto-checkout write failed for ${record.id} (attempt ${attempts}/${MAX_ATTEMPTS}, ${permanent ? 'permanent' : 'retryable'}):`,
-                err
-              );
+              if (permanent) {
+                console.warn(
+                  `[AuthContext] Auto-checkout permanently denied or unauthorized for ${record.id} — stopping retries.`
+                );
+              } else {
+                console.warn(
+                  `[AuthContext] Auto-checkout write failed for ${record.id} (attempt ${attempts}/${MAX_ATTEMPTS}, retryable):`,
+                  err
+                );
+              }
             });
         }
       });
@@ -2873,68 +2902,128 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setUser(firebaseUser);
       setIsDemoMode(false);
-      const cleanEmail = firebaseUser.email?.toLowerCase();
-      let matched = employeesRef.current.find(e => 
-        e.email?.toLowerCase() === cleanEmail ||
-        (cleanEmail === 'abhinayav1919@kalpanaaa.in' && (e.email?.toLowerCase() === 'hr@kalpanaaa.in' || e.id === 'emp-KSS2407011'))
+      const cleanEmail = firebaseUser.email?.trim().toLowerCase();
+      const empList = (employeesRef.current && employeesRef.current.length > 0)
+        ? employeesRef.current
+        : (employees.length > 0 ? employees : INITIAL_EMPLOYEES);
+
+      const isAuthEmail = (value?: string) =>
+        !!cleanEmail && typeof value === 'string' && value.trim().toLowerCase() === cleanEmail;
+      const isAbhinayHrAlias = cleanEmail === 'abhinayav1919@kalpanaaa.in';
+      const localCandidate = empList.find(e =>
+        e.id === firebaseUser.uid ||
+        e.uid === firebaseUser.uid ||
+        isAuthEmail(e.email) ||
+        isAuthEmail((e as any).workEmail) ||
+        isAuthEmail((e as any).personalEmail) ||
+        (isAbhinayHrAlias && e.id === 'emp-KSS2407011')
       );
 
-      if (!matched && cleanEmail) {
-        try {
-          const userDoc = await getDoc(doc(db, 'users', firebaseUser.uid));
-          if (userDoc.exists()) {
-            const userData = userDoc.data();
-            matched = employeesRef.current.find(e => e.email?.toLowerCase() === userData.email?.toLowerCase());
+      const candidates = new Map<string, Employee>();
+      if (localCandidate?.id) candidates.set(localCandidate.id, localCandidate);
+      try {
+        const [uidSnapshot, userSnapshot] = await Promise.all([
+          getDoc(doc(db, 'employees', firebaseUser.uid)),
+          getDoc(doc(db, 'users', firebaseUser.uid))
+        ]);
+        if (uidSnapshot.exists()) {
+          candidates.set(uidSnapshot.id, { ...uidSnapshot.data(), id: uidSnapshot.id } as Employee);
+        }
+        const mappedEmployeeId = userSnapshot.exists() ? userSnapshot.data().employeeDocId : null;
+        if (typeof mappedEmployeeId === 'string' && mappedEmployeeId) {
+          const mappedEmployee = empList.find(e => e.id === mappedEmployeeId);
+          candidates.set(mappedEmployeeId, mappedEmployee || ({ id: mappedEmployeeId } as Employee));
+        }
+      } catch (err) {
+        handleFirestoreError(err, OperationType.GET, `employees/${firebaseUser.uid}`);
+      }
+
+      if (cleanEmail) {
+        const emailFields = ['email', 'workEmail', 'personalEmail'];
+        const emailResults = await Promise.all(emailFields.map(async field => {
+          try {
+            return await getDocs(query(collection(db, 'employees'), where(field, '==', cleanEmail)));
+          } catch (err) {
+            handleFirestoreError(err, OperationType.LIST, `employees where ${field}`);
+            return null;
           }
-        } catch (e) {
-          console.warn('User doc fetch exception:', e);
+        }));
+        emailResults.forEach(snapshot => snapshot?.forEach(employeeSnapshot => {
+          candidates.set(employeeSnapshot.id, {
+            ...employeeSnapshot.data(),
+            id: employeeSnapshot.id
+          } as Employee);
+        }));
+      }
+
+      let matched: Employee | undefined;
+      for (const candidate of candidates.values()) {
+        let directoryRecord: Employee;
+        try {
+          const employeeSnapshot = await getDoc(doc(db, 'employees', candidate.id));
+          if (!employeeSnapshot.exists()) continue;
+          directoryRecord = { ...employeeSnapshot.data(), id: employeeSnapshot.id } as Employee;
+        } catch (err) {
+          handleFirestoreError(err, OperationType.GET, `employees/${candidate.id}`);
+          continue;
+        }
+        const linkedToAuth = directoryRecord.uid === firebaseUser.uid ||
+          (directoryRecord as any).employeeUid === firebaseUser.uid ||
+          isAuthEmail(directoryRecord.email) ||
+          isAuthEmail((directoryRecord as any).workEmail) ||
+          isAuthEmail((directoryRecord as any).personalEmail) ||
+          (isAbhinayHrAlias && directoryRecord.id === 'emp-KSS2407011');
+        if (linkedToAuth) {
+          matched = directoryRecord;
+          break;
         }
       }
 
-      if (matched) {
-        setActiveEmployee(matched);
-        setRole(matched.role);
-        setIsAuthenticated(true);
-        setIsSessionReady(true);
-        localStorage.setItem('kss_v1_session', matched.id);
-        if (matched.email) localStorage.setItem('kss_v1_session_email', matched.email.toLowerCase());
+      if (!matched) {
+        console.error(`[Auth] No verified employee directory record matches Firebase UID ${firebaseUser.uid}.`);
+        setIsAuthenticated(false);
+        setActiveEmployee(null);
+        toast.error('No verified employee record was found for this account. Please contact HR.');
+        return;
+      }
 
-        // Sync role to users/{uid} for Firestore Security Rules RBAC lookup.
-        //
-        // P0 FIX: `employeeDocId` is new and REQUIRED by firestore.rules. The rules
-        // must verify that this mapping faithfully mirrors the role recorded on the
-        // (admin-write-only) employees record before accepting a privileged role —
-        // otherwise any employee could write themselves role: 'SUPER_ADMIN' here and
-        // every isSuperAdmin()/isHrAdmin() check in the ruleset would return true.
-        //
-        // The rules can only cross-check via get() on a KNOWN path, and the two
-        // existing fields cannot produce one: `employees` documents are keyed
-        // `emp-KSS2407002` for every seeded employee, while `employeeId` holds the
-        // bare code `KSS2407002` and `uid` holds the Firebase uid. Neither resolves
-        // to the document. Without this field the cross-check could never succeed and
-        // EVERY seeded privileged account (CEO, CTO, HR, PM) was denied on create,
-        // silently, leaving getRole() null and no privileges at all.
-        //
-        // P1 FIX: the rejection is no longer swallowed. A failure here is the single
-        // point that decides whether this session has any privileges whatsoever, so
-        // it must be visible in diagnostics rather than a bare no-op catch.
-        setDoc(doc(db, 'users', firebaseUser.uid), {
+      try {
+        await setDoc(doc(db, 'users', firebaseUser.uid), {
           uid: firebaseUser.uid,
-          email: matched.email?.toLowerCase() || firebaseUser.email?.toLowerCase(),
+          email: cleanEmail || '',
           role: matched.role,
           employeeId: matched.employeeId,
           employeeDocId: matched.id,
           fullName: matched.fullName,
           updatedAt: serverTimestamp()
-        }, { merge: true }).catch((err) => {
-          console.error(
-            `[Auth] Failed to sync users/${firebaseUser.uid} role mapping (${matched.role}). ` +
-            'Every privileged Firestore rule will deny for this session until this succeeds.',
-            err
-          );
-          handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}`);
+        }, { merge: true });
+        // Backfill the Firebase Auth UID onto the employee document so future rule
+        // evaluations can match via uid field (not just email). Fire-and-forget.
+        setDoc(doc(db, 'employees', matched.id), {
+          uid: firebaseUser.uid,
+          updatedAt: serverTimestamp()
+        }, { merge: true }).catch((e) => {
+          console.warn('[Auth] Employee uid backfill failed (non-fatal):', e);
         });
+      } catch (err) {
+        console.error(
+          `[Auth] Failed to verify users/${firebaseUser.uid} employee mapping. ` +
+          'Self-service Firestore operations require a valid users/{uid} mapping.',
+          err
+        );
+        handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}`);
+        toast.error('Your employee record could not be verified. Please contact HR.');
+        setIsAuthenticated(false);
+        setActiveEmployee(null);
+        return;
       }
+
+      setActiveEmployee(matched);
+      setRole(matched.role);
+      setIsAuthenticated(true);
+      setIsSessionReady(true);
+      localStorage.setItem('kss_v1_session', matched.id);
+      if (matched.email) localStorage.setItem('kss_v1_session_email', matched.email.toLowerCase());
     });
     return () => unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3085,27 +3174,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.setItem('kss_v1_session', matched.id);
             localStorage.setItem('kss_v1_session_id', newSessionId);
             localStorage.setItem('kss_v1_device_category', cat);
-            setDoc(doc(db, 'employees', matched.id), sessionUpdates, { merge: true }).catch(() => { });
-
-            // Sync role to users/{uid} for Firestore Security Rules RBAC lookup.
-            // employeeDocId is required by firestore.rules to cross-check the role
-            // against the admin-write-only employees record — see the onAuthStateChanged
-            // sync above for why neither `uid` nor `employeeId` can address that doc.
-            setDoc(doc(db, 'users', userCred.user.uid), {
+            setDoc(doc(db, 'employees', matched.id), {
+              ...sessionUpdates,
+              // Backfill Firebase Auth UID onto the employee document so that
+              // Firestore security rules can resolve ownership via uid match
+              // on all subsequent requests (not just email match).
               uid: userCred.user.uid,
-              email: cleanEmail,
-              role: assignedRole,
-              employeeId: matched.employeeId,
-              employeeDocId: matched.id,
-              fullName: matched.fullName,
-              updatedAt: serverTimestamp()
-            }, { merge: true }).catch((err) => {
-              console.error(
-                `[Auth] Failed to sync users/${userCred.user.uid} role mapping (${assignedRole}). ` +
-                'Every privileged Firestore rule will deny for this session until this succeeds.',
-                err
-              );
-            });
+              updatedAt: new Date().toISOString()
+            }, { merge: true }).catch(() => { });
 
             addAuditLog('USER_LOGIN', matched.fullName, `Firebase Auth Login (${assignedRole})`);
             clearLockout(matched.id);
@@ -3274,18 +3350,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const secondaryAuth = getAuth(secondaryApp);
       
       const userCred = await createUserWithEmailAndPassword(secondaryAuth, email, pass);
+      const employee = (employeesRef.current.length > 0 ? employeesRef.current : employees).find(
+        e => e.email?.toLowerCase() === email.toLowerCase()
+      );
+      if (!employee) {
+        await signOut(secondaryAuth);
+        return { success: false, message: 'No matching employee record was found for this account.' };
+      }
       
-      // P0 FIX: this users/{uid} doc is what firestore.rules role helpers read.
-      // It was previously created WITHOUT a role field, so the account could never
-      // resolve privileges (and a missing doc made rule get() calls throw).
       await setDoc(doc(db, 'users', userCred.user.uid), {
         uid: userCred.user.uid,
         email: email,
-        role: 'EMPLOYEE',
-        fullName: email.split('@')[0],
-        createdAt: new Date().toISOString()
-      }).catch(err => {
-        console.error(`[Auth] Failed to provision users/${userCred.user.uid} — privileged-rule lookups will deny for this account until fixed.`, err);
+        role: employee.role,
+        employeeId: employee.employeeId,
+        employeeDocId: employee.id,
+        fullName: employee.fullName,
+        updatedAt: serverTimestamp()
       });
 
       await signOut(secondaryAuth);
@@ -3406,20 +3486,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const userCred = await createUserWithEmailAndPassword(secondaryAuth, cleanEmail, empData.password);
         uid = userCred.user.uid;
-        
-        // Write user mapping record to Firestore using primary DB.
-        // P0 FIX: surface failures — this doc is the rules' source of truth for
-        // role resolution; a silent failure leaves the account permanently unprivileged.
-        await setDoc(doc(db, 'users', uid), {
-          uid: uid,
-          email: cleanEmail,
-          role: empData.role,
-          fullName: empData.fullName,
-          createdAt: new Date().toISOString()
-        }).catch(err => {
-          console.error(`[Auth] Failed to write users/${uid} role mapping (${empData.role}). Admin-only rule checks will deny for this account.`, err);
-        });
-
         // Sign out secondary auth so we don't hold the session
         await signOut(secondaryAuth);
       } catch (err: any) {
@@ -3463,10 +3529,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? { ...empWithoutResume, hasResume: true }
       : newEmp;
 
-    // Persist to Firestore
-    setDoc(doc(db, 'employees', newEmp.id), empPayload).catch(err => {
+    // Persist the authoritative employee record before creating its auth mapping;
+    // mapping rules cross-check the employee document and role.
+    try {
+      await setDoc(doc(db, 'employees', newEmp.id), empPayload);
+    } catch (err) {
       handleFirestoreError(err, OperationType.WRITE, `employees/${newEmp.id}`);
-    });
+      throw err;
+    }
+
+    if (cleanEmail && empData.password) {
+      try {
+        await setDoc(doc(db, 'users', uid), {
+          uid,
+          email: cleanEmail,
+          role: newEmp.role,
+          employeeId: newEmp.employeeId,
+          employeeDocId: newEmp.id,
+          fullName: newEmp.fullName,
+          updatedAt: serverTimestamp()
+        });
+      } catch (err) {
+        handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
+        throw err;
+      }
+    }
 
     addAuditLog('EMPLOYEE_CREATED', `${newEmp.employeeId} (${newEmp.fullName})`, `Added to ${newEmp.department} as ${newEmp.designation}`);
     return newEmp;
@@ -3781,7 +3868,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Employee not found.' };
     }
 
-    const empUid = getCanonicalEmployeeUid(emp, user?.uid);
+    const empUid = getAttendanceOwnerUid(emp);
     const todayStr = customDate || getEmployeeWorkDate(new Date());
     const recordId = getAttendanceDocId(empUid, todayStr);
 
@@ -3889,14 +3976,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           id: recordId,
           uid: empUid,
           employeeUid: empUid,
-          // P0 FIX: the REAL Firebase auth uid of whoever performed this
-          // check-in. Recording it makes ownership provable from this document
-          // alone (see ownsAttendanceData() in firestore.rules) with no
-          // cross-document get() and no dependency on users/{uid} mapping.
-          authUid: isSelfCheckIn ? (user?.uid || null) : ((user?.uid && (
-            emp.uid === user.uid || emp.id === user.uid || empUid === user.uid ||
-            (emp.email && user.email && emp.email.toLowerCase() === user.email.toLowerCase())
-          )) ? user.uid : null),
+          // Keep the authenticated owner distinct from the employee document ID;
+          // Firestore rules validate this against the trusted users/{uid} mapping.
+          authUid: isSelfCheckIn ? (auth.currentUser?.uid || user?.uid || null) : null,
           email: emp.email || user?.email || '',
           employeeEmail: emp.email || user?.email || '',
           employeeId: emp.id,
@@ -3984,7 +4066,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: false, message: 'Employee not found.' };
     }
 
-    const empUid = getCanonicalEmployeeUid(emp, user?.uid);
+    const empUid = getAttendanceOwnerUid(emp);
     const todayStr = customDate || getEmployeeWorkDate(new Date());
     const canonicalId = getAttendanceDocId(empUid, todayStr);
 
@@ -4097,21 +4179,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (finalTotalBreakMinutes > 0) {
           durationMins = Math.max(0, durationMins - finalTotalBreakMinutes);
         }
-        const isSelfCheckOut = !!emp && (
-          (!!activeEmployee && (
-            emp.id === activeEmployee.id ||
-            emp.employeeId === activeEmployee.employeeId ||
-            emp.uid === activeEmployee.uid ||
-            (!!emp.email && !!activeEmployee.email && emp.email.toLowerCase() === activeEmployee.email.toLowerCase())
-          )) ||
-          (!!user && (
-            emp.uid === user.uid ||
-            emp.id === user.uid ||
-            empUid === user.uid ||
-            (!!emp.email && !!user.email && emp.email.toLowerCase() === user.email.toLowerCase())
-          ))
-        );
-
         const updates: Record<string, any> = {
           checkOutAt: serverTimestamp(),
           workingMinutes: durationMins,
@@ -4125,16 +4192,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           locationVerified: existingData.locationVerified !== undefined ? existingData.locationVerified : true,
           updatedAt: serverTimestamp()
         };
-        if (!existingData.authUid && isSelfCheckOut && user?.uid) {
-          updates.authUid = user.uid;
-        }
-        if (!existingData.email && (emp.email || user?.email)) {
-          updates.email = emp.email || user?.email || '';
-        }
-        if (!existingData.employeeEmail && (emp.email || user?.email)) {
-          updates.employeeEmail = emp.email || user?.email || '';
-        }
-
         transaction.update(docRef, cleanFirestorePayload(updates));
         return {
           alreadyCheckedOut: false,
@@ -4195,7 +4252,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const emp = findEmployee(employeeId);
     // BUG 4 FIX: Same canonical UID as recordCheckIn/endBreak — single doc target.
-    const empUid = getCanonicalEmployeeUid(emp, user?.uid);
+    const empUid = getAttendanceOwnerUid(emp);
     const todayStr = getWorkDate(new Date());
     const canonicalId = getAttendanceDocId(empUid, todayStr);
 
@@ -4251,11 +4308,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         // Doc is guaranteed to exist and be checked-in (guarded above) — always an
         // update, never a create that could mint a phantom attendance record.
-        transaction.update(docRef, cleanFirestorePayload({
+        const startBreakUpdates: Record<string, any> = {
           breaks: updatedBreaks,
           totalBreakMinutes: totalBreakMins,
           updatedAt: serverTimestamp()
-        }));
+        };
+        transaction.update(docRef, cleanFirestorePayload(startBreakUpdates));
 
         return { 
           success: true, 
@@ -4302,7 +4360,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const emp = findEmployee(employeeId);
     // BUG 4 FIX: Same canonical UID as recordCheckIn/startBreak — single doc target.
-    const empUid = getCanonicalEmployeeUid(emp, user?.uid);
+    const empUid = getAttendanceOwnerUid(emp);
     const todayStr = getWorkDate(new Date());
     const canonicalId = getAttendanceDocId(empUid, todayStr);
 
@@ -4364,11 +4422,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const totalBreakMins = calculateTotalBreakMinutes(updatedBreaks);
 
         // Doc is guaranteed to exist and be open (guarded above) — always an update.
-        transaction.update(docRef, cleanFirestorePayload({
+        const endBreakUpdates: Record<string, any> = {
           breaks: updatedBreaks,
           totalBreakMinutes: totalBreakMins,
           updatedAt: serverTimestamp()
-        }));
+        };
+        transaction.update(docRef, cleanFirestorePayload(endBreakUpdates));
 
         return { 
           success: true, 
@@ -4605,11 +4664,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const submitLeaveRequest = async (data: Omit<LeaveRequest, 'id' | 'status' | 'requestDate' | 'createdAt' | 'updatedAt'>) => {
     const emp = activeEmployee;
+    const realAuthUid = auth.currentUser?.uid || user?.uid || '';
     const empId = data.employeeId || emp?.employeeId || emp?.id || `EMP-${Date.now().toString().slice(-6)}`;
     const empName = data.employeeName || emp?.fullName || 'Employee';
     const empDept = data.department || emp?.department || 'Engineering';
     const empRole = data.employeeRole || emp?.role || 'EMPLOYEE';
-    const empUid = data.employeeUid || emp?.uid || user?.uid || '';
+    const empUid = realAuthUid || data.employeeUid || emp?.uid || '';
+    const empEmail = emp?.email || user?.email || auth.currentUser?.email || '';
     const pmUid = data.pmUid || emp?.pmUid || emp?.reportingManagerUid || 'uid-KSS2407003';
 
     const result = await LeaveService.submitLeaveRequest({
@@ -4617,6 +4678,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       employeeUid: empUid,
       employeeId: empId,
       employeeName: empName,
+      employeeEmail: empEmail,
+      email: empEmail,
       department: empDept,
       employeeRole: empRole,
       pmUid: pmUid,
