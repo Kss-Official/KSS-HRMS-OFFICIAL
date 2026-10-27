@@ -96,9 +96,10 @@ const RETRYABLE_LISTENER_CODES = new Set([
 
 export function isRetryableListenerError(err: unknown): boolean {
   const code = (err as any)?.code as string | undefined;
-  if (code === 'permission-denied' || code === 'unauthenticated') return false;
+  const status = (err as any)?.status;
+  if (code === 'permission-denied' || code === 'unauthenticated' || code === '403' || status === 403) return false;
   const message = String((err as any)?.message || err || '').toLowerCase();
-  if (message.includes('permission') || message.includes('insufficient permissions')) return false;
+  if (message.includes('permission') || message.includes('insufficient permissions') || message.includes('permission_denied') || message.includes('403')) return false;
   if (code) return RETRYABLE_LISTENER_CODES.has(code);
   return NETWORK_FRAGMENTS.some(f => message.includes(f));
 }
@@ -110,15 +111,10 @@ export function nextBackoffMs(attempt: number): number {
 }
 
 /**
- * Auth login codes for which falling back to the local (non-Firebase) credential
- * check is SAFE — i.e. Firebase definitely rejected THIS user's credentials.
- *
- * Config/environment failures (provider disabled, invalid API key, unauthorized
- * domain, network down, disabled account, rate limiting) MUST NOT fall back
- * silently: doing so masked the P0 outage where every portal lost realtime sync
- * while the console showed nothing but identitytoolkit HTTP 400s.
+ * Distinguishes credential rejection from Firebase configuration and availability
+ * failures so login can show the right message without creating a local session.
  */
-const FALLBACK_SAFE_AUTH_CODES = new Set([
+const CREDENTIAL_REJECTION_CODES = new Set([
   'auth/invalid-credential',
   'auth/invalid-login-credentials',
   'auth/wrong-password',
@@ -126,7 +122,6 @@ const FALLBACK_SAFE_AUTH_CODES = new Set([
   'auth/invalid-email'
 ]);
 
-export function shouldFallbackToLocalLogin(fbErrorCode: string | undefined | null): boolean {
-  if (!fbErrorCode) return true; // non-Firebase exception — preserve legacy behavior
-  return FALLBACK_SAFE_AUTH_CODES.has(fbErrorCode);
+export function isCredentialRejection(fbErrorCode: string | undefined | null): boolean {
+  return !!fbErrorCode && CREDENTIAL_REJECTION_CODES.has(fbErrorCode);
 }

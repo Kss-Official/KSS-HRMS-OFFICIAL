@@ -1,4 +1,4 @@
-import { db, cleanFirestorePayload } from './firebase';
+import { db, cleanFirestorePayload, auth } from './firebase';
 import { 
   collection, 
   doc, 
@@ -99,7 +99,7 @@ export function calculateChargeDays(startDate: string, endDate: string): number 
  */
 function isEarnLeaveType(type: string | undefined): boolean {
   if (!type) return false;
-  return type === 'Earn Leave' || type === 'Leave';
+  return type === 'Earn Leave' || type === 'Leave' || type === 'EL';
 }
 
 /**
@@ -107,7 +107,7 @@ function isEarnLeaveType(type: string | undefined): boolean {
  */
 function isSickLeaveType(type: string | undefined): boolean {
   if (!type) return false;
-  return type === 'Sick Leave';
+  return type === 'Sick Leave' || type === 'SL';
 }
 
 /**
@@ -504,10 +504,16 @@ export class LeaveService {
     const cleanEmpId = (data.employeeId || 'EMP').replace(/[^a-zA-Z0-9_-]/g, '');
     const deterministicId = `LR_${cleanEmpId}_${data.startDate}_${data.type}`;
     const nowIso = new Date().toISOString();
+    const currentUid = auth.currentUser?.uid;
+    const resolvedUid = (currentUid && (!data.employeeUid || data.employeeUid.startsWith('uid-')))
+      ? currentUid
+      : (data.employeeUid || currentUid || '');
+    const userEmail = auth.currentUser?.email || (data as any).employeeEmail || (data as any).email || '';
 
     const newRequest: LeaveRequest = {
       ...data,
       id: deterministicId,
+      employeeUid: resolvedUid,
       status: 'Pending',
       ceoStatus: 'Pending',
       ctoStatus: 'Waiting CEO',
@@ -517,6 +523,8 @@ export class LeaveService {
       createdAt: nowIso,
       updatedAt: nowIso,
       _deductionApplied: false,
+      ...(userEmail ? { email: userEmail, employeeEmail: userEmail } : {}),
+      ...(currentUid ? { authUid: currentUid } : {})
     };
 
     // Execute atomic transaction for overlapping date lock validation
@@ -542,12 +550,14 @@ export class LeaveService {
         const lockPayload: LeaveLockEntry = {
           id: dStr,
           requestId: deterministicId,
-          employeeUid: data.employeeUid || '',
+          employeeUid: resolvedUid,
           employeeId: data.employeeId,
           type: data.type,
           active: true,
           reservedAt: nowIso,
-        };
+          ...(userEmail ? { email: userEmail, employeeEmail: userEmail } : {}),
+          ...(currentUid ? { authUid: currentUid } : {})
+        } as any;
         txn.set(lockRef, cleanFirestorePayload(lockPayload));
       }
     });

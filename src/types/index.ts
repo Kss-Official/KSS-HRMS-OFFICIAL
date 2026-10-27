@@ -37,17 +37,20 @@ export interface BreakEntry {
   durationMinutes: number;
 }
 
-export type LeaveCategory = 'Earn Leave' | 'Sick Leave' | 'WFH' | 'Loss of Pay' | 'Casual Leave';
+export type LeaveCategory = 'Earn Leave' | 'Sick Leave' | 'WFH' | 'Loss of Pay' | 'Casual Leave' | 'EL' | 'SL' | 'LOP';
 
 export interface LeaveRequest {
   id: string;
   employeeUid?: string; // Canonical Firebase Auth UID anchor
+  authUid?: string;     // Firebase Auth UID of applicant
   employeeId: string;   // Corporate identifier (e.g. KSS2407004)
   employeeName: string;
+  employeeEmail?: string;
+  email?: string;
   department?: string;
   employeeRole?: UserRole | string;
   pmUid?: string;       // Assigned Project Manager Auth UID for scoped routing
-  type: 'Leave' | 'WFH' | 'Earn Leave' | 'Sick Leave' | 'Loss of Pay' | 'Casual Leave';
+  type: 'Leave' | 'WFH' | 'Earn Leave' | 'Sick Leave' | 'Loss of Pay' | 'Casual Leave' | 'EL' | 'SL' | 'LOP';
   leaveCategory?: LeaveCategory;
   startDate: string;    // YYYY-MM-DD
   endDate: string;      // YYYY-MM-DD
@@ -133,7 +136,7 @@ export interface LeaveLockEntry {
   requestId: string;
   employeeUid: string;
   employeeId: string;
-  type: 'Leave' | 'WFH' | 'Earn Leave' | 'Sick Leave' | 'Loss of Pay' | 'Casual Leave';
+  type: 'Leave' | 'WFH' | 'Earn Leave' | 'Sick Leave' | 'Loss of Pay' | 'Casual Leave' | 'EL' | 'SL' | 'LOP';
   active: boolean;
   reservedAt: string;
 }
