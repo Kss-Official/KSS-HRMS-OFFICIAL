@@ -4261,19 +4261,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const recordId = existingRec?.id ?? canonicalId;
     const docRef = doc(db, 'attendance', recordId);
 
+    const prevAttendance = attendance;
     const nowISO = new Date().toISOString();
 
     try {
       const res = await runTransaction(db, async (transaction) => {
         const docSnap = await transaction.get(docRef);
         let existingBreaks: any[] = [];
-        // P0 FIX: a break must NEVER create the attendance document. The former
-        // `else` branch wrote a record carrying only { breaks } — no date, no
-        // checkInAt, no status — which the listener then materialised as "Present"
-        // (`data.status || 'Present'`), counted the employee present without a
-        // check-in, hid the doc from every orderBy('date') query, and was silently
-        // wiped to `breaks: []` by the next check-in's merge. An open shift is now
-        // a precondition.
         if (!docSnap.exists()) {
           throw new Error('Please check in before starting a break.');
         }
@@ -4286,28 +4280,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         existingBreaks = Array.isArray(data.breaks) ? data.breaks : [];
 
-        // Auto-close any previous unclosed break before starting the new one
+        // Auto-close any previous unclosed break before starting the new one.
+        // Clean legacy dual startAt/startTime fields to consistent startAt/endAt.
         const sanitizedBreaks = existingBreaks.map((b: any) => {
-          if (!b.endAt && !(b as any).endTime) {
-            const startIso = formatTimestampToISO(b.startAt || (b as any).startTime) || nowISO;
+          const startIso = formatTimestampToISO(b.startAt || b.startTime) || nowISO;
+          if (!b.endAt && !b.endTime) {
             const diffMs = Math.max(0, new Date(nowISO).getTime() - new Date(startIso).getTime());
             return {
-              ...b,
+              type: b.type,
               startAt: startIso,
               endAt: nowISO,
-              endTime: nowISO,
               durationMinutes: Math.max(1, Math.min(MAX_BREAK_MINUTES, Math.round(diffMs / 60000)))
             };
           }
-          return b;
+          return {
+            type: b.type,
+            startAt: startIso,
+            endAt: formatTimestampToISO(b.endAt || b.endTime) || null,
+            durationMinutes: Number(b.durationMinutes) || 0
+          };
         });
 
-        const newBreak = { type: canonicalBreakType, startAt: nowISO, startTime: nowISO, endAt: null, durationMinutes: 0 };
+        // Single startAt format without duplicate startTime
+        const newBreak = { type: canonicalBreakType, startAt: nowISO, endAt: null, durationMinutes: 0 };
         const updatedBreaks = [...sanitizedBreaks, newBreak];
         const totalBreakMins = calculateTotalBreakMinutes(updatedBreaks);
 
-        // Doc is guaranteed to exist and be checked-in (guarded above) — always an
-        // update, never a create that could mint a phantom attendance record.
         const startBreakUpdates: Record<string, any> = {
           breaks: updatedBreaks,
           totalBreakMinutes: totalBreakMins,
@@ -4323,21 +4321,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       });
 
-      // Optimistically update React state immediately
+      // Update React state after confirmed transaction write
       setAttendance(prev => {
         return prev.map(rec => {
           if (rec.id === recordId || (rec.employeeId === emp?.id && rec.date === todayStr)) {
-            const currentBreaks = (rec.breaks || []).map((b: any) => {
-              if (!b.endAt && !(b as any).endTime) {
-                return { ...b, endAt: nowISO, endTime: nowISO, durationMinutes: 1 };
-              }
-              return b;
-            });
-            const newBreaks = [...currentBreaks, { type: breakType, startAt: nowISO, startTime: nowISO, endAt: null, durationMinutes: 0 }];
             return {
               ...rec,
-              breaks: (res as any).breaks || newBreaks,
-              totalBreakMinutes: (res as any).totalBreakMinutes || calculateTotalBreakMinutes(newBreaks)
+              breaks: (res as any).breaks,
+              totalBreakMinutes: (res as any).totalBreakMinutes
             };
           }
           return rec;
@@ -4345,9 +4336,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       addAuditLog('ATTENDANCE_BREAK_START', emp?.fullName || empUid, `Started ${breakType}`);
+      toast.success(`${breakType} started!`);
       return res;
     } catch (err: any) {
+      // Roll back state on failure & show visible user error
+      setAttendance(prevAttendance);
       handleFirestoreError(err, OperationType.UPDATE, `attendance/${recordId}`);
+      toast.error(err.message || 'Failed to start break.');
       return { success: false, message: err.message || 'Failed to start break.' };
     }
   };
@@ -4369,6 +4364,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const recordId = existingRec?.id ?? canonicalId;
     const docRef = doc(db, 'attendance', recordId);
 
+    const prevAttendance = attendance;
     const nowMs = Date.now();
     const nowISO = new Date(nowMs).toISOString();
 
@@ -4376,10 +4372,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await runTransaction(db, async (transaction) => {
         const docSnap = await transaction.get(docRef);
         let existingBreaks: any[] = [];
-        // P0/P1 FIX (mirror of startBreak): never create the attendance doc from a
-        // break, and never mutate a completed shift. Closing a break on a checked-out
-        // record leaves workingMinutes (already derived from the final break total)
-        // untouched, so the record then reports more break time than the shift holds.
         if (!docSnap.exists()) {
           throw new Error('No attendance record found for today. Please check in first.');
         }
@@ -4389,10 +4381,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         existingBreaks = Array.isArray(data.breaks) ? data.breaks : [];
 
-        // B18 FIX: derive the open break from the authoritative in-transaction doc
-        // only. The former `|| existingRec?.breaks?.find(...)` fallback read stale
-        // React state, so when the server doc had no open break the user was shown
-        // "…completed! (N mins total)" for a break that was never written.
         const openBreak = existingBreaks.find((b: any) => !b.endAt && !(b as any).endTime);
 
         let breakMins = 1;
@@ -4402,26 +4390,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           breakMins = Math.max(1, Math.min(MAX_BREAK_MINUTES, Math.round(diffMs / 60000)));
         }
 
+        // Clean to single startAt and endAt without duplicate startTime/endTime
         const updatedBreaks = existingBreaks.map((b: any) => {
           const isOpen = !b.endAt && !(b as any).endTime;
+          const startIso = formatTimestampToISO(b.startAt || (b as any).startTime) || nowISO;
           if (isOpen) {
-            const startIso = formatTimestampToISO(b.startAt || (b as any).startTime) || nowISO;
-            const diffMs = Math.max(0, nowMs - new Date(startIso).getTime());
-            const mins = Math.max(1, Math.min(MAX_BREAK_MINUTES, Math.round(diffMs / 60000)));
             return {
-              ...b,
+              type: b.type,
               startAt: startIso,
               endAt: nowISO,
-              endTime: nowISO,
-              durationMinutes: mins
+              durationMinutes: breakMins
             };
           }
-          return b;
+          return {
+            type: b.type,
+            startAt: startIso,
+            endAt: formatTimestampToISO(b.endAt || (b as any).endTime) || null,
+            durationMinutes: Number(b.durationMinutes) || 0
+          };
         });
 
         const totalBreakMins = calculateTotalBreakMinutes(updatedBreaks);
 
-        // Doc is guaranteed to exist and be open (guarded above) — always an update.
         const endBreakUpdates: Record<string, any> = {
           breaks: updatedBreaks,
           totalBreakMinutes: totalBreakMins,
@@ -4437,28 +4427,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       });
 
-      // ALWAYS close open breaks in local state immediately
       setAttendance(prev => {
         return prev.map(rec => {
           if (rec.id === recordId || (rec.employeeId === emp?.id && rec.date === todayStr)) {
-            const updated = (rec.breaks || []).map((b: any) => {
-              if (!b.endAt && !(b as any).endTime) {
-                const s = formatTimestampToISO(b.startAt || (b as any).startTime) || nowISO;
-                const dMs = Math.max(0, nowMs - new Date(s).getTime());
-                return {
-                  ...b,
-                  startAt: s,
-                  endAt: nowISO,
-                  endTime: nowISO,
-                  durationMinutes: Math.max(1, Math.min(MAX_BREAK_MINUTES, Math.round(dMs / 60000)))
-                };
-              }
-              return b;
-            });
             return {
               ...rec,
-              breaks: (res as any).breaks || updated,
-              totalBreakMinutes: (res as any).totalBreakMinutes || calculateTotalBreakMinutes(updated)
+              breaks: (res as any).breaks,
+              totalBreakMinutes: (res as any).totalBreakMinutes
             };
           }
           return rec;
@@ -4466,16 +4441,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       addAuditLog('ATTENDANCE_BREAK_END', emp?.fullName || empUid, res.message);
+      toast.success(res.message);
       return res;
     } catch (err: any) {
+      setAttendance(prevAttendance);
       handleFirestoreError(err, OperationType.UPDATE, `attendance/${recordId}`);
-      // P1 FIX: this previously patched local state to "closed" and returned
-      // success:true. The write had NOT persisted, so the very next onSnapshot
-      // replaced state wholesale and the break re-opened with its timer running,
-      // while the user had been told it synced. Report the failure honestly and
-      // leave the break open so a retry is possible; the listener remains the single
-      // source of truth for the record's real state.
-      return { success: false, message: err?.message || 'Break could not be saved. Please try again.' };
+      toast.error(err.message || 'Failed to end break.');
+      return { success: false, message: err.message || 'Failed to end break.' };
     }
   };
 

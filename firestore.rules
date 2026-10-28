@@ -377,18 +377,26 @@ service cloud.firestore {
         breakEntry.keys().hasOnly([
           'type', 'startAt', 'startTime', 'endAt', 'endTime', 'durationMinutes'
         ]) &&
-        breakEntry.get('type', '') in [
+        ('type' in breakEntry) &&
+        breakEntry.type in [
           'Tea Break', 'Snack Break', 'Meal Break', 'Lunch Break',
           'Team Huddle', 'Team Meeting', 'Attainment / Training', 'Activity'
         ] &&
-        breakEntry.get('startAt', breakEntry.get('startTime', null)) is string &&
         (
-          breakEntry.get('endAt', breakEntry.get('endTime', null)) == null ||
-          breakEntry.get('endAt', breakEntry.get('endTime', null)) is string
+          ('startAt' in breakEntry && (breakEntry.startAt is string || breakEntry.startAt is timestamp)) ||
+          ('startTime' in breakEntry && (breakEntry.startTime is string || breakEntry.startTime is timestamp))
         ) &&
-        breakEntry.get('durationMinutes', -1) is number &&
-        breakEntry.get('durationMinutes', -1) >= 0 &&
-        breakEntry.get('durationMinutes', -1) <= 720;
+        (
+          !('endAt' in breakEntry) ||
+          breakEntry.endAt == null ||
+          breakEntry.endAt == '' ||
+          breakEntry.endAt is string ||
+          breakEntry.endAt is timestamp
+        ) &&
+        (
+          !('durationMinutes' in breakEntry) ||
+          (breakEntry.durationMinutes is number && breakEntry.durationMinutes >= 0 && breakEntry.durationMinutes <= 720)
+        );
     }
     function validAttendanceCreateForOwner(recordId) {
       let d = request.resource.data;
@@ -426,7 +434,7 @@ service cloud.firestore {
       let oldBreaks = old.get('breaks', []);
       return changed.hasOnly([
         'checkOutAt', 'workingMinutes', 'breaks', 'totalBreakMinutes',
-        'notes', 'updatedAt', 'officeLatitude', 'officeLongitude',
+        'notes', 'updatedAt', 'status', 'officeLatitude', 'officeLongitude',
         'officeRadiusMeters', 'distanceFromOffice', 'locationAccuracy',
         'locationVerified'
       ]) &&
@@ -444,7 +452,6 @@ service cloud.firestore {
       unchanged('date') &&
       unchanged('checkInAt') &&
       unchanged('createdAt') &&
-      unchanged('status') &&
       old.get('checkInAt', null) != null &&
       (
         old.get('checkOutAt', null) == null ||
@@ -475,17 +482,24 @@ service cloud.firestore {
           (
             (
               newBreaks.size() == oldBreaks.size() + 1 &&
-              newBreaks[newBreaks.size() - 1].get('endAt', null) == null
+              (
+                !('endAt' in newBreaks[newBreaks.size() - 1]) ||
+                newBreaks[newBreaks.size() - 1].endAt == null ||
+                newBreaks[newBreaks.size() - 1].endAt == ''
+              )
             ) ||
             (
               newBreaks.size() == oldBreaks.size() &&
               oldBreaks.size() > 0 &&
               validBreakEntry(oldBreaks[oldBreaks.size() - 1]) &&
               (
-                oldBreaks[oldBreaks.size() - 1].get('endAt', null) == null ||
-                oldBreaks[oldBreaks.size() - 1].get('endAt', null) == ''
-              ) &&
-              newBreaks[newBreaks.size() - 1].get('endAt', null) is string
+                ('endAt' in newBreaks[newBreaks.size() - 1]) &&
+                newBreaks[newBreaks.size() - 1].endAt != null &&
+                (
+                  newBreaks[newBreaks.size() - 1].endAt is string ||
+                  newBreaks[newBreaks.size() - 1].endAt is timestamp
+                )
+              )
             )
           ) &&
           d.get('totalBreakMinutes', -1) is number &&
@@ -681,27 +695,32 @@ service cloud.firestore {
         request.resource.data.get('date', '') >= '2026-07-27'
       );
       allow update: if isRealUser() && (
-        isProjectManager() || isSuperAdmin() || isHrAdmin() ||
         (
-          // Fast path: the stored doc carries authUid == the writer's Firebase UID.
-          // This is set on check-in and never changed by self-update rules.
-          // No cross-doc reads required — the doc itself proves ownership.
-          (resource != null && resource.data.get('authUid', '~') == request.auth.uid &&
-            validAttendanceSelfUpdate()
-          ) ||
-          // Fallback paths for legacy docs without authUid
+          // Fast path: the stored doc carries authUid, uid, employeeUid == request.auth.uid,
+          // or document ID prefix is request.auth.uid.
+          // Zero cross-doc reads required — the doc itself proves ownership.
+          resource != null &&
           (
-            ownsAttendanceDocId(recordId) &&
+            resource.data.get('authUid', '~') == request.auth.uid ||
+            resource.data.get('uid', '~') == request.auth.uid ||
+            resource.data.get('employeeUid', '~') == request.auth.uid ||
+            recordId.split('_')[0] == request.auth.uid
+          ) &&
+          validAttendanceSelfUpdate()
+        ) ||
+        isProjectManager() || isSuperAdmin() || isHrAdmin() ||
+        // Fallback paths for legacy docs without authUid
+        (
+          ownsAttendanceDocId(recordId) &&
+          (
+            recordId.split('_')[0] == request.auth.uid ||
             (
-              recordId.split('_')[0] == request.auth.uid ||
-              (
-                authOwnsEmployeeRecord(recordId.split('_')[0]) &&
-                resource.data.get('authUid', '~') == request.auth.uid
-              ) ||
-              ownsAttendanceData(resource.data)
-            ) &&
-            validAttendanceSelfUpdate()
-          )
+              authOwnsEmployeeRecord(recordId.split('_')[0]) &&
+              resource.data.get('authUid', '~') == request.auth.uid
+            ) ||
+            ownsAttendanceData(resource.data)
+          ) &&
+          validAttendanceSelfUpdate()
         )
       );
       allow delete: if isRealUser() && (

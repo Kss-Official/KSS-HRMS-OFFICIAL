@@ -125,3 +125,7 @@ const CREDENTIAL_REJECTION_CODES = new Set([
 export function isCredentialRejection(fbErrorCode: string | undefined | null): boolean {
   return !!fbErrorCode && CREDENTIAL_REJECTION_CODES.has(fbErrorCode);
 }
+
+export function shouldFallbackToLocalLogin(fbErrorCode: string | undefined | null): boolean {
+  return isCredentialRejection(fbErrorCode);
+}

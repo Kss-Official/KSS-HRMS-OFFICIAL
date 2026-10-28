@@ -39,7 +39,8 @@ const testFiles = [
   join('tests', 'leave.test.mjs'),
   join('tests', 'leaveAnalytics.test.mjs'),
   join('tests', 'leaveHistorySummary.test.mjs'),
-  join('tests', 'leaveLopSummary.test.mjs')
+  join('tests', 'leaveLopSummary.test.mjs'),
+  join('tests', 'attendance_breaks.test.mjs')
 ];
 
 const testRes = spawnSync(
