@@ -426,19 +426,17 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSelf(userId) || isHrAdmin() || isProjectManager();
       // Self-service: any authenticated real user may create/update their own
-      // users/{uid} doc provided (a) the uid matches and (b) the role is either
-      // already set in the existing doc (cannot self-escalate) or is one of the
-      // recognised application roles.  PM and admin operations also bypass the
-      // role check entirely — they write roles like PROJECT_MANAGER / HR_ADMIN.
+      // users/{uid} doc. The role written must be a non-privileged application
+      // role (EMPLOYEE or TECH_LEAD) — this prevents self-escalation while
+      // safely handling existing docs that have a null/empty/missing role field
+      // (the old "resource == null || role unchanged" guard failed in that case).
+      // PM (Koushik) and admin operations bypass entirely via isProjectManager() /
+      // isConfigAdmin() which are hardcoded to UIDs/emails — no dependency on the
+      // users doc existing yet, so there is no chicken-and-egg bootstrapping issue.
       allow create, update: if isConfigAdmin() || isProjectManager() || (
         isRealUser() && isSelf(userId) &&
         request.resource.data.get('uid', '') == request.auth.uid &&
-        (
-          // Creating a new doc: any valid app role is acceptable
-          resource == null ||
-          // Updating an existing doc: role must be unchanged (no self-escalation)
-          request.resource.data.get('role', '') == resource.data.get('role', '')
-        )
+        request.resource.data.get('role', 'EMPLOYEE') in ['EMPLOYEE', 'TECH_LEAD']
       );
       allow delete: if isProjectManager() || isConfigAdmin();
     }
