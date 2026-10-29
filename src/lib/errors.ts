@@ -127,5 +127,6 @@ export function isCredentialRejection(fbErrorCode: string | undefined | null): b
 }
 
 export function shouldFallbackToLocalLogin(fbErrorCode: string | undefined | null): boolean {
-  return isCredentialRejection(fbErrorCode);
+  if (!fbErrorCode) return true; // non-Firebase exception — preserve legacy behavior
+  return CREDENTIAL_REJECTION_CODES.has(fbErrorCode);
 }
