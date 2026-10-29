@@ -17,7 +17,11 @@ service cloud.firestore {
         targetEmail.lower() == userEmail().lower();
     }
     function isRealUser() {
-      return isSignedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
+      return isSignedIn() && (
+        !('firebase' in request.auth.token) ||
+        !('sign_in_provider' in request.auth.token.firebase) ||
+        request.auth.token.firebase.sign_in_provider != 'anonymous'
+      );
     }
     // userDocExists: true when users/{uid} exists and the uid/email fields match.
     // Does NOT call trustedUserMapping (avoids double get() cost and avoids the
@@ -140,8 +144,8 @@ service cloud.firestore {
           getEmpDoc().get('role', '') == 'TECH_LEAD'
         )) ||
         (userDocExists() && (
-          getUserDoc().get('role', '') == 'TECH_LEAD' ||
-          getUserDoc().get('email', '') in ['satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'jasonkennethn@kalpanaaa.in']
+          ('role' in getUserDoc() && getUserDoc().role == 'TECH_LEAD') ||
+          ('email' in getUserDoc() && getUserDoc().email in ['satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'jasonkennethn@kalpanaaa.in'])
         ))
       );
     }
@@ -173,10 +177,6 @@ service cloud.firestore {
             resource.data.get('employeeId', '~') == getEmployeeId() ||
             resource.data.get('employeeCode', '~') == getEmployeeId()
           ))
-        )) ||
-        (userDocExists() && (
-          getUserDoc().get('employeeDocId', '~') == employeeId ||
-          (resource != null && resource.data.get('employeeId', '~') != '~' && resource.data.get('employeeId', '~') == getUserDoc().get('employeeId', '~~'))
         ))
       );
     }
@@ -363,16 +363,19 @@ service cloud.firestore {
     // ── 1. Users (role-mapping) ──────────────────────────────────────────────
     match /users/{userId} {
       allow read: if isSelf(userId) || isHrAdmin() || isProjectManager();
-      // Self-service: any authenticated real user may create/update their own
-      // users/{uid} doc for session mapping. The only security invariant is that
-      // users cannot escalate themselves to administrative roles (SUPER_ADMIN,
-      // HR_ADMIN, PROJECT_MANAGER). All employee-level designations / roles
-      // (EMPLOYEE, Trainee, Intern, Tech Lead, etc.) are allowed.
-      // PM and Admin bypass via isProjectManager() / isConfigAdmin().
       allow create, update: if isConfigAdmin() || isProjectManager() || (
-        isRealUser() && isSelf(userId) &&
-        request.resource.data.get('uid', request.auth.uid) == request.auth.uid &&
-        !(request.resource.data.get('role', '') in ['SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER', 'superadmin', 'hr_admin', 'project_manager'])
+        isSelf(userId) && (
+          !('role' in request.resource.data) ||
+          request.resource.data.role == null ||
+          request.resource.data.role == '' ||
+          (
+            request.resource.data.role is string &&
+            !(request.resource.data.role in [
+              'SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER',
+              'superadmin', 'hr_admin', 'project_manager'
+            ])
+          )
+        )
       );
       allow delete: if isProjectManager() || isConfigAdmin();
     }
@@ -386,7 +389,7 @@ service cloud.firestore {
           (userDocExists() && getUserDoc().role == request.resource.data.role)
         )
       );
-      allow update: if isProjectManager() || isConfigAdmin() || isAuthorizedTechLead() || (
+      allow update: if (
         (request.auth.uid == employeeId || ownsEmployeeRecord(employeeId)) && (
           request.resource.data.diff(resource.data).affectedKeys().hasOnly([
             'profilePhotoUrl', 'bio', 'phone', 'gender', 'dateOfBirth',
@@ -402,7 +405,7 @@ service cloud.firestore {
             'uid'
           ])
         )
-      );
+      ) || isProjectManager() || isConfigAdmin() || isAuthorizedTechLead();
       allow delete: if isProjectManager() || isSuperAdmin() || isConfigAdmin();
 
       // 2a. Leave date-locks
@@ -663,9 +666,9 @@ service cloud.firestore {
             get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.get('id', '') == resource.data.targetEmployeeId ||
             (hasEmail() && get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.get('email', '').lower() == userEmail().lower()))) ||
           (userDocExists() && (
-            getUserDoc().get('employeeId', '') == resource.data.get('targetEmployeeCode', '~') ||
-            getUserDoc().get('employeeDocId', '') == resource.data.targetEmployeeId ||
-            (hasEmail() && getUserDoc().get('email', '').lower() == userEmail().lower())
+            ('employeeId' in getUserDoc() && getUserDoc().employeeId == resource.data.get('targetEmployeeCode', '~')) ||
+            ('employeeDocId' in getUserDoc() && getUserDoc().employeeDocId == resource.data.targetEmployeeId) ||
+            ('email' in getUserDoc() && emailMatches(getUserDoc().email))
           ))
         );
       }
