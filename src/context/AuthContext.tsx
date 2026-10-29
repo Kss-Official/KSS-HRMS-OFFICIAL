@@ -283,7 +283,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(saved) as Employee[];
         return parsed
-          .filter(emp => emp.id !== 'emp-003' && emp.employeeId !== '003' && emp.employeeId !== 'KSS2407003' && !(emp.email || '').toLowerCase().includes('koushik'))
+          .filter(emp => {
+            if (emp.id === 'emp-003' || emp.employeeId === '003' || emp.employeeId === 'KSS2407003' || (emp.email || '').toLowerCase().includes('koushik')) return false;
+            const n = (emp.fullName || '').toLowerCase();
+            const c = (emp.employeeId || '').toLowerCase();
+            const m = (emp.email || '').toLowerCase();
+            if (c === 'alice001' || c === 'test001' || n.includes('test portal') || n.includes('alice test') || n === 'alice' || m.includes('alice')) return false;
+            return true;
+          })
           .map(emp => {
             if (emp.employeeId === 'CEO001') {
               return {
@@ -1277,7 +1284,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           // every portal renders clean data. Only the persistence is now restricted
           // to an administrative session — which is also the only role the hardened
           // firestore.rules permit to write another employee's document.
-          const canMigrate = roleRef.current === 'SUPER_ADMIN' || roleRef.current === 'HR_ADMIN';
+          const canMigrate = roleRef.current === 'SUPER_ADMIN' || roleRef.current === 'HR_ADMIN' || roleRef.current === 'PROJECT_MANAGER';
 
           if (!snapshot.empty) {
             const fetched: Employee[] = [];
@@ -1336,6 +1343,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (canMigrate && !deletedEmployeeIds.has(data.id)) {
                   deletedEmployeeIds.add(data.id);
                   deleteDoc(doc(db, 'employees', data.id)).catch(() => { });
+                }
+                return;
+              }
+
+              // PURGE TEST ACCOUNTS (Test Portal Employee, Alice Test)
+              const fullNameLower = (data.fullName || '').trim().toLowerCase();
+              const empIdLower = (data.employeeId || '').trim().toLowerCase();
+              const emailLower = (data.email || '').trim().toLowerCase();
+              if (
+                empIdLower === 'alice001' ||
+                empIdLower === 'test001' ||
+                fullNameLower.includes('test portal') ||
+                fullNameLower.includes('alice test') ||
+                fullNameLower === 'alice' ||
+                fullNameLower === 'test portal employee' ||
+                emailLower.includes('alice') ||
+                emailLower.includes('testportal') ||
+                emailLower.includes('test_portal')
+              ) {
+                if (canMigrate && !deletedEmployeeIds.has(data.id)) {
+                  deletedEmployeeIds.add(data.id);
+                  deleteDoc(doc(db, 'employees', data.id)).catch(() => { });
+                  if (data.uid) {
+                    deleteDoc(doc(db, 'users', data.uid)).catch(() => { });
+                  }
                 }
                 return;
               }
