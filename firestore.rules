@@ -188,16 +188,16 @@ service cloud.firestore {
         d.get('employeeUid', '~') == request.auth.uid ||
         emailMatches(d.get('email', '')) ||
         emailMatches(d.get('employeeEmail', '')) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-          (getUserDoc().get('employeeId', '') is string && getUserDoc().get('employeeId', '') != '' && (
-            d.get('employeeCode', '~') == getUserDoc().get('employeeId', '') ||
-            d.get('employeeId', '~') == getUserDoc().get('employeeId', '') ||
-            recordId.matches('.*' + getUserDoc().get('employeeId', '') + '.*')
-          )) ||
-          (getUserDoc().get('employeeDocId', '') is string && getUserDoc().get('employeeDocId', '') != '' && (
-            d.get('employeeId', '~') == getUserDoc().get('employeeDocId', '') ||
-            recordId.matches('.*' + getUserDoc().get('employeeDocId', '') + '.*')
-          ))
+        (getEmployeeId() != null && (
+          d.get('employeeCode', '~') == getEmployeeId() ||
+          d.get('employeeId', '~') == getEmployeeId() ||
+          d.get('employeeId', '~') == ('emp-' + getEmployeeId()) ||
+          recordId.matches('.*' + getEmployeeId() + '.*')
+        )) ||
+        (getEmployeeDocId() != null && (
+          d.get('employeeId', '~') == getEmployeeDocId() ||
+          d.get('employeeDocId', '~') == getEmployeeDocId() ||
+          recordId.matches('.*' + getEmployeeDocId() + '.*')
         ))
       );
     }
@@ -465,7 +465,6 @@ service cloud.firestore {
     match /attendance/{recordId} {
       allow read: if isRealUser();
       allow create: if isRealUser() && (
-        isProjectManager() || isSuperAdmin() || isHrAdmin() ||
         (
           isAttendanceRecordOwner(recordId, request.resource.data) &&
           validAttendanceShape() &&
@@ -473,17 +472,18 @@ service cloud.firestore {
             request.resource.data.get('date', '') == '' ||
             request.resource.data.get('date', '') >= '2026-07-27'
           )
-        )
+        ) ||
+        isProjectManager() || isSuperAdmin() || isHrAdmin()
       );
       allow update: if isRealUser() && (
-        isProjectManager() || isSuperAdmin() || isHrAdmin() ||
         (
           resource != null &&
           (
-            isAttendanceRecordOwner(recordId, resource.data) ||
-            isAttendanceRecordOwner(recordId, request.resource.data)
+            isAttendanceRecordOwner(recordId, request.resource.data) ||
+            isAttendanceRecordOwner(recordId, resource.data)
           )
-        )
+        ) ||
+        isProjectManager() || isSuperAdmin() || isHrAdmin()
       );
       allow delete: if isRealUser() && (
         isProjectManager() || isConfigAdmin() || isSuperAdmin() ||
