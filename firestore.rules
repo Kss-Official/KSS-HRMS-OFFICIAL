@@ -436,7 +436,12 @@ service cloud.firestore {
       allow create, update: if isConfigAdmin() || isProjectManager() || (
         isRealUser() && isSelf(userId) &&
         request.resource.data.get('uid', '') == request.auth.uid &&
-        request.resource.data.get('role', 'EMPLOYEE') in ['EMPLOYEE', 'TECH_LEAD']
+        // CEL's .get(key, default) returns the default ONLY when the field is absent,
+        // NOT when it is null. We must handle both absent and null role gracefully.
+        // Coerce: absent → 'EMPLOYEE', null → 'EMPLOYEE', any other value kept as-is.
+        (request.resource.data.get('role', null) == null
+          ? true
+          : request.resource.data.get('role', 'EMPLOYEE') in ['EMPLOYEE', 'TECH_LEAD'])
       );
       allow delete: if isProjectManager() || isConfigAdmin();
     }

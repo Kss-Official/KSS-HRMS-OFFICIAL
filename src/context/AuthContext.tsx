@@ -2991,7 +2991,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await setDoc(doc(db, 'users', firebaseUser.uid), {
           uid: firebaseUser.uid,
           email: cleanEmail || '',
-          role: matched.role,
+          // Guarantee a non-null role — Firestore rules deny null/undefined role writes
+          // for self-service employees. Fall back to 'EMPLOYEE' if the employee doc has
+          // a missing/null/undefined role (legacy records, designation-only docs, etc.).
+          role: (matched.role && matched.role.length > 0) ? matched.role : 'EMPLOYEE',
           employeeId: matched.employeeId,
           employeeDocId: matched.id,
           fullName: matched.fullName,
