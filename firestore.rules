@@ -1,3 +1,4 @@
+
 rules_version = '2';
 
 service cloud.firestore {
@@ -188,11 +189,15 @@ service cloud.firestore {
         emailMatches(d.get('email', '')) ||
         emailMatches(d.get('employeeEmail', '')) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
-          d.get('employeeCode', '~') == getUserDoc().get('employeeId', '~~') ||
-          d.get('employeeId', '~') == getUserDoc().get('employeeDocId', '~~') ||
-          d.get('employeeId', '~') == getUserDoc().get('employeeId', '~~') ||
-          recordId.matches('.*' + getUserDoc().get('employeeId', '~~') + '.*') ||
-          recordId.matches('.*' + getUserDoc().get('employeeDocId', '~~') + '.*')
+          (getUserDoc().get('employeeId', '') is string && getUserDoc().get('employeeId', '') != '' && (
+            d.get('employeeCode', '~') == getUserDoc().get('employeeId', '') ||
+            d.get('employeeId', '~') == getUserDoc().get('employeeId', '') ||
+            recordId.matches('.*' + getUserDoc().get('employeeId', '') + '.*')
+          )) ||
+          (getUserDoc().get('employeeDocId', '') is string && getUserDoc().get('employeeDocId', '') != '' && (
+            d.get('employeeId', '~') == getUserDoc().get('employeeDocId', '') ||
+            recordId.matches('.*' + getUserDoc().get('employeeDocId', '') + '.*')
+          ))
         ))
       );
     }

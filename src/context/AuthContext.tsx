@@ -2955,6 +2955,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             handleFirestoreError(err, OperationType.LIST, `employees where ${field}`);
             return null;
           }
+          
         }));
         emailResults.forEach(snapshot => snapshot?.forEach(employeeSnapshot => {
           candidates.set(employeeSnapshot.id, {
@@ -4189,6 +4190,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           workingMinutes: durationMins,
           breaks: updatedBreaks,
           totalBreakMinutes: finalTotalBreakMinutes,
+          authUid: auth.currentUser?.uid || user?.uid || empUid,
+          employeeUid: empUid,
           officeLatitude: existingData.officeLatitude || companyWorkZone.latitude,
           officeLongitude: existingData.officeLongitude || companyWorkZone.longitude,
           officeRadiusMeters: existingData.officeRadiusMeters || companyWorkZone.radiusMeters,
@@ -4314,6 +4317,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const startBreakUpdates: Record<string, any> = {
           breaks: updatedBreaks,
           totalBreakMinutes: totalBreakMins,
+          authUid: auth.currentUser?.uid || user?.uid || empUid,
+          employeeUid: empUid,
           updatedAt: serverTimestamp()
         };
         transaction.update(docRef, cleanFirestorePayload(startBreakUpdates));
@@ -4420,6 +4425,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const endBreakUpdates: Record<string, any> = {
           breaks: updatedBreaks,
           totalBreakMinutes: totalBreakMins,
+          authUid: auth.currentUser?.uid || user?.uid || empUid,
+          employeeUid: empUid,
           updatedAt: serverTimestamp()
         };
         transaction.update(docRef, cleanFirestorePayload(endBreakUpdates));
