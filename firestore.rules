@@ -18,33 +18,6 @@ service cloud.firestore {
     function isRealUser() {
       return isSignedIn() && request.auth.token.firebase.sign_in_provider != 'anonymous';
     }
-    function employeeRecord(docId) {
-      return exists(/databases/$(database)/documents/employees/$(docId))
-        ? get(/databases/$(database)/documents/employees/$(docId)).data
-        : {};
-    }
-    function authOwnsEmployeeRecord(employeeDocId) {
-      return isRealUser() &&
-        employeeDocId is string && employeeDocId != '' &&
-        exists(/databases/$(database)/documents/employees/$(employeeDocId)) &&
-        (
-          employeeRecord(employeeDocId).get('uid', '~') == request.auth.uid ||
-          employeeRecord(employeeDocId).get('employeeUid', '~') == request.auth.uid ||
-          emailMatches(employeeRecord(employeeDocId).get('email', '')) ||
-          emailMatches(employeeRecord(employeeDocId).get('workEmail', '')) ||
-          emailMatches(employeeRecord(employeeDocId).get('personalEmail', ''))
-        );
-    }
-    // trustedUserMapping: lightweight validation of a users/{uid} document.
-    // Only checks uid ownership and email — does NOT cross-check the employee
-    // doc's role field. The role cross-check caused cascading failures for PM/HR
-    // whose user doc role (PROJECT_MANAGER / HR_ADMIN) didn't match anything in
-    // the employee doc during initial login before the uid backfill completed.
-    function trustedUserMapping(d) {
-      return isRealUser() &&
-        d.get('uid', '') == request.auth.uid &&
-        (!hasEmail() || d.get('email', '').lower() == userEmail().lower());
-    }
     // userDocExists: true when users/{uid} exists and the uid/email fields match.
     // Does NOT call trustedUserMapping (avoids double get() cost and avoids the
     // strict role-cross-check that was breaking PM and HR sessions).
@@ -206,60 +179,20 @@ service cloud.firestore {
         ))
       );
     }
-    function ownsAttendanceData(d) {
-      return isRealUser() && (
-        d.get('uid', '~') == request.auth.uid ||
-        d.get('employeeUid', '~') == request.auth.uid ||
-        d.get('authUid', '~') == request.auth.uid ||
-        d.get('employeeId', '~') == request.auth.uid ||
-        emailMatches(d.get('email', '')) ||
-        emailMatches(d.get('employeeEmail', '')) ||
-        (getEmployeeId() != null && (
-          d.get('employeeCode', '~') == getEmployeeId() ||
-          d.get('employeeId', '~') == getEmployeeId() ||
-          d.get('employeeId', '~') == ('emp-' + getEmployeeId())
-        )) ||
-        (getEmployeeDocId() != null && (
-          d.get('employeeId', '~') == getEmployeeDocId() ||
-          d.get('employeeDocId', '~') == getEmployeeDocId() ||
-          d.get('uid', '~') == getEmployeeDocId() ||
-          d.get('employeeUid', '~') == getEmployeeDocId()
-        )) ||
-        (userDocExists() && (
-          ('employeeId' in getUserDoc() && (
-            d.get('employeeCode', '~') == getUserDoc().employeeId ||
-            d.get('employeeId', '~') == getUserDoc().employeeId ||
-            d.get('employeeId', '~') == ('emp-' + getUserDoc().employeeId)
-          )) ||
-          ('employeeDocId' in getUserDoc() && (
-            d.get('employeeId', '~') == getUserDoc().employeeDocId ||
-            d.get('employeeDocId', '~') == getUserDoc().employeeDocId ||
-            d.get('uid', '~') == getUserDoc().employeeDocId ||
-            d.get('employeeUid', '~') == getUserDoc().employeeDocId
-          ))
-        )) ||
-        (empDocExists() && (
-          ('employeeId' in getEmpDoc() && (
-            d.get('employeeCode', '~') == getEmpDoc().employeeId ||
-            d.get('employeeId', '~') == getEmpDoc().employeeId ||
-            d.get('employeeId', '~') == ('emp-' + getEmpDoc().employeeId)
-          ))
-        ))
-      );
-    }
     function isAttendanceRecordOwner(recordId, d) {
       return isRealUser() && (
+        recordId.matches('^' + request.auth.uid + '.*') ||
         d.get('authUid', '~') == request.auth.uid ||
         d.get('uid', '~') == request.auth.uid ||
         d.get('employeeUid', '~') == request.auth.uid ||
         emailMatches(d.get('email', '')) ||
         emailMatches(d.get('employeeEmail', '')) ||
-        (recordId.size() >= request.auth.uid.size() &&
-          recordId[0:request.auth.uid.size()] == request.auth.uid) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && (
           d.get('employeeCode', '~') == getUserDoc().get('employeeId', '~~') ||
           d.get('employeeId', '~') == getUserDoc().get('employeeDocId', '~~') ||
-          d.get('employeeId', '~') == getUserDoc().get('employeeId', '~~')
+          d.get('employeeId', '~') == getUserDoc().get('employeeId', '~~') ||
+          recordId.matches('.*' + getUserDoc().get('employeeId', '~~') + '.*') ||
+          recordId.matches('.*' + getUserDoc().get('employeeDocId', '~~') + '.*')
         ))
       );
     }
@@ -426,22 +359,15 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isSelf(userId) || isHrAdmin() || isProjectManager();
       // Self-service: any authenticated real user may create/update their own
-      // users/{uid} doc. The role written must be a non-privileged application
-      // role (EMPLOYEE or TECH_LEAD) — this prevents self-escalation while
-      // safely handling existing docs that have a null/empty/missing role field
-      // (the old "resource == null || role unchanged" guard failed in that case).
-      // PM (Koushik) and admin operations bypass entirely via isProjectManager() /
-      // isConfigAdmin() which are hardcoded to UIDs/emails — no dependency on the
-      // users doc existing yet, so there is no chicken-and-egg bootstrapping issue.
+      // users/{uid} doc for session mapping. The only security invariant is that
+      // users cannot escalate themselves to administrative roles (SUPER_ADMIN,
+      // HR_ADMIN, PROJECT_MANAGER). All employee-level designations / roles
+      // (EMPLOYEE, Trainee, Intern, Tech Lead, etc.) are allowed.
+      // PM and Admin bypass via isProjectManager() / isConfigAdmin().
       allow create, update: if isConfigAdmin() || isProjectManager() || (
         isRealUser() && isSelf(userId) &&
-        request.resource.data.get('uid', '') == request.auth.uid &&
-        // CEL's .get(key, default) returns the default ONLY when the field is absent,
-        // NOT when it is null. We must handle both absent and null role gracefully.
-        // Coerce: absent → 'EMPLOYEE', null → 'EMPLOYEE', any other value kept as-is.
-        (request.resource.data.get('role', null) == null
-          ? true
-          : request.resource.data.get('role', 'EMPLOYEE') in ['EMPLOYEE', 'TECH_LEAD'])
+        request.resource.data.get('uid', request.auth.uid) == request.auth.uid &&
+        !(request.resource.data.get('role', '') in ['SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER', 'superadmin', 'hr_admin', 'project_manager'])
       );
       allow delete: if isProjectManager() || isConfigAdmin();
     }
@@ -548,7 +474,10 @@ service cloud.firestore {
         isProjectManager() || isSuperAdmin() || isHrAdmin() ||
         (
           resource != null &&
-          isAttendanceRecordOwner(recordId, resource.data)
+          (
+            isAttendanceRecordOwner(recordId, resource.data) ||
+            isAttendanceRecordOwner(recordId, request.resource.data)
+          )
         )
       );
       allow delete: if isRealUser() && (

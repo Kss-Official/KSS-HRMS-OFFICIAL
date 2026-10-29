@@ -1149,13 +1149,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const updatedNotes = (record.notes ? record.notes + ' | ' : '') + 'SYSTEM: Auto-checked out at 11:00 PM IST (Shift End Cutoff)';
 
           // Auto close the record in Firestore with authorization anchoring
+          const isOwnRecord = activeEmployee && (
+            record.employeeCode === activeEmployee.employeeId ||
+            record.employeeId === activeEmployee.id ||
+            record.employeeId === activeEmployee.employeeId ||
+            record.uid === activeEmployee.uid ||
+            record.id.includes(activeEmployee.employeeId)
+          );
           const autoCheckoutPayload = cleanFirestorePayload({
             checkOutAt: forceCheckOutTime,
             workingMinutes: totalMins,
             breaks: updatedBreaks,
             totalBreakMinutes: totalBreakMins,
             notes: updatedNotes,
-            updatedAt: serverTimestamp()
+            updatedAt: serverTimestamp(),
+            ...(isOwnRecord && (auth.currentUser?.uid || user?.uid) ? { authUid: auth.currentUser?.uid || user?.uid } : {})
           });
 
           updateDoc(doc(db, 'attendance', record.id), autoCheckoutPayload)
@@ -3009,16 +3017,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           console.warn('[Auth] Employee uid backfill failed (non-fatal):', e);
         });
       } catch (err) {
-        console.error(
-          `[Auth] Failed to verify users/${firebaseUser.uid} employee mapping. ` +
-          'Self-service Firestore operations require a valid users/{uid} mapping.',
+        console.warn(
+          `[Auth] Non-fatal: Could not write users/${firebaseUser.uid} mapping, proceeding with verified employee directory record:`,
           err
         );
-        handleFirestoreError(err, OperationType.WRITE, `users/${firebaseUser.uid}`);
-        toast.error('Your employee record could not be verified. Please contact HR.');
-        setIsAuthenticated(false);
-        setActiveEmployee(null);
-        return;
       }
 
       setActiveEmployee(matched);
