@@ -45,15 +45,15 @@ service cloud.firestore {
         : {};
     }
     function getEmployeeId() {
-      return userDocExists()
-        ? (('employeeId' in getUserDoc()) && getUserDoc().employeeId != null ? getUserDoc().employeeId : null)
-        : (empDocExists()
-            ? (('employeeId' in getEmpDoc()) && getEmpDoc().employeeId != null ? getEmpDoc().employeeId : null)
+      return userDocExists() && getUserDoc().get('employeeId', null) != null
+        ? getUserDoc().get('employeeId', null)
+        : (empDocExists() && getEmpDoc().get('employeeId', null) != null
+            ? getEmpDoc().get('employeeId', null)
             : null);
     }
     function getEmployeeDocId() {
-      return userDocExists()
-        ? (('employeeDocId' in getUserDoc()) && getUserDoc().employeeDocId != null ? getUserDoc().employeeDocId : (empDocExists() ? request.auth.uid : null))
+      return userDocExists() && getUserDoc().get('employeeDocId', null) != null
+        ? getUserDoc().get('employeeDocId', null)
         : (empDocExists() ? request.auth.uid : null);
     }
     function hasClaimRole() {
@@ -150,6 +150,34 @@ service cloud.firestore {
       );
     }
     function isConfigAdmin() { return isHrAdmin() || isSuperAdmin(); }
+    function isAttendanceManager() {
+      return isSignedIn() && (
+        request.auth.uid in [
+          '2kNsj2o55VRtEy2rTnz4CPk7se23',
+          'sco3JJEikROXFMSkCbe7flK62w53',
+          'hOjKhSAtZKN7igNaePAmPKprVbp1',
+          'vhKLIJCVZoTncqVtmh14paMbiXk2',
+          '2d48Rm9eY4eBswXOZw2IBpWGkZK2',
+          '3ZHI3aTB37StHjR97WEBJQSWT9H3'
+        ] ||
+        (hasEmail() && (
+          userEmail().lower() in [
+            'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
+            'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
+            'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
+            'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
+            'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in',
+            'd.koushik@kalpanaaasoftwaresolutions.in', 'd.koushik@kalpanaaa.in',
+            'koushik@kalpanaaa.in', 'koushik@kalpanaaasoftwaresolutions.in',
+            'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
+            'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
+          ]
+        )) ||
+        isProjectManager() ||
+        isSuperAdmin() ||
+        isHrAdmin()
+      );
+    }
     function isSelf(uid) { return isSignedIn() && request.auth.uid == uid; }
     function unchanged(f) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny([f]);
@@ -188,13 +216,13 @@ service cloud.firestore {
         d.get('employeeUid', '~') == request.auth.uid ||
         emailMatches(d.get('email', '')) ||
         emailMatches(d.get('employeeEmail', '')) ||
-        (getEmployeeId() != null && (
+        (getEmployeeId() != null && getEmployeeId() is string && getEmployeeId() != '' && (
           d.get('employeeCode', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == ('emp-' + getEmployeeId()) ||
           recordId.matches('.*' + getEmployeeId() + '.*')
         )) ||
-        (getEmployeeDocId() != null && (
+        (getEmployeeDocId() != null && getEmployeeDocId() is string && getEmployeeDocId() != '' && (
           d.get('employeeId', '~') == getEmployeeDocId() ||
           d.get('employeeDocId', '~') == getEmployeeDocId() ||
           recordId.matches('.*' + getEmployeeDocId() + '.*')
@@ -467,30 +495,25 @@ service cloud.firestore {
     // ── 3. Attendance Records ────────────────────────────────────────────────
     match /attendance/{recordId} {
       allow read: if isRealUser();
-      allow create: if isRealUser() && (
+      allow create: if isAttendanceManager() || (
+        isRealUser() &&
+        isAttendanceRecordOwner(recordId, request.resource.data) &&
+        validAttendanceShape() &&
         (
-          isAttendanceRecordOwner(recordId, request.resource.data) &&
-          validAttendanceShape() &&
-          (
-            request.resource.data.get('date', '') == '' ||
-            request.resource.data.get('date', '') >= '2026-07-27'
-          )
-        ) ||
-        isProjectManager() || isSuperAdmin() || isHrAdmin()
+          request.resource.data.get('date', '') == '' ||
+          request.resource.data.get('date', '') >= '2026-07-27'
+        )
       );
-      allow update: if isRealUser() && (
+      allow update: if isAttendanceManager() || (
+        isRealUser() &&
+        resource != null &&
         (
-          resource != null &&
-          (
-            isAttendanceRecordOwner(recordId, request.resource.data) ||
-            isAttendanceRecordOwner(recordId, resource.data)
-          )
-        ) ||
-        isProjectManager() || isSuperAdmin() || isHrAdmin()
+          isAttendanceRecordOwner(recordId, request.resource.data) ||
+          isAttendanceRecordOwner(recordId, resource.data)
+        )
       );
-      allow delete: if isRealUser() && (
-        isProjectManager() || isConfigAdmin() || isSuperAdmin() ||
-        (resource != null && resource.data.get('date', '') < '2026-07-27')
+      allow delete: if isAttendanceManager() || isConfigAdmin() || (
+        isRealUser() && resource != null && resource.data.get('date', '') < '2026-07-27'
       );
     }
 
