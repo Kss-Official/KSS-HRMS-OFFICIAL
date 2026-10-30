@@ -17,11 +17,7 @@ service cloud.firestore {
         targetEmail.lower() == userEmail().lower();
     }
     function isRealUser() {
-      return isSignedIn() && (
-        !('firebase' in request.auth.token) ||
-        !('sign_in_provider' in request.auth.token.firebase) ||
-        request.auth.token.firebase.sign_in_provider != 'anonymous'
-      );
+      return isSignedIn();
     }
     // userDocExists: true when users/{uid} exists and the uid/email fields match.
     // Does NOT call trustedUserMapping (avoids double get() cost and avoids the
@@ -391,20 +387,14 @@ service cloud.firestore {
     // ── 1. Users (role-mapping) ──────────────────────────────────────────────
     match /users/{userId} {
       allow read: if isSelf(userId) || isHrAdmin() || isProjectManager();
-      allow create, update: if isConfigAdmin() || isProjectManager() || (
-        isSelf(userId) && (
-          !('role' in request.resource.data) ||
-          request.resource.data.role == null ||
-          request.resource.data.role == '' ||
-          (
-            request.resource.data.role is string &&
-            !(request.resource.data.role in [
-              'SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER',
-              'superadmin', 'hr_admin', 'project_manager'
-            ])
-          )
-        )
-      );
+      allow create, update: if (
+        isSelf(userId) &&
+        request.resource.data.get('uid', request.auth.uid) == request.auth.uid &&
+        !(request.resource.data.get('role', '') in [
+          'SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER',
+          'superadmin', 'hr_admin', 'project_manager'
+        ])
+      ) || isConfigAdmin() || isProjectManager();
       allow delete: if isProjectManager() || isConfigAdmin();
     }
 
