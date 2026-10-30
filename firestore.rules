@@ -209,20 +209,22 @@ service cloud.firestore {
         d.get('authUid', '~') == request.auth.uid ||
         d.get('uid', '~') == request.auth.uid ||
         d.get('employeeUid', '~') == request.auth.uid ||
-        (recordId.size() >= request.auth.uid.size() && recordId[0:request.auth.uid.size()] == request.auth.uid) ||
+        d.get('employeeId', '~') == request.auth.uid ||
         emailMatches(d.get('email', '')) ||
         emailMatches(d.get('employeeEmail', '')) ||
-        (getEmployeeId() != null && getEmployeeId() is string && getEmployeeId() != '' && (
+        (getEmployeeId() != null && (
           d.get('employeeCode', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == ('emp-' + getEmployeeId()) ||
-          recordId == (getEmployeeId() + '_' + d.get('date', '')) ||
-          recordId == ('emp-' + getEmployeeId() + '_' + d.get('date', ''))
+          (d.get('date', '') != '' && (
+            recordId == (getEmployeeId() + '_' + d.get('date', '')) ||
+            recordId == ('emp-' + getEmployeeId() + '_' + d.get('date', ''))
+          ))
         )) ||
-        (getEmployeeDocId() != null && getEmployeeDocId() is string && getEmployeeDocId() != '' && (
+        (getEmployeeDocId() != null && (
           d.get('employeeId', '~') == getEmployeeDocId() ||
           d.get('employeeDocId', '~') == getEmployeeDocId() ||
-          recordId == (getEmployeeDocId() + '_' + d.get('date', ''))
+          (d.get('date', '') != '' && recordId == (getEmployeeDocId() + '_' + d.get('date', '')))
         ))
       );
     }
@@ -486,22 +488,46 @@ service cloud.firestore {
     // ── 3. Attendance Records ────────────────────────────────────────────────
     match /attendance/{recordId} {
       allow read: if isSignedIn();
-      allow create: if isAttendanceManager() || (
+      allow create: if (
         isSignedIn() &&
-        isAttendanceRecordOwner(recordId, request.resource.data) &&
         validAttendanceShape() &&
         (
           request.resource.data.get('date', '') == '' ||
           request.resource.data.get('date', '') >= '2026-07-27'
+        ) && (
+          request.resource.data.get('authUid', '~') == request.auth.uid ||
+          request.resource.data.get('employeeUid', '~') == request.auth.uid ||
+          request.resource.data.get('uid', '~') == request.auth.uid ||
+          request.resource.data.get('employeeId', '~') == request.auth.uid ||
+          emailMatches(request.resource.data.get('email', '')) ||
+          emailMatches(request.resource.data.get('employeeEmail', '')) ||
+          isAttendanceRecordOwner(recordId, request.resource.data)
         )
-      );
-      allow update: if isAttendanceManager() || (
-        isSignedIn() &&
-        (
+      ) || isAttendanceManager();
+
+      allow update: if (
+        isSignedIn() && (
+          request.resource.data.get('authUid', '~') == request.auth.uid ||
+          request.resource.data.get('employeeUid', '~') == request.auth.uid ||
+          request.resource.data.get('uid', '~') == request.auth.uid ||
+          request.resource.data.get('employeeId', '~') == request.auth.uid ||
+          (resource != null && (
+            resource.data.get('authUid', '~') == request.auth.uid ||
+            resource.data.get('employeeUid', '~') == request.auth.uid ||
+            resource.data.get('uid', '~') == request.auth.uid ||
+            resource.data.get('employeeId', '~') == request.auth.uid
+          )) ||
+          emailMatches(request.resource.data.get('email', '')) ||
+          emailMatches(request.resource.data.get('employeeEmail', '')) ||
+          (resource != null && (
+            emailMatches(resource.data.get('email', '')) ||
+            emailMatches(resource.data.get('employeeEmail', ''))
+          )) ||
           isAttendanceRecordOwner(recordId, request.resource.data) ||
           (resource != null && isAttendanceRecordOwner(recordId, resource.data))
         )
-      );
+      ) || isAttendanceManager();
+
       allow delete: if isAttendanceManager() || isConfigAdmin() || (
         isSignedIn() && resource != null && resource.data.get('date', '') < '2026-07-27'
       );
@@ -522,10 +548,10 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       allow create: if isSignedIn() && (
+        (isRealUser() && ownsLeaveRequest(request.resource.data) && validLeaveShape()) ||
         isSuperAdmin() ||
         isProjectManager() ||
-        isHrAdmin() ||
-        (isRealUser() && ownsLeaveRequest(request.resource.data) && validLeaveShape())
+        isHrAdmin()
       );
 
       allow update: if isSignedIn() && (
