@@ -205,23 +205,24 @@ service cloud.firestore {
       );
     }
     function isAttendanceRecordOwner(recordId, d) {
-      return isRealUser() && (
-        recordId.matches('^' + request.auth.uid + '.*') ||
+      return isSignedIn() && (
         d.get('authUid', '~') == request.auth.uid ||
         d.get('uid', '~') == request.auth.uid ||
         d.get('employeeUid', '~') == request.auth.uid ||
+        (recordId.size() >= request.auth.uid.size() && recordId[0:request.auth.uid.size()] == request.auth.uid) ||
         emailMatches(d.get('email', '')) ||
         emailMatches(d.get('employeeEmail', '')) ||
         (getEmployeeId() != null && getEmployeeId() is string && getEmployeeId() != '' && (
           d.get('employeeCode', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == getEmployeeId() ||
           d.get('employeeId', '~') == ('emp-' + getEmployeeId()) ||
-          recordId.matches('.*' + getEmployeeId() + '.*')
+          recordId == (getEmployeeId() + '_' + d.get('date', '')) ||
+          recordId == ('emp-' + getEmployeeId() + '_' + d.get('date', ''))
         )) ||
         (getEmployeeDocId() != null && getEmployeeDocId() is string && getEmployeeDocId() != '' && (
           d.get('employeeId', '~') == getEmployeeDocId() ||
           d.get('employeeDocId', '~') == getEmployeeDocId() ||
-          recordId.matches('.*' + getEmployeeDocId() + '.*')
+          recordId == (getEmployeeDocId() + '_' + d.get('date', ''))
         ))
       );
     }
@@ -484,9 +485,9 @@ service cloud.firestore {
 
     // ── 3. Attendance Records ────────────────────────────────────────────────
     match /attendance/{recordId} {
-      allow read: if isRealUser();
+      allow read: if isSignedIn();
       allow create: if isAttendanceManager() || (
-        isRealUser() &&
+        isSignedIn() &&
         isAttendanceRecordOwner(recordId, request.resource.data) &&
         validAttendanceShape() &&
         (
@@ -495,15 +496,14 @@ service cloud.firestore {
         )
       );
       allow update: if isAttendanceManager() || (
-        isRealUser() &&
-        resource != null &&
+        isSignedIn() &&
         (
           isAttendanceRecordOwner(recordId, request.resource.data) ||
-          isAttendanceRecordOwner(recordId, resource.data)
+          (resource != null && isAttendanceRecordOwner(recordId, resource.data))
         )
       );
       allow delete: if isAttendanceManager() || isConfigAdmin() || (
-        isRealUser() && resource != null && resource.data.get('date', '') < '2026-07-27'
+        isSignedIn() && resource != null && resource.data.get('date', '') < '2026-07-27'
       );
     }
 
