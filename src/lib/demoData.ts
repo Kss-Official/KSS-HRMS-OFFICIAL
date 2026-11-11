@@ -110,7 +110,7 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     skills: ['Project Management'],
     specialization: 'Project Management',
     joiningDate: '2024-02-15',
-    employmentType: 'Full-Time',
+    employmentType: 'Trainee',
     reportingManager: 'Akshit Ujjain',
     reportingManagerUid: 'uid-KSS2407002',
     pmUid: 'uid-KSS2407003',

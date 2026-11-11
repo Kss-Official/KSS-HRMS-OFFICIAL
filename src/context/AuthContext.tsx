@@ -1563,6 +1563,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   data.designation = 'Project Manager';
                   pmChanged = true;
                 }
+                if (data.employmentType !== 'Trainee') {
+                  data.employmentType = 'Trainee';
+                  pmChanged = true;
+                }
                 const currentSkills = Array.isArray(data.skills) ? data.skills : [];
                 if (
                   currentSkills.length !== 1 ||
@@ -1580,6 +1584,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                     joiningDate: '2026-07-27',
                     department: 'IT',
                     designation: 'Project Manager',
+                    employmentType: 'Trainee',
                     skills: ['Project Management'],
                     specialization: 'Project Management'
                   }, { merge: true }).catch(() => { });
@@ -1738,7 +1743,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 gender: 'Male',
                 dateOfBirth: '1995-01-01',
                 joiningDate: '2024-07-01',
-                employmentType: 'Full-Time',
+                employmentType: 'Trainee',
                 permanentAddress: 'Bengaluru HQ Campus',
                 currentAddress: 'Bengaluru HQ Campus',
                 city: 'Bengaluru',
@@ -3641,6 +3646,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         fieldsToUpdate.department = 'IT';
         fieldsToUpdate.specialization = 'Project Management';
         fieldsToUpdate.skills = ['Project Management'];
+        fieldsToUpdate.employmentType = 'Trainee';
       }
 
       const isTL =

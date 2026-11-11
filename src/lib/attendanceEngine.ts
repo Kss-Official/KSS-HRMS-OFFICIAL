@@ -527,9 +527,9 @@ export function computeEmploymentType(emp: any, refDate: Date = new Date()): Emp
   const id = (emp.employeeId || emp.id || '').toLowerCase();
   const email = (emp.email || '').toLowerCase();
 
-  // D. Koushik is explicitly Intern per organization policy
+  // D. Koushik is explicitly Trainee per organization policy
   if (name.includes('koushik') || id.includes('kss2407003') || email.includes('koushik')) {
-    return 'Intern';
+    return 'Trainee';
   }
 
   // Satya Ranjan Das is explicitly Employee

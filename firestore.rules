@@ -305,9 +305,11 @@ service cloud.firestore {
       d.get('startDate', '') is string && d.get('startDate', '').size() == 10 &&
       d.get('endDate', '') is string && d.get('endDate', '').size() == 10 &&
       d.get('reason', '') is string && d.get('reason', '').size() > 0 &&
-      // Approval stage fields must be at initial values
-      d.get('ceoStatus', 'Pending') in ['Pending', 'N/A'] &&
-      d.get('ctoStatus', 'Waiting CEO') in ['Waiting CEO', 'N/A'] &&
+      // On creation, approval stages cannot be pre-approved by the employee
+      d.get('ceoStatus', '') != 'Approved' &&
+      d.get('ctoStatus', '') != 'Approved' &&
+      d.get('pmStatus', '') != 'Approved' &&
+      d.get('hrStatus', '') != 'Approved' &&
       d.get('_deductionApplied', false) == false;
     }
     function validAuditShape() {
@@ -435,7 +437,7 @@ service cloud.firestore {
 
       // 2c. Leave Ledger subcollection (audit trail of all EL/SL/CL credits, debits, reversals)
       match /leaveLedger/{txnId} {
-        allow read: if isRealUser() && (isConfigAdmin() || isProjectManager() || ownsEmployeeRecord(employeeId));
+        allow read: if isRealUser();
         allow create: if isSignedIn() && (
           isConfigAdmin() || isProjectManager() || isSuperAdmin() ||
           employeeId == request.auth.uid ||
