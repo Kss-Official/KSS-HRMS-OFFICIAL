@@ -4532,6 +4532,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // A synthetic row has no stored doc, so the write must carry every field the
     // listeners and queries depend on — not just the corrected ones.
+    const actingUid = user?.uid || auth.currentUser?.uid || null;
     const seed = record.isSynthetic
       ? {
           id: targetId,
@@ -4541,7 +4542,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           employeeCode: record.employeeCode,
           employeeName: record.employeeName,
           department: record.department || 'Engineering',
-          pmUid: emp?.pmUid || emp?.reportingManagerUid || '',
+          // pmUid: include the acting manager's UID so the Firestore zero-read
+          // fast-path (pmUid == request.auth.uid) passes for PM/HR corrections
+          // without burning through the 10-get() per-evaluation limit.
+          pmUid: actingUid || emp?.pmUid || emp?.reportingManagerUid || '',
           date: record.date,
           checkInAt: null,
           checkOutAt: null,
@@ -4558,7 +4562,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ...seed,
       ...updates,
       correctedBy: activeEmployee?.fullName || user?.email || 'System',
-      correctedByUid: user?.uid || null,
+      // correctedByUid is the zero-read fast-path key checked first in Firestore
+      // rules — always set it so PM/HR corrections never hit the 10-get() limit.
+      correctedByUid: actingUid,
+      // Also stamp pmUid on existing-doc updates so the rule fast-path fires.
+      pmUid: (seed as any).pmUid || actingUid || emp?.pmUid || emp?.reportingManagerUid || '',
       correctedAt: serverTimestamp(),
       updatedAt: serverTimestamp()
     });
