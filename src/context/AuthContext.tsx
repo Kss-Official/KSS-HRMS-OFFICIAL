@@ -567,12 +567,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
     return base.map((r: any) => {
-      // In the new hierarchy (Employee -> CEO -> CTO), approval requires CEO and CTO.
-      // Rejection at any stage terminates the request.
-      const ceoStatus = r.ceoStatus || (r.status === 'Pending' ? 'Pending' : 'N/A');
-      const ctoStatus = r.ctoStatus || (ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
-      const pmStatus = r.pmStatus || 'N/A';
-      const hrStatus = r.hrStatus || 'N/A';
+      // In the hierarchy (Employee -> CEO -> CTO), approval requires CEO and CTO. PM and HR are NOT in the approval flow.
+      const pmStatus: any = 'N/A';
+      const hrStatus: any = 'N/A';
+      const ceoStatus: any = r.ceoStatus === 'Approved' ? 'Approved' :
+                        r.ceoStatus === 'Rejected' ? 'Rejected' :
+                        (r.status === 'Pending' ? 'Pending' : 'N/A');
+      const ctoStatus: any = r.ctoStatus === 'Approved' ? 'Approved' :
+                        r.ctoStatus === 'Rejected' ? 'Rejected' :
+                        (ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
       let status: 'Pending' | 'Approved' | 'Rejected' | 'Cancelled' = r.status || 'Pending';
 
       const isCeoPassed = ceoStatus === 'Approved' || ceoStatus === 'N/A' || ceoStatus === 'Bypassed';
@@ -584,8 +587,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         r.status === 'Rejected' ||
         ceoStatus === 'Rejected' ||
         ctoStatus === 'Rejected' ||
-        pmStatus === 'Rejected' ||
-        hrStatus === 'Rejected'
+        r.pmStatus === 'Rejected' ||
+        r.hrStatus === 'Rejected'
       ) {
         status = 'Rejected';
       } else if (r.status === 'Approved' || (isCeoPassed && isCtoPassed && ceoStatus === 'Approved' && ctoStatus === 'Approved')) {
@@ -2131,10 +2134,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 return;
               }
 
-              const ceoStatus = raw.ceoStatus || (raw.status === 'Pending' ? 'Pending' : 'N/A');
-              const ctoStatus = raw.ctoStatus || (ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
-              const pmStatus = raw.pmStatus || 'N/A';
-              const hrStatus = raw.hrStatus || 'N/A';
+              // 2-tier approval workflow: strictly CEO -> CTO. PM and HR are NOT in the approval workflow.
+              const pmStatus: any = 'N/A';
+              const hrStatus: any = 'N/A';
+              const ceoStatus: any = raw.ceoStatus === 'Approved' ? 'Approved' :
+                                raw.ceoStatus === 'Rejected' ? 'Rejected' :
+                                (raw.status === 'Pending' ? 'Pending' : 'N/A');
+              const ctoStatus: any = raw.ctoStatus === 'Approved' ? 'Approved' :
+                                raw.ctoStatus === 'Rejected' ? 'Rejected' :
+                                (ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
 
               const isCeoPassed = ceoStatus === 'Approved' || ceoStatus === 'N/A' || ceoStatus === 'Bypassed';
               const isCtoPassed = ctoStatus === 'Approved' || ctoStatus === 'N/A' || ctoStatus === 'Bypassed';
@@ -2146,8 +2154,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 raw.status === 'Rejected' || 
                 ceoStatus === 'Rejected' || 
                 ctoStatus === 'Rejected' || 
-                pmStatus === 'Rejected' || 
-                hrStatus === 'Rejected'
+                raw.pmStatus === 'Rejected' || 
+                raw.hrStatus === 'Rejected'
               ) {
                 status = 'Rejected';
               } else if (raw.status === 'Approved' || (isCeoPassed && isCtoPassed && ceoStatus === 'Approved' && ctoStatus === 'Approved')) {

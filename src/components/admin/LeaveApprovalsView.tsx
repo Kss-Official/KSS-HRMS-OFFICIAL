@@ -450,8 +450,11 @@ export const LeaveApprovalsView: React.FC = () => {
             const isWfh = isWfhType(req.type) || isWfhType(req.leaveCategory);
             const statusColor = req.status === 'Approved' ? 'var(--accent-emerald)' : req.status === 'Rejected' ? 'var(--accent-rose)' : 'var(--accent-amber)';
 
-            const displayCeoStatus = req.ceoStatus || 'Pending';
-            const displayCtoStatus = req.ctoStatus || (displayCeoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
+            const displayCeoStatus = req.ceoStatus === 'Approved' ? 'Approved' :
+              req.ceoStatus === 'Rejected' ? 'Rejected' : 'Pending';
+            const displayCtoStatus = req.ctoStatus === 'Approved' ? 'Approved' :
+              req.ctoStatus === 'Rejected' ? 'Rejected' :
+              (displayCeoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
 
             return (
               <motion.div

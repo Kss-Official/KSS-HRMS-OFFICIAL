@@ -1200,16 +1200,16 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
             <div className="flex items-center gap-2">
               <Clock className="w-4 h-4 text-amber-400" />
               <h3 className="text-xs font-black text-white uppercase tracking-wider">
-                Pending Sprint Recommendations ({pendingTeamRequests.length})
+                Team Leave &amp; WFH Status
               </h3>
             </div>
-            <span className="text-[10px] font-mono text-slate-400">Step 1: PM Recommendation</span>
+            <span className="text-[10px] font-mono text-slate-400">Executive Flow (CEO &amp; CTO)</span>
           </div>
 
           {pendingTeamRequests.length === 0 ? (
             <div className="py-12 text-center text-slate-500 text-xs">
               <CheckCircle2 className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
-              <span>All team leave and WFH requests are up to date!</span>
+              <span>Leave and WFH approvals are handled directly by CEO and CTO.</span>
             </div>
           ) : (
             <div className="space-y-3 max-h-72 overflow-y-auto pr-1">

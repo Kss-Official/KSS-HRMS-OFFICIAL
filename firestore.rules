@@ -480,6 +480,7 @@ service cloud.firestore {
         request.resource.data.get('pmUid', '~') == request.auth.uid ||
         // ── Fallback: hardcoded attendance manager UIDs (0 reads) ────────────
         isAttendanceManager() ||
+        isProjectManager() ||
         // ── Deep fallback: full ownership check (may use get() reads) ─────────
         isAttendanceRecordOwner(recordId, request.resource.data)
       );
@@ -511,12 +512,13 @@ service cloud.firestore {
         )) ||
         // ── Fallback: hardcoded attendance manager UIDs (0 reads) ────────────
         isAttendanceManager() ||
+        isProjectManager() ||
         // ── Deep fallback: full ownership (may use get() reads) ───────────────
         isAttendanceRecordOwner(recordId, request.resource.data) ||
         (resource != null && isAttendanceRecordOwner(recordId, resource.data))
       );
 
-      allow delete: if isAttendanceManager() || isConfigAdmin() || (
+      allow delete: if isAttendanceManager() || isProjectManager() || isConfigAdmin() || (
         isSignedIn() && resource != null && resource.data.get('date', '') < '2026-07-27'
       );
     }
@@ -557,6 +559,14 @@ service cloud.firestore {
       );
 
       allow update: if isSignedIn() && (
+        // ── Fast-path 0: Employee self-update / resubmit (valid shape, UID anchored, 0 reads) ──
+        (
+          isRealUser() &&
+          request.resource.data.get('employeeUid', '~') == request.auth.uid &&
+          validLeaveShape() &&
+          (resource == null || resource.data.get('employeeUid', '~') == request.auth.uid) &&
+          (resource == null || resource.data.get('status', '') in ['Pending', 'Cancelled', 'Rejected'])
+        ) ||
         // ── Fast-path 1: Hardcoded admins/managers handle approvals (0 reads) ─
         request.auth.uid in [
           '2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53',
