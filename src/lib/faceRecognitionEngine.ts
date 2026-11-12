@@ -177,7 +177,8 @@ export {
   clearAllFaceEngineState,
   saveEmployeeDescriptor,
   getEmployeeDescriptor,
-  clearEmployeeDescriptor
+  clearEmployeeDescriptor,
+  isFaceBiometricEnrolled
 } from './faceDescriptorStore';
 import { getEmployeeDescriptor } from './faceDescriptorStore';
 

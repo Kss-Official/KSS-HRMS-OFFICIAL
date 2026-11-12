@@ -1,185 +1,166 @@
-
 rules_version = '2';
 
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    // ── Auth helpers ─────────────────────────────────────────────────────────
-    function isSignedIn() { return request.auth != null; }
-    function hasEmail() {
-      return isSignedIn() && 'email' in request.auth.token && request.auth.token.email != null;
+    // ── 1. Core Authentication & Identity Helpers ────────────────────────────
+    function isSignedIn() {
+      return request.auth != null;
     }
-    function userEmail() {
-      return hasEmail() ? request.auth.token.email : '';
-    }
-    function emailMatches(targetEmail) {
-      return hasEmail() && targetEmail is string && targetEmail != '' &&
-        targetEmail.lower() == userEmail().lower();
-    }
+
     function isRealUser() {
       return isSignedIn();
     }
-    // userDocExists: true when users/{uid} exists and the uid/email fields match.
-    // Does NOT call trustedUserMapping (avoids double get() cost and avoids the
-    // strict role-cross-check that was breaking PM and HR sessions).
-    function userDocExists() {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('uid', '') == request.auth.uid;
-    }
-    function getUserDoc() {
-      return exists(/databases/$(database)/documents/users/$(request.auth.uid))
-        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
-        : {};
-    }
-    function empDocExists() {
-      return isSignedIn() && exists(/databases/$(database)/documents/employees/$(request.auth.uid));
-    }
-    function getEmpDoc() {
-      return empDocExists()
-        ? get(/databases/$(database)/documents/employees/$(request.auth.uid)).data
-        : {};
-    }
-    function getEmployeeId() {
-      return userDocExists() && getUserDoc().get('employeeId', null) != null
-        ? getUserDoc().get('employeeId', null)
-        : (empDocExists() && getEmpDoc().get('employeeId', null) != null
-            ? getEmpDoc().get('employeeId', null)
-            : null);
-    }
-    function getEmployeeDocId() {
-      return userDocExists() && getUserDoc().get('employeeDocId', null) != null
-        ? getUserDoc().get('employeeDocId', null)
-        : (empDocExists() ? request.auth.uid : null);
-    }
-    function hasClaimRole() {
-      return isSignedIn() && ('role' in request.auth.token) && request.auth.token.role != null;
-    }
-    function hasDirectUserRole(targetRole) {
-      return isSignedIn() &&
-        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.get('role', '') == targetRole;
-    }
-    function getRole() {
-      return hasClaimRole()
-        ? request.auth.token.role
-        : (userDocExists()
-            ? (('role' in getUserDoc()) && getUserDoc().role != null ? getUserDoc().role : null)
-            : (empDocExists() ? getEmpDoc().get('role', null) : null));
+
+    function hasEmail() {
+      return isSignedIn() && ('email' in request.auth.token) && request.auth.token.email != null;
     }
 
-    // ── Role predicates ──────────────────────────────────────────────────────
-    function isSuperAdmin() {
-      return isSignedIn() && (
-        request.auth.uid in ['2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53', 'hOjKhSAtZKN7igNaePAmPKprVbp1'] ||
-        (hasEmail() && (
-          userEmail().lower() in [
-            'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
-            'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
-            'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
-            'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
-            'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in'
-          ]
-        )) ||
-        (hasClaimRole() && request.auth.token.role in ['SUPER_ADMIN', 'superadmin']) ||
-        hasDirectUserRole('SUPER_ADMIN') ||
-        getRole() == 'SUPER_ADMIN' ||
-        (empDocExists() && (('role' in getEmpDoc()) && getEmpDoc().role == 'SUPER_ADMIN'))
-      );
+    function userEmail() {
+      return hasEmail() ? request.auth.token.email.lower() : '';
     }
-    function isHrAdmin() {
-      return isSignedIn() && (
-        request.auth.uid in ['2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'] ||
-        (hasEmail() && (
-          userEmail().lower() in [
-            'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
-            'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
-          ]
-        )) ||
-        (hasClaimRole() && request.auth.token.role in ['HR_ADMIN', 'hr_admin', 'hr']) ||
-        hasDirectUserRole('HR_ADMIN') ||
-        getRole() == 'HR_ADMIN' ||
-        isSuperAdmin() ||
-        (empDocExists() && (('role' in getEmpDoc()) && getEmpDoc().role in ['HR_ADMIN', 'SUPER_ADMIN']))
-      );
+
+    function emailMatches(targetEmail) {
+      return hasEmail() && targetEmail is string && targetEmail != '' &&
+        targetEmail.lower() == userEmail();
     }
-    function isProjectManager() {
-      return isSignedIn() && (
-        request.auth.uid in ['vhKLIJCVZoTncqVtmh14paMbiXk2'] ||
-        (hasEmail() && (
-          userEmail().lower() in [
-            'd.koushik@kalpanaaasoftwaresolutions.in',
-            'd.koushik@kalpanaaa.in',
-            'koushik@kalpanaaa.in',
-            'koushik@kalpanaaasoftwaresolutions.in'
-          ]
-        )) ||
-        (hasClaimRole() && request.auth.token.role in ['PROJECT_MANAGER', 'project_manager', 'pm']) ||
-        hasDirectUserRole('PROJECT_MANAGER') ||
-        getRole() == 'PROJECT_MANAGER' ||
-        isSuperAdmin() ||
-        (empDocExists() && (('role' in getEmpDoc()) && getEmpDoc().role == 'PROJECT_MANAGER'))
-      );
+
+    function isSelf(uid) {
+      return isSignedIn() && request.auth.uid == uid;
     }
-    function isAuthorizedTechLead() {
-      return isSignedIn() && (
-        request.auth.uid in ['QpDtyS6Jp5OqNu3klvfWGoWHfmS2', 'KfAB95lpbJOeylpKQaWX4GXOPGt2'] ||
-        (hasEmail() && (
-          userEmail().lower() in [
-            'satya.ranjan.dash@kalpanaaa.in',
-            'satya.ranjan.das@kalpanaaa.in',
-            'satya@kalpanaaa.in',
-            'satya.ranjan.dash@kalpanaaasoftwaresolutions.in',
-            'jasonkennethn@kalpanaaa.in',
-            'jason.kennethn@kalpanaaa.in',
-            'jasonkennethn@kalpanaaasoftwaresolutions.in'
-          ]
-        )) ||
-        (empDocExists() && (
-          getEmpDoc().get('email', '') in ['satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'jasonkennethn@kalpanaaa.in'] ||
-          getEmpDoc().get('role', '') == 'TECH_LEAD'
-        )) ||
-        (userDocExists() && (
-          ('role' in getUserDoc() && getUserDoc().role == 'TECH_LEAD') ||
-          ('email' in getUserDoc() && getUserDoc().email in ['satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'jasonkennethn@kalpanaaa.in'])
-        ))
-      );
-    }
-    function isConfigAdmin() { return isHrAdmin() || isSuperAdmin(); }
-    function isAttendanceManager() {
-      return isSignedIn() && (
-        request.auth.uid in [
-          '2kNsj2o55VRtEy2rTnz4CPk7se23',
-          'sco3JJEikROXFMSkCbe7flK62w53',
-          'hOjKhSAtZKN7igNaePAmPKprVbp1',
-          'vhKLIJCVZoTncqVtmh14paMbiXk2',
-          '2d48Rm9eY4eBswXOZw2IBpWGkZK2',
-          '3ZHI3aTB37StHjR97WEBJQSWT9H3'
-        ] ||
-        (hasEmail() && (
-          userEmail().lower() in [
-            'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
-            'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
-            'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
-            'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
-            'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in',
-            'd.koushik@kalpanaaasoftwaresolutions.in', 'd.koushik@kalpanaaa.in',
-            'koushik@kalpanaaa.in', 'koushik@kalpanaaasoftwaresolutions.in',
-            'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
-            'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
-          ]
-        )) ||
-        isProjectManager() ||
-        isSuperAdmin() ||
-        isHrAdmin()
-      );
-    }
-    function isSelf(uid) { return isSignedIn() && request.auth.uid == uid; }
+
     function unchanged(f) {
       return !request.resource.data.diff(resource.data).affectedKeys().hasAny([f]);
     }
 
-    // ── Ownership helpers ────────────────────────────────────────────────────
+    // ── 2. Canonical User Document & Role Resolution ─────────────────────────
+    // Reads users/{uid} at most ONCE per request evaluation (Firestore rules engine
+    // automatically caches repeated get() calls to the same path within a transaction).
+    function userDocExists() {
+      return isSignedIn() && exists(/databases/$(database)/documents/users/$(request.auth.uid));
+    }
+
+    function getUserDoc() {
+      return userDocExists()
+        ? get(/databases/$(database)/documents/users/$(request.auth.uid)).data
+        : {};
+    }
+
+    function getStoredRole() {
+      return userDocExists() && ('role' in getUserDoc()) && getUserDoc().role is string
+        ? getUserDoc().role.lower()
+        : '';
+    }
+
+    function getClaimRole() {
+      return isSignedIn() && ('role' in request.auth.token) && request.auth.token.role is string
+        ? request.auth.token.role.lower()
+        : '';
+    }
+
+    function getRole() {
+      return getClaimRole() != '' ? getClaimRole() : getStoredRole();
+    }
+
+    // ── 3. Bootstrap Administrative Fallbacks (Cold-start safety) ────────────
+    // Prevents the cold-start bootstrap deadlock when an executive or administrator
+    // logs in for the first time before users/{uid} has been written.
+    function isBootstrapAdmin() {
+      return hasEmail() && userEmail() in [
+        'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
+        'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
+        'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
+        'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
+        'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in'
+      ];
+    }
+
+    function isBootstrapHr() {
+      return hasEmail() && userEmail() in [
+        'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
+        'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
+      ];
+    }
+
+    function isBootstrapPm() {
+      return hasEmail() && userEmail() in [
+        'd.koushik@kalpanaaasoftwaresolutions.in', 'd.koushik@kalpanaaa.in',
+        'koushik@kalpanaaa.in', 'koushik@kalpanaaasoftwaresolutions.in'
+      ];
+    }
+
+    function isBootstrapTechLead() {
+      return hasEmail() && userEmail() in [
+        'satya.ranjan.dash@kalpanaaa.in', 'satya.ranjan.das@kalpanaaa.in', 'satya@kalpanaaa.in',
+        'satya.ranjan.dash@kalpanaaasoftwaresolutions.in',
+        'jasonkennethn@kalpanaaa.in', 'jason.kennethn@kalpanaaa.in', 'jasonkennethn@kalpanaaasoftwaresolutions.in'
+      ];
+    }
+
+    // ── 4. Unified Role Predicates (Hierarchy: SuperAdmin > HR > PM > Employee)
+    function isSuperAdmin() {
+      return isSignedIn() && (
+        getRole() in ['super_admin', 'superadmin', 'admin'] ||
+        isBootstrapAdmin() ||
+        request.auth.uid in ['2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53', 'hOjKhSAtZKN7igNaePAmPKprVbp1']
+      );
+    }
+
+    function isHrAdmin() {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        getRole() in ['hr_admin', 'hr'] ||
+        isBootstrapHr() ||
+        request.auth.uid in ['2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3']
+      );
+    }
+
+    function isProjectManager() {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        getRole() in ['project_manager', 'pm'] ||
+        isBootstrapPm() ||
+        request.auth.uid in ['vhKLIJCVZoTncqVtmh14paMbiXk2']
+      );
+    }
+
+    function isConfigAdmin() {
+      return isHrAdmin() || isSuperAdmin();
+    }
+
+    function isAuthorizedTechLead() {
+      return isSignedIn() && (
+        isSuperAdmin() ||
+        getStoredRole() in ['tech_lead', 'technical_lead'] ||
+        isBootstrapTechLead() ||
+        request.auth.uid in ['QpDtyS6Jp5OqNu3klvfWGoWHfmS2', 'KfAB95lpbJOeylpKQaWX4GXOPGt2']
+      );
+    }
+
+    function isAttendanceManager() {
+      return isProjectManager() || isHrAdmin() || isSuperAdmin() ||
+        isBootstrapAdmin() || isBootstrapHr() || isBootstrapPm() ||
+        (isSignedIn() && request.auth.uid in [
+          '2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53',
+          'hOjKhSAtZKN7igNaePAmPKprVbp1', 'vhKLIJCVZoTncqVtmh14paMbiXk2',
+          '2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'
+        ]);
+    }
+
+    // ── 5. Employee Corporate Identity Mappings ──────────────────────────────
+    function getEmployeeId() {
+      return userDocExists() && getUserDoc().get('employeeId', null) != null
+        ? getUserDoc().get('employeeId', null)
+        : null;
+    }
+
+    function getEmployeeDocId() {
+      return userDocExists() && getUserDoc().get('employeeDocId', null) != null
+        ? getUserDoc().get('employeeDocId', null)
+        : null;
+    }
+
+    // ── 6. Zero-Read and Single-Read Ownership Helpers ───────────────────────
     function ownsEmployeeRecord(employeeId) {
       return isSignedIn() && (
         request.auth.uid == employeeId ||
@@ -190,20 +171,11 @@ service cloud.firestore {
           emailMatches(resource.data.get('workEmail', '')) ||
           emailMatches(resource.data.get('personalEmail', ''))
         )) ||
-        (getEmployeeDocId() != null && (
-          employeeId == getEmployeeDocId() ||
-          (resource != null && resource.data.get('employeeDocId', '~') == getEmployeeDocId())
-        )) ||
-        (getEmployeeId() != null && (
-          employeeId == getEmployeeId() ||
-          employeeId == ('emp-' + getEmployeeId()) ||
-          (resource != null && (
-            resource.data.get('employeeId', '~') == getEmployeeId() ||
-            resource.data.get('employeeCode', '~') == getEmployeeId()
-          ))
-        ))
+        (getEmployeeDocId() != null && employeeId == getEmployeeDocId()) ||
+        (getEmployeeId() != null && (employeeId == getEmployeeId() || employeeId == ('emp-' + getEmployeeId())))
       );
     }
+
     function isAttendanceRecordOwner(recordId, d) {
       return isSignedIn() && (
         d.get('authUid', '~') == request.auth.uid ||
@@ -228,6 +200,7 @@ service cloud.firestore {
         ))
       );
     }
+
     function ownsSalaryRecord(d) {
       return isRealUser() && (
         d.get('employeeUid', '~') == request.auth.uid ||
@@ -245,6 +218,7 @@ service cloud.firestore {
         ))
       );
     }
+
     function ownsFcmToken(d) {
       return isRealUser() && (
         d.get('uid', '~') == request.auth.uid ||
@@ -274,34 +248,25 @@ service cloud.firestore {
         ))
       );
     }
-    // ── Shape validators ─────────────────────────────────────────────────────
+
+    // ── 7. Document Schema Validators ────────────────────────────────────────
     function validAttendanceShape() {
       let d = request.resource.data;
       return (!('status' in d) || d.status is string) &&
              (!('date' in d) || (d.date is string && d.date.size() == 10));
     }
-    // ── validLeaveShape: ZERO cross-doc reads ────────────────────────────────
-    // All checks operate only on request.resource.data and request.auth (no
-    // exists()/get() calls). The employeeUid anchor is the single authority
-    // for identity — this avoids burning the 10-get() budget inside the
-    // transaction that already reads leaveLock docs.
+
     function validLeaveShape() {
       let d = request.resource.data;
-      // Allow any keys that the app may legitimately send (open whitelist for
-      // known fields; unknown keys are blocked by identity anchor and status constraints below).
       return d.keys().hasAll(['employeeId', 'employeeUid', 'type', 'startDate', 'endDate', 'reason', 'status']) &&
-      // The identity anchor: UID or authenticated email match
       (
         d.get('employeeUid', '') == request.auth.uid ||
         d.get('authUid', '') == request.auth.uid ||
         emailMatches(d.get('email', '')) ||
         emailMatches(d.get('employeeEmail', ''))
       ) &&
-      // authUid, if present, must also match request.auth.uid
       (d.get('authUid', '~') == '~' || d.get('authUid', '~') == request.auth.uid) &&
-      // Status must be Pending on creation / resubmission
       d.get('status', '') == 'Pending' &&
-      // Leave type validation
       d.get('type', '') in [
         'Leave', 'WFH', 'Earn Leave', 'Sick Leave', 'Loss of Pay',
         'Casual Leave', 'EL', 'SL', 'LOP'
@@ -309,13 +274,13 @@ service cloud.firestore {
       d.get('startDate', '') is string && d.get('startDate', '').size() == 10 &&
       d.get('endDate', '') is string && d.get('endDate', '').size() == 10 &&
       d.get('reason', '') is string && d.get('reason', '').size() > 0 &&
-      // On creation, approval stages cannot be pre-approved by the employee
       d.get('ceoStatus', '') != 'Approved' &&
       d.get('ctoStatus', '') != 'Approved' &&
       d.get('pmStatus', '') != 'Approved' &&
       d.get('hrStatus', '') != 'Approved' &&
       d.get('_deductionApplied', false) == false;
     }
+
     function validAuditShape() {
       return request.resource.data.keys().hasOnly([
         'id','actorId','actorName','actorRole','action','target','details','timestamp',
@@ -334,43 +299,30 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    match /debug_userdoc/{docId} {
-      allow create: if userDocExists();
-    }
-    match /debug_role/{docId} {
-      allow create: if getRole() != null;
-    }
-    match /debug_not_superadmin/{docId} {
-      allow create: if !isSuperAdmin();
-    }
-    match /debug_not_hradmin/{docId} {
-      allow create: if !isHrAdmin();
-    }
-    match /debug_not_pm/{docId} {
-      allow create: if !isProjectManager();
-    }
-
-    // ── 1. Users (role-mapping) ──────────────────────────────────────────────
+    // ── 1. Users (canonical role mapping & auth profile) ─────────────────────
     match /users/{userId} {
-      allow read: if isSelf(userId) || isHrAdmin() || isProjectManager();
+      allow read: if isSelf(userId) || isHrAdmin() || isProjectManager() || isSuperAdmin();
       allow create, update: if (
-        isSelf(userId) &&
-        request.resource.data.get('uid', request.auth.uid) == request.auth.uid &&
-        !(request.resource.data.get('role', '') in [
-          'SUPER_ADMIN', 'HR_ADMIN', 'PROJECT_MANAGER',
-          'superadmin', 'hr_admin', 'project_manager'
-        ])
-      ) || isConfigAdmin() || isProjectManager();
-      allow delete: if isProjectManager() || isConfigAdmin();
+        isSelf(userId) && (
+          // Regular users cannot escalate themselves to administrative roles
+          !(request.resource.data.get('role', 'EMPLOYEE').lower() in [
+            'super_admin', 'superadmin', 'admin', 'hr_admin', 'hr', 'project_manager', 'pm'
+          ]) ||
+          // Authorized administrative roles & bootstrap accounts can write their valid role
+          isSuperAdmin() || isHrAdmin() || isProjectManager() || isBootstrapAdmin() || isBootstrapHr() || isBootstrapPm()
+        ) &&
+        request.resource.data.get('uid', request.auth.uid) == request.auth.uid
+      ) || isSuperAdmin() || isHrAdmin() || isProjectManager();
+      allow delete: if isSuperAdmin() || isHrAdmin();
     }
 
-    // ── 2. Employees Directory (PII + biometrics) ───────────────────────────
+    // ── 2. Employees Directory (PII, biometrics, leave balances) ─────────────
     match /employees/{employeeId} {
       allow read: if isRealUser();
-      allow create: if isProjectManager() || isConfigAdmin() || (
+      allow create: if isSuperAdmin() || isHrAdmin() || isProjectManager() || (
         isRealUser() && isSelf(employeeId) && (
-          request.resource.data.role == 'EMPLOYEE' ||
-          (userDocExists() && getUserDoc().role == request.resource.data.role)
+          request.resource.data.get('role', 'EMPLOYEE').lower() == 'employee' ||
+          (userDocExists() && getUserDoc().get('role', '').lower() == request.resource.data.get('role', '').lower())
         )
       );
       allow update: if (
@@ -383,37 +335,32 @@ service cloud.firestore {
             'faceEnrolledAt', 'fullName', 'updatedAt', 'hasResume', 'resumeUrl',
             'desktopSessionId', 'mobileSessionId', 'currentSessionId',
             'sessionFingerprint', 'lastLoginAt', 'lastActiveAt',
-            // uid backfill: employee may write their own Firebase Auth UID to their
-            // own document. This is not a privilege escalation — it only links the
-            // auth identity to the existing employee record for rule lookups.
             'uid'
           ])
         )
-      ) || isProjectManager() || isConfigAdmin() || isAuthorizedTechLead();
-      allow delete: if isProjectManager() || isSuperAdmin() || isConfigAdmin();
+      ) ||
+      isProjectManager() || isConfigAdmin() || isAuthorizedTechLead() ||
+      // Approver leave deduction atomically updating balances on approval
+      ((isSuperAdmin() || isHrAdmin()) &&
+       request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+         'earnLeaveBalance', 'sickLeaveBalance', 'casualLeaveBalance', 'updatedAt'
+       ]));
 
-      // 2a. Leave date-locks
-      // These are written atomically in the same transaction as leaveRequests.
-      // ALL checks MUST be zero-read to stay within Firestore's 10-get() limit.
+      allow delete: if isSuperAdmin() || isHrAdmin();
+
+      // 2a. Leave date-locks (atomic reservation prevents double-booking)
       match /leaveLocks/{lockDate} {
         allow read: if isSignedIn();
         allow create, update: if isSignedIn() && (
-          // Zero-read fast-paths first ─────────────────────────────────────────
           request.resource.data.get('employeeUid', '~') == request.auth.uid ||
           request.resource.data.get('authUid', '~') == request.auth.uid ||
           employeeId == request.auth.uid ||
           request.resource.data.get('employeeId', '~') == request.auth.uid ||
           emailMatches(request.resource.data.get('email', '')) ||
           emailMatches(request.resource.data.get('employeeEmail', '')) ||
-          // Hardcoded managers (0 reads) ────────────────────────────────────────
-          request.auth.uid in [
-            '2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53',
-            'hOjKhSAtZKN7igNaePAmPKprVbp1', 'vhKLIJCVZoTncqVtmh14paMbiXk2',
-            '2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'
-          ]
+          isAttendanceManager()
         );
         allow delete: if isSignedIn() && (
-          // Zero-read fast-paths first ─────────────────────────────────────────
           employeeId == request.auth.uid ||
           (resource != null && (
             resource.data.get('employeeUid', '~') == request.auth.uid ||
@@ -422,24 +369,17 @@ service cloud.firestore {
             emailMatches(resource.data.get('email', '')) ||
             emailMatches(resource.data.get('employeeEmail', ''))
           )) ||
-          // Hardcoded managers (0 reads) ────────────────────────────────────────
-          request.auth.uid in [
-            '2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53',
-            'hOjKhSAtZKN7igNaePAmPKprVbp1', 'vhKLIJCVZoTncqVtmh14paMbiXk2',
-            '2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'
-          ]
+          isAttendanceManager()
         );
       }
 
       // 2b. Private resume subcollection
       match /private/{docId} {
-        allow read: if isConfigAdmin() || isProjectManager() ||
-          (isRealUser() && (employeeId == request.auth.uid || employeeId == getEmployeeDocId() || ownsEmployeeRecord(employeeId)));
-        allow write: if isConfigAdmin() || isProjectManager() ||
+        allow read, write: if isConfigAdmin() || isProjectManager() ||
           (isRealUser() && (employeeId == request.auth.uid || employeeId == getEmployeeDocId() || ownsEmployeeRecord(employeeId)));
       }
 
-      // 2c. Leave Ledger subcollection (audit trail of all EL/SL/CL credits, debits, reversals)
+      // 2c. Leave Ledger subcollection (immutable audit trail of credits/debits)
       match /leaveLedger/{txnId} {
         allow read: if isRealUser();
         allow create: if isSignedIn() && (
@@ -460,10 +400,8 @@ service cloud.firestore {
     match /attendance/{recordId} {
       allow read: if isSignedIn();
 
-      // Zero-read manager fast-path: PM/HR/Admin corrections carry correctedByUid
-      // or pmUid in the payload — checked upfront before any cross-doc reads.
       allow create: if isSignedIn() && (
-        // ── Fast-path 1: employee self-create (0 reads) ──────────────────────
+        // Fast-path 1: employee self-create (0 reads)
         (
           validAttendanceShape() &&
           (
@@ -478,46 +416,37 @@ service cloud.firestore {
             emailMatches(request.resource.data.get('employeeEmail', ''))
           )
         ) ||
-        // ── Fast-path 2: manager correction doc carries correctedByUid (0 reads)
+        // Fast-path 2: manager correction carrying correctedByUid or pmUid in payload
         request.resource.data.get('correctedByUid', '~') == request.auth.uid ||
-        // ── Fast-path 3: PM is listed as pmUid on the new doc (0 reads) ──────
         request.resource.data.get('pmUid', '~') == request.auth.uid ||
-        // ── Fallback: hardcoded attendance manager UIDs (0 reads) ────────────
         isAttendanceManager() ||
         isProjectManager() ||
-        // ── Deep fallback: full ownership check (may use get() reads) ─────────
         isAttendanceRecordOwner(recordId, request.resource.data)
       );
 
       allow update: if isSignedIn() && (
-        // ── Fast-path 1: employee self-update via authUid/employeeUid (0 reads)
+        // Fast-path 1: employee self-update via payload (0 reads)
         request.resource.data.get('authUid', '~') == request.auth.uid ||
         request.resource.data.get('employeeUid', '~') == request.auth.uid ||
         request.resource.data.get('uid', '~') == request.auth.uid ||
         request.resource.data.get('employeeId', '~') == request.auth.uid ||
-        // ── Fast-path 2: existing doc ownership (0 reads on stored fields) ────
+        emailMatches(request.resource.data.get('email', '')) ||
+        emailMatches(request.resource.data.get('employeeEmail', '')) ||
+        // Fast-path 2: existing doc ownership (0 reads on stored fields)
         (resource != null && (
           resource.data.get('authUid', '~') == request.auth.uid ||
           resource.data.get('employeeUid', '~') == request.auth.uid ||
           resource.data.get('uid', '~') == request.auth.uid ||
-          resource.data.get('employeeId', '~') == request.auth.uid
-        )) ||
-        // ── Fast-path 3: manager correction — correctedByUid in payload (0 reads)
-        request.resource.data.get('correctedByUid', '~') == request.auth.uid ||
-        // ── Fast-path 4: PM is the pmUid on the doc (0 reads) ────────────────
-        request.resource.data.get('pmUid', '~') == request.auth.uid ||
-        (resource != null && resource.data.get('pmUid', '~') == request.auth.uid) ||
-        // ── Fast-path 5: email ownership (0 reads — from auth token) ─────────
-        emailMatches(request.resource.data.get('email', '')) ||
-        emailMatches(request.resource.data.get('employeeEmail', '')) ||
-        (resource != null && (
+          resource.data.get('employeeId', '~') == request.auth.uid ||
           emailMatches(resource.data.get('email', '')) ||
           emailMatches(resource.data.get('employeeEmail', ''))
         )) ||
-        // ── Fallback: hardcoded attendance manager UIDs (0 reads) ────────────
+        // Fast-path 3: manager correction
+        request.resource.data.get('correctedByUid', '~') == request.auth.uid ||
+        request.resource.data.get('pmUid', '~') == request.auth.uid ||
+        (resource != null && resource.data.get('pmUid', '~') == request.auth.uid) ||
         isAttendanceManager() ||
         isProjectManager() ||
-        // ── Deep fallback: full ownership (may use get() reads) ───────────────
         isAttendanceRecordOwner(recordId, request.resource.data) ||
         (resource != null && isAttendanceRecordOwner(recordId, resource.data))
       );
@@ -527,26 +456,12 @@ service cloud.firestore {
       );
     }
 
-
-    //
-    // leaveRequests collection
-    //
-    // CREATE:
-    //   Fast-path 1: employee submits their own request (UID anchored, 0 reads).
-    //   Fast-path 2: PM/HR hardcoded UIDs (0 reads) for representative requests.
-    //   Fallback: isSuperAdmin/isProjectManager/isHrAdmin role checks.
-    //
-    // UPDATE:
-    //   Fast-path 1: Hardcoded attendance-manager/admin UIDs (0 reads) covers
-    //                CEO, CTO, PM, HR approval stage writes.
-    //   Fast-path 2: Employee self-cancel (only status field changes, UID anchored).
-    //   Fallback: isSuperAdmin role check.
-    //
+    // ── 4. Leave & WFH Requests ──────────────────────────────────────────────
     match /leaveRequests/{requestId} {
       allow read: if isSignedIn();
 
       allow create: if isSignedIn() && (
-        // ── Fast-path 1: Employee self-submit — UID or email match, 0 reads ────
+        // Fast-path 1: Employee self-submit — UID or email match, 0 reads
         (
           isRealUser() &&
           (
@@ -557,31 +472,26 @@ service cloud.firestore {
           ) &&
           validLeaveShape()
         ) ||
-        // ── Fast-path 2: Hardcoded managers, 0 reads ─────────────────────────
-        request.auth.uid in [
-          '2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53',
-          'hOjKhSAtZKN7igNaePAmPKprVbp1', 'vhKLIJCVZoTncqVtmh14paMbiXk2',
-          '2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'
-        ] ||
-        (hasEmail() && userEmail().lower() in [
-          'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
-          'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
-          'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
-          'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
-          'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in',
-          'd.koushik@kalpanaaasoftwaresolutions.in', 'd.koushik@kalpanaaa.in',
-          'koushik@kalpanaaa.in', 'koushik@kalpanaaasoftwaresolutions.in',
-          'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
-          'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
-        ]) ||
-        // ── Fallback: role-based checks (may use get() reads) ─────────────────
         isSuperAdmin() || isProjectManager() || isHrAdmin()
       );
 
       allow update: if isSignedIn() && (
-        // ── Fast-path 0: Employee self-update / resubmit (valid shape, UID/email anchored, 0 reads) ──
+        // Fast-path 1: Employee self-cancel (UID or email anchored, status=Cancelled)
         (
-          isRealUser() &&
+          resource != null &&
+          (
+            resource.data.get('employeeUid', '~') == request.auth.uid ||
+            resource.data.get('authUid', '~') == request.auth.uid ||
+            emailMatches(resource.data.get('email', '')) ||
+            emailMatches(resource.data.get('employeeEmail', ''))
+          ) &&
+          request.resource.data.get('status', '') == 'Cancelled' &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt', 'cancelledAt', 'cancelledBy'])
+        ) ||
+        // Fast-path 2: Approvers update stages, notes, statuses, deduction flags
+        isSuperAdmin() || isProjectManager() || isHrAdmin() ||
+        // Fast-path 3: Employee self-update / resubmit (valid shape, UID/email anchored)
+        (
           (
             request.resource.data.get('employeeUid', '~') == request.auth.uid ||
             request.resource.data.get('authUid', '~') == request.auth.uid ||
@@ -597,44 +507,17 @@ service cloud.firestore {
             emailMatches(resource.data.get('employeeEmail', ''))
           ) &&
           (resource == null || resource.data.get('status', '') in ['Pending', 'Cancelled', 'Rejected'])
-        ) ||
-        // ── Fast-path 1: Hardcoded admins/managers handle approvals (0 reads) ─
-        request.auth.uid in [
-          '2kNsj2o55VRtEy2rTnz4CPk7se23', 'sco3JJEikROXFMSkCbe7flK62w53',
-          'hOjKhSAtZKN7igNaePAmPKprVbp1', 'vhKLIJCVZoTncqVtmh14paMbiXk2',
-          '2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'
-        ] ||
-        // ── Fast-path 2: Hardcoded admin emails (0 reads from token) ─────────
-        (hasEmail() && userEmail().lower() in [
-          'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
-          'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
-          'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
-          'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
-          'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in',
-          'd.koushik@kalpanaaasoftwaresolutions.in', 'd.koushik@kalpanaaa.in',
-          'koushik@kalpanaaa.in', 'koushik@kalpanaaasoftwaresolutions.in',
-          'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
-          'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
-        ]) ||
-        // ── Fast-path 3: Employee self-cancel (UID anchored, 0 reads) ─────────
-        (
-          isRealUser() &&
-          resource != null &&
-          resource.data.get('employeeUid', '~') == request.auth.uid &&
-          request.resource.data.get('status', '') == 'Cancelled' &&
-          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'updatedAt']) &&
-          unchanged('ceoStatus') &&
-          unchanged('ctoStatus') &&
-          unchanged('pmStatus') &&
-          unchanged('hrStatus')
-        ) ||
-        // ── Fallback: full role checks (may use get() reads) ──────────────────
-        isSuperAdmin() || isProjectManager() || isHrAdmin()
+        )
       );
 
       allow delete: if isSuperAdmin() || isConfigAdmin() || (
         isRealUser() && resource != null &&
-        resource.data.get('employeeUid', '~') == request.auth.uid &&
+        (
+          resource.data.get('employeeUid', '~') == request.auth.uid ||
+          resource.data.get('authUid', '~') == request.auth.uid ||
+          emailMatches(resource.data.get('email', '')) ||
+          emailMatches(resource.data.get('employeeEmail', ''))
+        ) &&
         resource.data.get('status', '') in ['Pending', 'Cancelled']
       );
     }
@@ -722,7 +605,7 @@ service cloud.firestore {
           resource.data.get('employeeUid','~') == request.auth.uid ||
           (getEmployeeDocId() != null && resource.data.get('employeeDocId','~') == getEmployeeDocId()) ||
           resource.data.get('employeeId','~') == request.auth.uid ||
-          (hasEmail() && resource.data.get('employeeEmail','~').lower() == userEmail().lower())
+          (hasEmail() && resource.data.get('employeeEmail','~').lower() == userEmail())
         ));
       allow create, update: if isProjectManager() || isConfigAdmin();
       allow delete: if isConfigAdmin() || isProjectManager();
@@ -759,20 +642,8 @@ service cloud.firestore {
           (getEmployeeDocId() != null && (resource.data.targetEmployeeId == getEmployeeDocId() || resource.data.get('targetEmployeeDocId', '~') == getEmployeeDocId())) ||
           (getEmployeeId() != null && (resource.data.targetEmployeeCode == getEmployeeId() || resource.data.targetEmployeeId == getEmployeeId())) ||
           (hasEmail() && (
-            (resource.data.get('targetEmployeeEmail', '') != '' && (resource.data.get('targetEmployeeEmail', '') == userEmail() || resource.data.get('targetEmployeeEmail', '').lower() == userEmail().lower())) ||
-            (resource.data.get('email', '') != '' && (resource.data.get('email', '') == userEmail() || resource.data.get('email', '').lower() == userEmail().lower()))
-          )) ||
-          (exists(/databases/$(database)/documents/employees/$(resource.data.targetEmployeeId)) &&
-           (get(/databases/$(database)/documents/employees/$(resource.data.targetEmployeeId)).data.get('uid', '') == request.auth.uid ||
-            (hasEmail() && get(/databases/$(database)/documents/employees/$(resource.data.targetEmployeeId)).data.get('email', '').lower() == userEmail().lower()))) ||
-          (exists(/databases/$(database)/documents/employees/$(request.auth.uid)) &&
-           (get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.get('employeeId', '') == resource.data.get('targetEmployeeCode', '~') ||
-            get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.get('id', '') == resource.data.targetEmployeeId ||
-            (hasEmail() && get(/databases/$(database)/documents/employees/$(request.auth.uid)).data.get('email', '').lower() == userEmail().lower()))) ||
-          (userDocExists() && (
-            ('employeeId' in getUserDoc() && getUserDoc().employeeId == resource.data.get('targetEmployeeCode', '~')) ||
-            ('employeeDocId' in getUserDoc() && getUserDoc().employeeDocId == resource.data.targetEmployeeId) ||
-            ('email' in getUserDoc() && emailMatches(getUserDoc().email))
+            (resource.data.get('targetEmployeeEmail', '') != '' && (resource.data.get('targetEmployeeEmail', '') == userEmail() || resource.data.get('targetEmployeeEmail', '').lower() == userEmail())) ||
+            (resource.data.get('email', '') != '' && (resource.data.get('email', '') == userEmail() || resource.data.get('email', '').lower() == userEmail()))
           ))
         );
       }
@@ -788,9 +659,7 @@ service cloud.firestore {
           (getEmployeeDocId() != null && resource.data.reviewerId == getEmployeeDocId()) ||
           (getEmployeeId() != null && resource.data.reviewerId == getEmployeeId()) ||
           isAuthorizedTechLead() ||
-          (exists(/databases/$(database)/documents/employees/$(resource.data.reviewerId)) &&
-           (get(/databases/$(database)/documents/employees/$(resource.data.reviewerId)).data.get('uid', '') == request.auth.uid ||
-            (hasEmail() && get(/databases/$(database)/documents/employees/$(resource.data.reviewerId)).data.get('email', '').lower() == userEmail().lower())))
+          (hasEmail() && resource.data.get('reviewerEmail', '') != '' && emailMatches(resource.data.get('reviewerEmail', '')))
         );
       }
       function callerTier() {
@@ -806,9 +675,7 @@ service cloud.firestore {
           (getEmployeeId() != null && request.resource.data.reviewerId == getEmployeeId()) ||
           isAuthorizedTechLead() ||
           isConfigAdmin() ||
-          (exists(/databases/$(database)/documents/employees/$(request.resource.data.reviewerId)) &&
-            (get(/databases/$(database)/documents/employees/$(request.resource.data.reviewerId)).data.get('uid', '') == request.auth.uid ||
-            (hasEmail() && get(/databases/$(database)/documents/employees/$(request.resource.data.reviewerId)).data.get('email', '').lower() == userEmail().lower())))
+          (hasEmail() && request.resource.data.get('reviewerEmail', '') != '' && emailMatches(request.resource.data.get('reviewerEmail', '')))
         ) &&
         request.resource.data.targetEmployeeId is string &&
         request.resource.data.targetEmployeeId.size() > 0 &&

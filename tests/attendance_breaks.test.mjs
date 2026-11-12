@@ -32,10 +32,19 @@ test('Attendance Break Authorization & Security Boundary Unit Tests', async (t) 
   const bobEmail = `test_bob_${Date.now()}@kalpanaaa.in`;
   const password = 'TestUserPass@2026!';
 
-  const [aliceSign, bobSign] = await Promise.all([
-    req(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, 'POST', { email: aliceEmail, password, returnSecureToken: true }),
-    req(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, 'POST', { email: bobEmail, password, returnSecureToken: true })
-  ]);
+  let aliceSign, bobSign;
+  try {
+    [aliceSign, bobSign] = await Promise.all([
+      req(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, 'POST', { email: aliceEmail, password, returnSecureToken: true }),
+      req(`https://identitytoolkit.googleapis.com/v1/accounts:signUp?key=${API_KEY}`, 'POST', { email: bobEmail, password, returnSecureToken: true })
+    ]);
+  } catch (err) {
+    if (err?.code === 'ENOTFOUND' || err?.message?.includes('ENOTFOUND')) {
+      t.skip('Skipping live network test in offline sandbox. Run tests/security_rules.test.mjs for hermetic rules testing.');
+      return;
+    }
+    throw err;
+  }
 
   assert.equal(aliceSign.status, 200, 'Alice sign-up must succeed');
   assert.equal(bobSign.status, 200, 'Bob sign-up must succeed');

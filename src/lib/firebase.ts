@@ -7,6 +7,8 @@ import {
   signOut, 
   sendPasswordResetEmail,
   onAuthStateChanged,
+  setPersistence,
+  browserLocalPersistence,
   User 
 } from "firebase/auth";
 import { 
@@ -50,6 +52,13 @@ export const firebaseConfig = {
 const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
+
+// Explicitly configure browser local persistence for robust session retention across page refreshes
+if (typeof window !== 'undefined') {
+  setPersistence(auth, browserLocalPersistence).catch((err) => {
+    console.warn('[Firebase] setPersistence(browserLocalPersistence) notice:', err);
+  });
+}
 
 // BUG 6 FIX: Wrap persistent multi-tab cache in try/catch.
 // Safari private browsing and some mobile environments block IndexedDB,

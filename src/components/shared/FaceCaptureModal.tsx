@@ -12,6 +12,11 @@ import {
   drawFaceMeshOverVideo
 } from '../../lib/faceRecognitionEngine';
 
+// Background model preloader exported for idle warm-up
+export const preloadBiometricModels = (): void => {
+  loadFaceModels().catch(() => {});
+};
+
 export interface FaceCaptureModalProps {
   isOpen: boolean;
   onClose: () => void;
@@ -40,7 +45,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   const { triggerHaptic } = useHaptic();
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  
+
   const [stream, setStream] = useState<MediaStream | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const actionTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -161,7 +166,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
       videoRef.current.onloadedmetadata = () => {
         videoRef.current?.play().catch(e => console.warn('Video play prompt:', e));
       };
-      videoRef.current.play().catch(() => {});
+      videoRef.current.play().catch(() => { });
     }
   }, [stream, isOpen]);
 
@@ -333,13 +338,12 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
           {/* Face Oval Target Boundary Overlay */}
           <div className="absolute inset-0 pointer-events-none flex items-center justify-center z-20">
-            <div className={`w-56 h-72 rounded-[40%] border-2 transition-all duration-500 relative flex flex-col items-center justify-center ${
-              statusStep === 'VERIFIED' ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.3)]' :
+            <div className={`w-56 h-72 rounded-[40%] border-2 transition-all duration-500 relative flex flex-col items-center justify-center ${statusStep === 'VERIFIED' ? 'border-emerald-500 bg-emerald-500/10 shadow-[0_0_40px_rgba(16,185,129,0.3)]' :
               statusStep === 'FAILED' ? 'border-rose-500 bg-rose-500/10 shadow-[0_0_40px_rgba(244,63,94,0.3)]' :
-              statusStep === 'NOT_ENROLLED' ? 'border-amber-500 bg-amber-500/10 shadow-[0_0_40px_rgba(245,158,11,0.3)]' :
-              statusStep === 'SCANNING' ? 'border-blue-400 bg-blue-500/5 shadow-[0_0_30px_rgba(59,130,246,0.2)] animate-pulse' :
-              'border-emerald-400/80 border-dashed'
-            }`}>
+                statusStep === 'NOT_ENROLLED' ? 'border-amber-500 bg-amber-500/10 shadow-[0_0_40px_rgba(245,158,11,0.3)]' :
+                  statusStep === 'SCANNING' ? 'border-blue-400 bg-blue-500/5 shadow-[0_0_30px_rgba(59,130,246,0.2)] animate-pulse' :
+                    'border-emerald-400/80 border-dashed'
+              }`}>
               <div className="w-full h-full border border-emerald-400/30 rounded-[40%] absolute inset-2 opacity-60" />
               {statusStep === 'VERIFIED' && (
                 <CheckCircle2 className="w-16 h-16 text-emerald-400 animate-in zoom-in-50 duration-300" />
@@ -397,11 +401,10 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               {employeeName}
             </span>
             {confidencePercent !== null && (
-              <span className={`text-[10px] font-mono font-bold px-3 py-1 rounded-full border backdrop-blur-md ${
-                statusStep === 'FAILED' 
-                  ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
-                  : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
-              }`}>
+              <span className={`text-[10px] font-mono font-bold px-3 py-1 rounded-full border backdrop-blur-md ${statusStep === 'FAILED'
+                ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
+                : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                }`}>
                 Accuracy: {confidencePercent}%
               </span>
             )}
@@ -411,16 +414,15 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         {/* Footer Status Bar */}
         <div className="w-full p-6 bg-slate-950 border-t border-slate-800 space-y-4">
           <div className="text-center space-y-1">
-            <p className={`text-xs font-bold ${
-              statusStep === 'VERIFIED' ? 'text-emerald-400' :
+            <p className={`text-xs font-bold ${statusStep === 'VERIFIED' ? 'text-emerald-400' :
               statusStep === 'FAILED' ? 'text-rose-400' :
-              statusStep === 'NOT_ENROLLED' ? 'text-amber-400' : 'text-white'
-            }`}>{feedbackText}</p>
+                statusStep === 'NOT_ENROLLED' ? 'text-amber-400' : 'text-white'
+              }`}>{feedbackText}</p>
             <p className="text-[10px] text-slate-500">
               {currentModeIsEnroll
                 ? 'Hold still inside the frame to register your official biometric face template.'
                 : isEnrolled
-                  ? 'Biometric descriptor registered. Matching live face against 128-float embedding.' 
+                  ? 'Biometric descriptor registered. Matching live face against 128-float embedding.'
                   : 'No facial template enrolled yet. Click "Register My Face" below to enroll.'}
             </p>
           </div>

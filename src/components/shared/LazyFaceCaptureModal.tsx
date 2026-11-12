@@ -16,6 +16,23 @@ const FaceCaptureModalInner = lazy(() =>
   import('./FaceCaptureModal').then((m) => ({ default: m.FaceCaptureModal }))
 );
 
+// Background preloader: when idle or after mount, load FaceCaptureModal chunk in background
+export const preloadFaceCaptureEngine = (): void => {
+  if (typeof window === 'undefined') return;
+  const load = () => {
+    import('./FaceCaptureModal').then((m: any) => {
+      if (typeof m.preloadBiometricModels === 'function') {
+        m.preloadBiometricModels();
+      }
+    }).catch(() => {});
+  };
+  if ('requestIdleCallback' in window) {
+    (window as any).requestIdleCallback(load, { timeout: 3500 });
+  } else {
+    setTimeout(load, 1500);
+  }
+};
+
 export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = (props) => {
   const [everOpened, setEverOpened] = useState<boolean>(!!props.isOpen);
 

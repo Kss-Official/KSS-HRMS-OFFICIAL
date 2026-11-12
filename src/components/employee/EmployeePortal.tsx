@@ -98,9 +98,9 @@ import { EmployeeTeamDirectory } from './EmployeeTeamDirectory';
 import { EmployeePayslips } from './EmployeePayslips';
 import { EmployeeFeedbackView } from './EmployeeFeedbackView';
 import { ConsentModal } from '../shared/ConsentModal';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
+import { FaceCaptureModal, preloadFaceCaptureEngine } from '../shared/LazyFaceCaptureModal';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
-import { getEmployeeDescriptor } from '../../lib/faceDescriptorStore';
+import { getEmployeeDescriptor, saveEmployeeDescriptor, isFaceBiometricEnrolled } from '../../lib/faceDescriptorStore';
 import { BreakEntry, BreakType, normalizeBreakType } from '../../types';
 
 interface EmployeePortalProps {
@@ -595,12 +595,31 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     }
   }, [activeEmployee]);
 
-  // Acquire Continuous Real-Time Geolocation (watchPosition with smart throttling)
+  // PERF: Pre-warm face recognition models during idle time so camera verification is instant
+  useEffect(() => {
+    preloadFaceCaptureEngine();
+  }, []);
+
+  // Acquire Continuous Real-Time Geolocation (fast initial probe + watchPosition with smart throttling)
   useEffect(() => {
     if (!('geolocation' in navigator)) {
       setGpsError('Geolocation is not supported by your browser.');
       return;
     }
+
+    // Fast initial GPS probe with cached position (<20ms)
+    navigator.geolocation.getCurrentPosition(
+      pos => {
+        setGpsLocation({
+          lat: pos.coords.latitude,
+          lon: pos.coords.longitude,
+          accuracy: Math.round(pos.coords.accuracy) || 15
+        });
+        setGpsError(null);
+      },
+      () => { /* non-fatal, continuous watchPosition handles live acquisition */ },
+      { enableHighAccuracy: false, maximumAge: 60000, timeout: 2500 }
+    );
 
     let lastLat = 0;
     let lastLon = 0;
@@ -756,13 +775,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     if (!hasConsent) {
       setIsConsentModalOpen(true);
     } else {
-      const isEnrolled = !!(
-        (activeEmployee.faceDescriptor && activeEmployee.faceDescriptor.length === 128) ||
-        activeEmployee.isFaceEnrolled ||
-        getEmployeeDescriptor(activeEmployee.id, activeEmployee.faceDescriptor) !== null ||
-        (activeEmployee.employeeId && getEmployeeDescriptor(activeEmployee.employeeId, activeEmployee.faceDescriptor) !== null) ||
-        (activeEmployee.uid && getEmployeeDescriptor(activeEmployee.uid, activeEmployee.faceDescriptor) !== null)
-      );
+      const isEnrolled = isFaceBiometricEnrolled(activeEmployee);
       if (!isEnrolled) {
         setIsEnrollFaceModalOpen(true);
       } else {
@@ -773,28 +786,39 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     setTimeout(() => { selfCheckInInProgressRef.current = false; }, 100);
   };
 
+  const checkInSubmissionGuardRef = useRef(false);
+
   const executeCheckInProcess = async () => {
+    if (checkInSubmissionGuardRef.current) return;
+    checkInSubmissionGuardRef.current = true;
     setIsCheckingIn(true);
     setActionFeedback(null);
     
-    const isWfhActive = isApprovedWfhToday || isWfh;
-    const res = await recordCheckIn(activeEmployee.id, gpsLocation?.lat, gpsLocation?.lon, gpsLocation?.accuracy);
-    if (res.success && res.record && isWfhActive) {
-      // B25 FIX: never downgrade an evaluated 'Late' to 'Work From Home'. WFH is a
-      // location attribute (kept on isWfh), not a substitute for punctuality — a late
-      // WFH check-in must still read 'Late'. Only on-time check-ins take the WFH label.
-      const wfhStatus = isLateCheckIn(res.record.checkInAt) ? 'Late' : 'Work From Home';
-      updateAttendanceRecord(res.record.id, { isWfh: true, status: wfhStatus, notes: 'Self check-in — Work From Home' });
+    try {
+      const isWfhActive = isApprovedWfhToday || isWfh;
+      const res = await recordCheckIn(
+        activeEmployee.id,
+        gpsLocation?.lat,
+        gpsLocation?.lon,
+        gpsLocation?.accuracy,
+        'Self Portal',
+        undefined,
+        isWfhActive
+      );
+      
+      if (res.success) {
+        triggerHaptic('success');
+      } else {
+        triggerHaptic('error');
+      }
+      
+      setActionFeedback({ success: res.success, message: res.message });
+    } finally {
+      setIsCheckingIn(false);
+      setTimeout(() => {
+        checkInSubmissionGuardRef.current = false;
+      }, 1000);
     }
-    
-    if (res.success) {
-      triggerHaptic('success');
-    } else {
-      triggerHaptic('error');
-    }
-    
-    setIsCheckingIn(false);
-    setActionFeedback({ success: res.success, message: res.message });
   };
 
   const [isCheckingIn, setIsCheckingIn] = useState(false);
@@ -2226,7 +2250,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                       ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
                       : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                   }`}>
-                    {activeEmployee.isFaceEnrolled || activeEmployee.faceDescriptor ? (
+                    {isFaceBiometricEnrolled(activeEmployee) ? (
                       <>
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                         <span>Face Biometric Enrolled</span>
@@ -2254,7 +2278,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     <span>View Work Analytics &amp; Monthly Calendar</span>
                   </button>
 
-                  {!activeEmployee.isFaceEnrolled && (!activeEmployee.faceDescriptor || activeEmployee.faceDescriptor.length !== 128) ? (
+                  {!isFaceBiometricEnrolled(activeEmployee) ? (
                     <button
                       type="button"
                       onClick={() => setIsEnrollFaceModalOpen(true)}
@@ -2458,7 +2482,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                         </button>
 
                         {/* Explicit Face Biometric Registration Button — locked out once enrolled */}
-                        {!activeEmployee.isFaceEnrolled && (!activeEmployee.faceDescriptor || activeEmployee.faceDescriptor.length !== 128) ? (
+                        {!isFaceBiometricEnrolled(activeEmployee) ? (
                           <button
                             type="button"
                             onClick={() => setIsEnrollFaceModalOpen(true)}
@@ -2856,6 +2880,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         }}
         onEnrollSuccess={(descriptorArray) => {
           triggerHaptic('success');
+          const candidateIds = [activeEmployee.id, activeEmployee.employeeId, activeEmployee.uid].filter(Boolean) as string[];
+          saveEmployeeDescriptor(candidateIds, descriptorArray);
           updateEmployee(activeEmployee.id, {
             isFaceEnrolled: true,
             faceEnrolledAt: new Date().toISOString(),
@@ -2892,6 +2918,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         }}
         onEnrollSuccess={(descriptorArray) => {
           triggerHaptic('success');
+          const candidateIds = [activeEmployee.id, activeEmployee.employeeId, activeEmployee.uid].filter(Boolean) as string[];
+          saveEmployeeDescriptor(candidateIds, descriptorArray);
           updateEmployee(activeEmployee.id, {
             isFaceEnrolled: true,
             faceEnrolledAt: new Date().toISOString(),

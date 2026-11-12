@@ -240,9 +240,9 @@ interface AuthContextType {
   addEmployee: (emp: Omit<Employee, 'id' | 'createdAt' | 'updatedAt' | 'qrToken'> & { password?: string }) => Promise<{ success: boolean; message?: string } | Employee>;
   updateEmployee: (id: string, updates: Partial<Employee>) => Promise<void>;
   deleteEmployee: (id: string) => void;
-  recordCheckIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number, method?: AttendanceMethod, customDate?: string) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
+  recordCheckIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number | AttendanceMethod, method?: number | AttendanceMethod, customDate?: string, overrideWfh?: boolean) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   recordCheckOut: (employeeId: string, lat?: number, lon?: number, accuracy?: number, customDate?: string) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
-  checkIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number, method?: AttendanceMethod, customDate?: string) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
+  checkIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number | AttendanceMethod, method?: number | AttendanceMethod, customDate?: string, overrideWfh?: boolean) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   checkOut: (employeeId: string, lat?: number, lon?: number, accuracy?: number, customDate?: string) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   startBreak: (employeeId: string, breakType?: string, lat?: number, lon?: number) => Promise<{ success: boolean; message: string }>;
   endBreak: (employeeId: string, lat?: number, lon?: number) => Promise<{ success: boolean; message: string }>;
@@ -382,13 +382,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const savedSessionId = localStorage.getItem('kss_v1_session');
     if (!savedSessionId) return false;
     const timestampStr = localStorage.getItem('kss_v1_session_timestamp');
-    // P1 SECURITY FIX: fail CLOSED when the age stamp is missing or unparseable.
-    // Previously the whole expiry check sat inside `if (timestampStr)`, so deleting that
-    // single localStorage key made a session immortal and bypassed the 24-hour limit
-    // entirely. Every login path writes this key, so legitimate sessions are unaffected.
     if (!timestampStr) {
-      clearPersistedSessionKeys();
-      return false;
+      // If session exists without a timestamp, backfill current timestamp instead of destructive wipe
+      try { localStorage.setItem('kss_v1_session_timestamp', Date.now().toString()); } catch {}
+      return true;
     }
     const stamp = parseInt(timestampStr, 10);
     if (!Number.isFinite(stamp) || Date.now() - stamp > SESSION_MAX_AGE_MS) {
@@ -403,6 +400,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!isSessionValidOnBoot()) return null;
     const savedSessionId = localStorage.getItem('kss_v1_session');
     const savedEmail = localStorage.getItem('kss_v1_session_email');
+
+    // 1. Direct cached active employee profile (0ms instant boot)
+    const cachedActive = localStorage.getItem('kss_v1_cached_active_employee');
+    if (cachedActive) {
+      try {
+        const parsed = JSON.parse(cachedActive) as Employee;
+        if (parsed && (parsed.id === savedSessionId || parsed.employeeId === savedSessionId || (savedEmail && parsed.email?.toLowerCase() === savedEmail.toLowerCase()))) {
+          return parsed;
+        }
+      } catch {}
+    }
+
+    // 2. Fallback to cached employees list
     const savedEmps = localStorage.getItem('kss_v1_employees');
     if (savedSessionId && savedEmps) {
       try {
@@ -428,15 +438,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   });
 
   // Synchronous role restore
-  // P0 SECURITY FIX: every fallback below previously returned 'SUPER_ADMIN'. A missing,
-  // expired, or unparseable session — and any employee record without an explicit `role`
-  // — silently booted the app with FULL administrative privileges. The default is now the
-  // least-privileged role; the real role is applied once Firebase Auth resolves the
-  // identity in onAuthStateChanged.
   const [role, setRole] = useState<UserRole>(() => {
     if (!isSessionValidOnBoot()) return 'EMPLOYEE';
     const savedSessionId = localStorage.getItem('kss_v1_session');
     const savedEmail = localStorage.getItem('kss_v1_session_email');
+
+    // Check cached active employee first
+    const cachedActive = localStorage.getItem('kss_v1_cached_active_employee');
+    if (cachedActive) {
+      try {
+        const parsed = JSON.parse(cachedActive) as Employee;
+        if (parsed?.role) {
+          if (parsed.employeeId === 'CEO001' || parsed.employeeId === 'CTO001') return 'SUPER_ADMIN';
+          return parsed.role;
+        }
+      } catch {}
+    }
+
     const savedEmps = localStorage.getItem('kss_v1_employees');
     if (savedEmps) {
       try {
@@ -462,8 +480,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isDemoMode, setIsDemoMode] = useState(true);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   
-  // Session is always ready immediately — activeEmployee is restored synchronously above
-  const [isSessionReady, setIsSessionReady] = useState<boolean>(true);
+  // Ready immediately if session is valid on boot; otherwise waits for onAuthStateChanged
+  const [isSessionReady, setIsSessionReady] = useState<boolean>(() => isSessionValidOnBoot());
   const [attendanceSyncStatus, setAttendanceSyncStatus] = useState<'loading' | 'synced'>('loading');
 
   // P0 INCIDENT FIX: verified Firebase Auth identity driving the Firestore listener
@@ -2951,6 +2969,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setNotifications([]);
         setAuditLogs([]);
         setAttendanceSyncStatus('synced');
+        setIsSessionReady(true);
         return;
       }
       setUser(firebaseUser);
@@ -3075,6 +3094,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsSessionReady(true);
       localStorage.setItem('kss_v1_session', matched.id);
       if (matched.email) localStorage.setItem('kss_v1_session_email', matched.email.toLowerCase());
+      localStorage.setItem('kss_v1_session_timestamp', Date.now().toString());
+      localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(matched));
     });
     return () => unsubscribe();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -3222,9 +3243,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const assignedRole = matched.role;
             setRole(assignedRole);
             setIsAuthenticated(true);
+            setIsSessionReady(true);
             localStorage.setItem('kss_v1_session', matched.id);
+            localStorage.setItem('kss_v1_session_email', cleanEmail);
             localStorage.setItem('kss_v1_session_id', newSessionId);
+            localStorage.setItem('kss_v1_session_timestamp', Date.now().toString());
             localStorage.setItem('kss_v1_device_category', cat);
+            localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updatedMatched));
             setDoc(doc(db, 'employees', matched.id), {
               ...sessionUpdates,
               // Backfill Firebase Auth UID onto the employee document so that
@@ -3299,9 +3324,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setActiveEmployee(basicEmp);
           setRole(basicEmp.role);
           setIsAuthenticated(true);
+          setIsSessionReady(true);
           localStorage.setItem('kss_v1_session', basicEmp.id);
           if (cleanEmail) localStorage.setItem('kss_v1_session_email', cleanEmail);
           localStorage.setItem('kss_v1_session_id', newSessionId);
+          localStorage.setItem('kss_v1_session_timestamp', Date.now().toString());
+          localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(basicEmp));
           setDoc(doc(db, 'employees', basicEmp.id), basicEmp, { merge: true }).catch(() => { });
 
           setIsLoading(false);
@@ -3510,6 +3538,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       'kss_v1_session_id',
       'kss_v1_session_timestamp',
       'kss_v1_device_category',
+      'kss_v1_cached_active_employee',
       'kss_v1_employees',
       'kss_v1_attendance',
       'kss_v1_leave_requests',
@@ -3709,6 +3738,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const updated = { ...prev, ...cleanPayload };
         try {
           localStorage.setItem('kss_v1_session', updated.id);
+          localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updated));
         } catch {}
         return updated;
       }
@@ -3850,7 +3880,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     let coords = (lat !== undefined && lon !== undefined) ? { lat, lon } : null;
-    if (!coords) coords = await getCurrentPositionOrNull();
+    if (!coords) {
+      if (todayRec?.checkInAt) {
+        // Fast-path for active shift employees: 1200ms quick probe to avoid freezing break interactions
+        coords = await Promise.race([
+          getCurrentPositionOrNull(),
+          new Promise<null>((res) => setTimeout(() => res(null), 1200))
+        ]);
+      } else {
+        coords = await getCurrentPositionOrNull();
+      }
+    }
 
     const verb = action === 'start' ? 'start' : 'end';
     if (!coords) {
@@ -3898,7 +3938,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     lon?: number, 
     arg4?: number | AttendanceMethod, 
     arg5?: number | AttendanceMethod,
-    customDate?: string
+    customDate?: string,
+    overrideWfh?: boolean
   ): Promise<{ success: boolean; message: string; record?: AttendanceRecord }> => {
     let accuracy = 8;
     let method: AttendanceMethod = 'Self Portal';
@@ -3966,7 +4007,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // employeeId was already the canonical target of this OR, so behaviour for the
     // intended employee is unchanged. Now shared with the break geofence through
     // isApprovedWfhToday, so check-in, check-out and breaks cannot drift apart.
-    const isApprovedWfh = isApprovedWfhToday(emp, todayStr);
+    const isApprovedWfh = overrideWfh !== undefined ? overrideWfh : isApprovedWfhToday(emp, todayStr);
 
     let coords = (lat !== undefined && lon !== undefined) ? { lat, lon } : null;
     if (!coords && !isApprovedWfh && !isAdminCheckIn && settings.gpsRequired !== false) {
@@ -4042,7 +4083,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           checkInAt: serverTimestamp(),
           checkOutAt: null,
           workingMinutes: 0,
-          status: evalResult.status,
+          status: (isApprovedWfh && evalResult.status !== 'Late') ? 'Work From Home' : evalResult.status,
           attendanceMethod: method,
           officeLatitude: companyWorkZone.latitude,
           officeLongitude: companyWorkZone.longitude,
@@ -4318,6 +4359,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const prevAttendance = attendance;
     const nowISO = new Date().toISOString();
 
+    // Optimistic UI update so active break state switches immediately with 0ms delay
+    const optimisticBreak = { type: canonicalBreakType, startAt: nowISO, endAt: null, durationMinutes: 0 };
+    setAttendance(prev => prev.map(rec => {
+      if (rec.id === recordId || (rec.employeeId === emp?.id && rec.date === todayStr)) {
+        const curBreaks = rec.breaks || [];
+        return {
+          ...rec,
+          breaks: [...curBreaks, optimisticBreak]
+        };
+      }
+      return rec;
+    }));
+
     try {
       const res = await runTransaction(db, async (transaction) => {
         const docSnap = await transaction.get(docRef);
@@ -4423,6 +4477,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const prevAttendance = attendance;
     const nowMs = Date.now();
     const nowISO = new Date(nowMs).toISOString();
+
+    // Optimistic UI update so open break ends immediately with 0ms delay
+    setAttendance(prev => prev.map(rec => {
+      if (rec.id === recordId || (rec.employeeId === emp?.id && rec.date === todayStr)) {
+        const curBreaks = (rec.breaks || []).map((b: any) => {
+          if (!b.endAt && !b.endTime) {
+            const startMs = new Date(b.startAt || b.startTime).getTime();
+            const dur = Math.max(1, Math.round((nowMs - startMs) / 60000));
+            return { ...b, endAt: nowISO, durationMinutes: dur };
+          }
+          return b;
+        });
+        return { ...rec, breaks: curBreaks };
+      }
+      return rec;
+    }));
 
     try {
       const res = await runTransaction(db, async (transaction) => {

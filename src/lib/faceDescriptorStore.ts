@@ -18,38 +18,93 @@ export const clearAllFaceEngineState = (): void => {
   console.log('[FaceEngine] Cleared in-memory face descriptor cache on logout.');
 };
 
-export const saveEmployeeDescriptor = (employeeId: string, descriptor: Float32Array): void => {
-  const arrayData = Array.from(descriptor);
-  inMemoryDescriptorCache.set(employeeId, descriptor);
-  localStorage.setItem(`${STORAGE_PREFIX}${employeeId}`, JSON.stringify(arrayData));
+/**
+ * Save an employee's 128-float biometric descriptor into fast in-memory cache
+ * and localStorage under the primary ID and any known alias IDs.
+ */
+export const saveEmployeeDescriptor = (
+  employeeId: string | string[],
+  descriptor: Float32Array | number[]
+): void => {
+  if (!employeeId) return;
+  const arrayData = Array.isArray(descriptor) ? descriptor : Array.from(descriptor);
+  const floatArr = descriptor instanceof Float32Array ? descriptor : new Float32Array(descriptor);
+  const ids = Array.isArray(employeeId) ? employeeId : [employeeId];
+
+  ids.filter(Boolean).forEach(id => {
+    inMemoryDescriptorCache.set(id, floatArr);
+    try {
+      localStorage.setItem(`${STORAGE_PREFIX}${id}`, JSON.stringify(arrayData));
+    } catch {}
+  });
 };
 
-export const getEmployeeDescriptor = (employeeId: string, cloudDescriptor?: number[]): Float32Array | null => {
-  if (inMemoryDescriptorCache.has(employeeId)) {
-    return inMemoryDescriptorCache.get(employeeId)!;
+/**
+ * Retrieve an employee's 128-float biometric face descriptor.
+ * Checks in-memory cache, localStorage, and falls back to restoring from cloudDescriptor.
+ */
+export const getEmployeeDescriptor = (
+  employeeId: string | string[],
+  cloudDescriptor?: number[]
+): Float32Array | null => {
+  const ids = Array.isArray(employeeId) ? employeeId.filter(Boolean) : [employeeId].filter(Boolean);
+
+  // 1. Check in-memory cache
+  for (const id of ids) {
+    if (inMemoryDescriptorCache.has(id)) {
+      return inMemoryDescriptorCache.get(id)!;
+    }
   }
 
-  const stored = localStorage.getItem(`${STORAGE_PREFIX}${employeeId}`);
-  if (stored) {
-    try {
-      const arrayData = JSON.parse(stored) as number[];
-      const vec = new Float32Array(arrayData);
-      inMemoryDescriptorCache.set(employeeId, vec);
-      return vec;
-    } catch {}
+  // 2. Check localStorage
+  for (const id of ids) {
+    const stored = localStorage.getItem(`${STORAGE_PREFIX}${id}`);
+    if (stored) {
+      try {
+        const arrayData = JSON.parse(stored) as number[];
+        if (Array.isArray(arrayData) && arrayData.length === 128) {
+          const vec = new Float32Array(arrayData);
+          // Seed all aliases into cache
+          ids.forEach(aliasId => inMemoryDescriptorCache.set(aliasId, vec));
+          return vec;
+        }
+      } catch {}
+    }
   }
 
-  if (cloudDescriptor && cloudDescriptor.length > 0) {
-    // Restore from Cloud Firestore backup!
+  // 3. Fallback to Cloud Firestore descriptor backup (128-dim embedding)
+  if (cloudDescriptor && Array.isArray(cloudDescriptor) && cloudDescriptor.length === 128) {
     const vec = new Float32Array(cloudDescriptor);
-    saveEmployeeDescriptor(employeeId, vec);
+    saveEmployeeDescriptor(ids, vec);
     return vec;
   }
 
   return null;
 };
 
-export const clearEmployeeDescriptor = (employeeId: string): void => {
-  inMemoryDescriptorCache.delete(employeeId);
-  localStorage.removeItem(`${STORAGE_PREFIX}${employeeId}`);
+/**
+ * Check whether an employee has a thoroughly registered biometric face template.
+ */
+export const isFaceBiometricEnrolled = (
+  emp?: { id?: string; employeeId?: string; uid?: string; isFaceEnrolled?: boolean; faceDescriptor?: number[] } | null
+): boolean => {
+  if (!emp) return false;
+  if (emp.isFaceEnrolled && Array.isArray(emp.faceDescriptor) && emp.faceDescriptor.length === 128) {
+    return true;
+  }
+  if (Array.isArray(emp.faceDescriptor) && emp.faceDescriptor.length === 128) {
+    return true;
+  }
+  const candidateIds = [emp.id, emp.employeeId, emp.uid].filter(Boolean) as string[];
+  return getEmployeeDescriptor(candidateIds, emp.faceDescriptor) !== null;
+};
+
+export const clearEmployeeDescriptor = (employeeId: string | string[]): void => {
+  const ids = Array.isArray(employeeId) ? employeeId : [employeeId];
+  ids.filter(Boolean).forEach(id => {
+    inMemoryDescriptorCache.delete(id);
+    try {
+      localStorage.removeItem(`${STORAGE_PREFIX}${id}`);
+    } catch {}
+  });
 };
