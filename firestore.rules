@@ -288,14 +288,18 @@ service cloud.firestore {
     function validLeaveShape() {
       let d = request.resource.data;
       // Allow any keys that the app may legitimately send (open whitelist for
-      // known fields; unknown keys are blocked by the employeeUid == auth.uid
-      // anchor and status constraints below).
+      // known fields; unknown keys are blocked by identity anchor and status constraints below).
       return d.keys().hasAll(['employeeId', 'employeeUid', 'type', 'startDate', 'endDate', 'reason', 'status']) &&
-      // The UID anchor: the person submitting MUST be the employee
-      d.get('employeeUid', '') == request.auth.uid &&
-      // authUid, if present, must also match
+      // The identity anchor: UID or authenticated email match
+      (
+        d.get('employeeUid', '') == request.auth.uid ||
+        d.get('authUid', '') == request.auth.uid ||
+        emailMatches(d.get('email', '')) ||
+        emailMatches(d.get('employeeEmail', ''))
+      ) &&
+      // authUid, if present, must also match request.auth.uid
       (d.get('authUid', '~') == '~' || d.get('authUid', '~') == request.auth.uid) &&
-      // Status must be Pending on creation
+      // Status must be Pending on creation / resubmission
       d.get('status', '') == 'Pending' &&
       // Leave type validation
       d.get('type', '') in [
@@ -542,10 +546,15 @@ service cloud.firestore {
       allow read: if isSignedIn();
 
       allow create: if isSignedIn() && (
-        // ── Fast-path 1: Employee self-submit — UID match, 0 reads ────────────
+        // ── Fast-path 1: Employee self-submit — UID or email match, 0 reads ────
         (
           isRealUser() &&
-          request.resource.data.get('employeeUid', '~') == request.auth.uid &&
+          (
+            request.resource.data.get('employeeUid', '~') == request.auth.uid ||
+            request.resource.data.get('authUid', '~') == request.auth.uid ||
+            emailMatches(request.resource.data.get('email', '')) ||
+            emailMatches(request.resource.data.get('employeeEmail', ''))
+          ) &&
           validLeaveShape()
         ) ||
         // ── Fast-path 2: Hardcoded managers, 0 reads ─────────────────────────
@@ -554,17 +563,39 @@ service cloud.firestore {
           'hOjKhSAtZKN7igNaePAmPKprVbp1', 'vhKLIJCVZoTncqVtmh14paMbiXk2',
           '2d48Rm9eY4eBswXOZw2IBpWGkZK2', '3ZHI3aTB37StHjR97WEBJQSWT9H3'
         ] ||
+        (hasEmail() && userEmail().lower() in [
+          'gaurav@kalpanaaa.in', 'gaurav@kalpanaaasoftwaresolutions.in',
+          'founder@kalpanaaasoftwaresolutions.in', 'founder@kalpanaaa.in',
+          'akshitujjain@kalpanaaasoftwaresolutions.in', 'akshit.ujjain@kalpanaaasoftwaresolutions.in',
+          'akshit@kalpanaaa.in', 'akshit.ujjain@kalpanaaa.in',
+          'cto@kalpanaaa.in', 'cto@kalpanaaasoftwaresolutions.in',
+          'd.koushik@kalpanaaasoftwaresolutions.in', 'd.koushik@kalpanaaa.in',
+          'koushik@kalpanaaa.in', 'koushik@kalpanaaasoftwaresolutions.in',
+          'hr@kalpanaaa.in', 'hr@kalpanaaasoftwaresolutions.in',
+          'abhinayav1919@kalpanaaa.in', 'abhinayav1919@kalpanaaasoftwaresolutions.in'
+        ]) ||
         // ── Fallback: role-based checks (may use get() reads) ─────────────────
         isSuperAdmin() || isProjectManager() || isHrAdmin()
       );
 
       allow update: if isSignedIn() && (
-        // ── Fast-path 0: Employee self-update / resubmit (valid shape, UID anchored, 0 reads) ──
+        // ── Fast-path 0: Employee self-update / resubmit (valid shape, UID/email anchored, 0 reads) ──
         (
           isRealUser() &&
-          request.resource.data.get('employeeUid', '~') == request.auth.uid &&
+          (
+            request.resource.data.get('employeeUid', '~') == request.auth.uid ||
+            request.resource.data.get('authUid', '~') == request.auth.uid ||
+            emailMatches(request.resource.data.get('email', '')) ||
+            emailMatches(request.resource.data.get('employeeEmail', ''))
+          ) &&
           validLeaveShape() &&
-          (resource == null || resource.data.get('employeeUid', '~') == request.auth.uid) &&
+          (
+            resource == null ||
+            resource.data.get('employeeUid', '~') == request.auth.uid ||
+            resource.data.get('authUid', '~') == request.auth.uid ||
+            emailMatches(resource.data.get('email', '')) ||
+            emailMatches(resource.data.get('employeeEmail', ''))
+          ) &&
           (resource == null || resource.data.get('status', '') in ['Pending', 'Cancelled', 'Rejected'])
         ) ||
         // ── Fast-path 1: Hardcoded admins/managers handle approvals (0 reads) ─

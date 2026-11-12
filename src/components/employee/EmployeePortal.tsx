@@ -1,4 +1,4 @@
-﻿import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { toISTTimeString, todayInIST } from '../../lib/absoluteTime';
 import { useHaptic } from '../../hooks/useHaptic';
@@ -756,7 +756,13 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     if (!hasConsent) {
       setIsConsentModalOpen(true);
     } else {
-      const isEnrolled = getEmployeeDescriptor(activeEmployee.id) !== null;
+      const isEnrolled = !!(
+        (activeEmployee.faceDescriptor && activeEmployee.faceDescriptor.length === 128) ||
+        activeEmployee.isFaceEnrolled ||
+        getEmployeeDescriptor(activeEmployee.id, activeEmployee.faceDescriptor) !== null ||
+        (activeEmployee.employeeId && getEmployeeDescriptor(activeEmployee.employeeId, activeEmployee.faceDescriptor) !== null) ||
+        (activeEmployee.uid && getEmployeeDescriptor(activeEmployee.uid, activeEmployee.faceDescriptor) !== null)
+      );
       if (!isEnrolled) {
         setIsEnrollFaceModalOpen(true);
       } else {
@@ -2248,14 +2254,21 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     <span>View Work Analytics &amp; Monthly Calendar</span>
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={() => setIsEnrollFaceModalOpen(true)}
-                    className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl flex items-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-900/40"
-                  >
-                    <Sparkles className="w-4 h-4 text-blue-200 animate-pulse" />
-                    <span>📸 Register Biometric Face Template</span>
-                  </button>
+                  {!activeEmployee.isFaceEnrolled && (!activeEmployee.faceDescriptor || activeEmployee.faceDescriptor.length !== 128) ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsEnrollFaceModalOpen(true)}
+                      className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl flex items-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-900/40"
+                    >
+                      <Sparkles className="w-4 h-4 text-blue-200 animate-pulse" />
+                      <span>📸 Register Biometric Face Template</span>
+                    </button>
+                  ) : (
+                    <div className="px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl flex items-center gap-2">
+                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                      <span>Biometrics Verified &amp; Locked</span>
+                    </div>
+                  )}
 
                   <button
                     type="button"
@@ -2444,16 +2457,23 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                           <span>{isCapturingCamera ? 'Capturing Snapshot...' : '📸 Capture Photo via Webcam'}</span>
                         </button>
 
-                        {/* Explicit Face Biometric Registration Button */}
-                        <button
-                          type="button"
-                          onClick={() => setIsEnrollFaceModalOpen(true)}
-                          className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl flex items-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-900/40"
-                          title="Register your official biometric face template using your webcam"
-                        >
-                          <Sparkles className="w-3.5 h-3.5 text-blue-200 animate-pulse" />
-                          <span>📸 Register Biometric Face Template</span>
-                        </button>
+                        {/* Explicit Face Biometric Registration Button — locked out once enrolled */}
+                        {!activeEmployee.isFaceEnrolled && (!activeEmployee.faceDescriptor || activeEmployee.faceDescriptor.length !== 128) ? (
+                          <button
+                            type="button"
+                            onClick={() => setIsEnrollFaceModalOpen(true)}
+                            className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl flex items-center gap-2 cursor-pointer transition-all shadow-md shadow-blue-900/40"
+                            title="Register your official biometric face template using your webcam"
+                          >
+                            <Sparkles className="w-3.5 h-3.5 text-blue-200 animate-pulse" />
+                            <span>📸 Register Biometric Face Template</span>
+                          </button>
+                        ) : (
+                          <div className="px-4 py-2 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl flex items-center gap-2">
+                            <ShieldCheck className="w-3.5 h-3.5 text-emerald-400" />
+                            <span>Biometrics Verified &amp; Locked</span>
+                          </div>
+                        )}
 
                         {/* Test Facial Recognition Accuracy Button */}
                         <button

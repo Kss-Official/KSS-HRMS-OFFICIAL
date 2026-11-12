@@ -60,7 +60,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   // Check if employee already has face enrolled or extract from profile photo
   useEffect(() => {
     if (employeeId && isOpen) {
-      const storedDesc = getEmployeeDescriptor(employeeId);
+      const storedDesc = getEmployeeDescriptor(employeeId, cloudDescriptor);
       const enrolled = storedDesc !== null || (cloudDescriptor && cloudDescriptor.length === 128);
       setIsEnrolled(!!enrolled);
 
@@ -456,18 +456,6 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                 className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
               >
                 <RefreshCw className="w-3.5 h-3.5" /> Retry Scan
-              </button>
-            ) : statusStep !== 'VERIFIED' && statusStep !== 'LOADING_MODELS' && statusStep !== 'ERROR' ? (
-              /* Enrolled + scanning: only offer re-registration of their own face */
-              <button
-                onClick={() => {
-                  setCurrentModeIsEnroll(true);
-                  setStatusStep('CENTER_FACE');
-                  setFeedbackText('Position your face to re-register template...');
-                }}
-                className="px-3 py-1.5 bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-xs font-semibold rounded-xl transition-all cursor-pointer flex items-center gap-1"
-              >
-                <Sparkles className="w-3 h-3 text-blue-400" /> Re-Register Face
               </button>
             ) : null}
           </div>

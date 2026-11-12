@@ -191,7 +191,7 @@ export interface MatchVerificationResult {
 }
 
 // Compare scanned face descriptor STRICTLY against employee's enrolled descriptor or profile photo.
-// Euclidean distance threshold: < 0.58 = MATCH, >= 0.58 = MISMATCH
+// Euclidean distance threshold: < 0.45 = MATCH, >= 0.45 = MISMATCH (strict biometric boundary)
 //
 // SECURITY: The caller must check `result.isMatch === true` — never treat `!result.enrolled`
 // as a pass condition. An unenrolled employee must register before checking in.
@@ -223,19 +223,15 @@ export const verifyFaceAgainstEnrolled = (
 
   // Calculate Euclidean Distance between 128-float descriptors
   const distance = faceapi.euclideanDistance(scannedDescriptor, referenceDescriptor);
-  const isMatch = distance < 0.58;
+  // Strict matching threshold: tightened to 0.45 to prevent false cross-face acceptances
+  const isMatch = distance < 0.45;
 
-  // Confidence formula: capped at 98 (not 99/100) to prevent floating-point rounding
-  // artifacts from reporting 100% when distance approaches 0 (same-session re-scan).
-  // isMatch=true  → clamp to [82, 98] range (genuine biometric match)
-  // isMatch=false → clamp to [5, 45]  range (mismatch, shown for diagnostic feedback)
+  // Confidence formula: scale 0..0.45 distance to 98..82 range for genuine match
   let confidencePercent = 0;
   if (isMatch) {
-    confidencePercent = Math.max(82, Math.min(98, Math.round((1 - distance / 0.58) * 95 + 50) / 1));
-    // Simpler, no overflow: scale 0..0.58 distance to 98..82 range
-    confidencePercent = Math.max(82, Math.min(98, Math.round(98 - (distance / 0.58) * 16)));
+    confidencePercent = Math.max(82, Math.min(98, Math.round(98 - (distance / 0.45) * 16)));
   } else {
-    confidencePercent = Math.max(5, Math.min(45, Math.round((1 - distance) * 100)));
+    confidencePercent = Math.max(5, Math.min(45, Math.round((1 - Math.min(distance, 1.0)) * 45)));
   }
 
   return {

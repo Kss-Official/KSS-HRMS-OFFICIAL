@@ -121,6 +121,8 @@ export const EmployeeLeaveTab: React.FC = () => {
         employeeUid: activeEmployee?.uid,
         employeeId: activeEmployee?.employeeId || activeEmployee?.id || '',
         employeeName: activeEmployee?.fullName || 'Employee',
+        employeeEmail: activeEmployee?.email || '',
+        email: activeEmployee?.email || '',
         department: activeEmployee?.department || 'Engineering',
         employeeRole: activeEmployee?.role || 'EMPLOYEE',
         pmUid: activeEmployee?.pmUid || activeEmployee?.reportingManagerUid || 'uid-KSS2407003',

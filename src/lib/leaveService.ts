@@ -505,9 +505,7 @@ export class LeaveService {
     const deterministicId = `LR_${cleanEmpId}_${data.startDate}_${data.type}`;
     const nowIso = new Date().toISOString();
     const currentUid = auth.currentUser?.uid;
-    const resolvedUid = (currentUid && (!data.employeeUid || data.employeeUid.startsWith('uid-')))
-      ? currentUid
-      : (data.employeeUid || currentUid || '');
+    const resolvedUid = currentUid || data.employeeUid || '';
     const userEmail = auth.currentUser?.email || (data as any).employeeEmail || (data as any).email || '';
 
     const newRequest: LeaveRequest = {
