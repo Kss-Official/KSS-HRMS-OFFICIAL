@@ -668,12 +668,10 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
     : '';
   const isCurrentWeek = weekOffset === 0;
 
-  // Memoized pending leave requests for the PM to recommend/flag
+  // Memoized team active leave requests for PM observer view (Read-only status ledger, approvals are strictly CEO -> CTO)
   const pendingTeamRequests = useMemo(() => {
     return leaveRequests.filter(r => {
       if (r.status !== 'Pending') return false;
-      if (r.pmStatus !== 'Pending' && r.pmStatus !== undefined) return false;
-      if (r.pmStatus === 'N/A' || r.pmStatus === 'Bypassed') return false;
 
       if (
         r.employeeUid === activeEmployee?.uid ||
@@ -1227,19 +1225,22 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
                     <p className="text-[10px] text-slate-500 italic mt-0.5">"{req.reason}"</p>
                   </div>
 
-                  <div className="flex items-center gap-2 shrink-0">
-                    <button
-                      onClick={() => handleRecommend(req.id, 'Approved')}
-                      className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold rounded-xl transition-all shadow-sm cursor-pointer"
-                    >
-                      ✓ Recommend
-                    </button>
-                    <button
-                      onClick={() => setRejectModalReq(req)}
-                      className="px-3 py-1.5 bg-rose-600/20 hover:bg-rose-600/40 text-rose-300 border border-rose-500/30 text-xs font-bold rounded-xl transition-all cursor-pointer"
-                    >
-                      ✕ Flag Conflict
-                    </button>
+                  <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-bold">
+                    <span className={`px-2 py-0.5 rounded-md border ${
+                      req.ceoStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
+                      req.ceoStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
+                      'bg-purple-950/60 text-purple-400 border-purple-500/30'
+                    }`}>
+                      CEO: {req.ceoStatus || 'Pending'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-md border ${
+                      req.ctoStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
+                      req.ctoStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
+                      req.ceoStatus === 'Approved' ? 'bg-cyan-950/60 text-cyan-400 border-cyan-500/30' :
+                      'bg-slate-900 text-slate-500 border-slate-800'
+                    }`}>
+                      CTO: {req.ctoStatus || (req.ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO')}
+                    </span>
                   </div>
                 </div>
               ))}
