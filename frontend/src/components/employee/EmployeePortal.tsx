@@ -356,6 +356,11 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   // Sync activeBreak and WFH UI state instantly
   useEffect(() => {
     if (breakOpInProgressRef.current) return;
+    if (shiftComplete || !todayRecord?.checkInAt) {
+      setActiveBreak(null);
+      setIsWfh(isApprovedWfhToday || !!todayRecord?.isWfh || todayRecord?.status === 'Work From Home');
+      return;
+    }
     const breaks = todayRecord?.breaks ?? [];
     const ob = breaks.find((b) => !b.endAt && !(b as any).endTime);
     if (ob) {
@@ -365,7 +370,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       setActiveBreak(null);
     }
     setIsWfh(isApprovedWfhToday || !!todayRecord?.isWfh || todayRecord?.status === 'Work From Home');
-  }, [todayRecord?.breaks, todayRecord?.isWfh, todayRecord?.status, isApprovedWfhToday]);
+  }, [todayRecord?.breaks, todayRecord?.isWfh, todayRecord?.status, todayRecord?.checkInAt, shiftComplete, isApprovedWfhToday]);
 
   // ── Single live clock for the whole shift panel ──────────────────────────────
   // P2 FIX (proficiency timer accuracy): there used to be THREE independent

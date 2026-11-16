@@ -632,7 +632,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const saved = localStorage.getItem('kss_v1_attendance');
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          const todayStr = getWorkDate(new Date());
+          // Sanitize: ensure no historical record (< today) has an unclosed break dangling!
+          return parsed.map((rec: AttendanceRecord) => {
+            if (rec.date && rec.date < todayStr && Array.isArray(rec.breaks)) {
+              const cleanedBreaks = rec.breaks.map((b: any) => {
+                if (!b.endAt && !b.endTime) {
+                  const fallbackEnd = rec.checkOutAt || b.startAt || b.startTime || (rec.date + 'T18:00:00.000Z');
+                  return { ...b, endAt: fallbackEnd, endTime: fallbackEnd, durationMinutes: b.durationMinutes || 15 };
+                }
+                return b;
+              });
+              return { ...rec, breaks: cleanedBreaks };
+            }
+            return rec;
+          });
+        }
       }
     } catch (e) {
       console.warn('[AuthContext] Failed to parse saved attendance cache', e);
@@ -4817,27 +4833,49 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     const isTargetRecord = (r: AttendanceRecord) => {
+      const isToday = !r.date || r.date === todayStr;
+      if (!isToday) return false;
       return r.id === recordId ||
         r.employeeId === employeeId ||
-        (emp && (r.employeeId === emp.id || r.employeeId === emp.employeeId || r.employeeCode === emp.employeeId)) ||
-        (r.date === todayStr && (r.employeeId === employeeId || (emp && (r.employeeId === emp.id || r.employeeCode === emp.employeeId))));
+        (emp && (r.employeeId === emp.id || r.employeeId === emp.employeeId || r.employeeCode === emp.employeeId));
     };
 
-    setAttendance(prev => prev.map(rec => {
-      if (isTargetRecord(rec)) {
-        const curBreaks = rec.breaks || [];
-        return {
-          ...rec,
-          breaks: [...curBreaks, optimisticBreak]
-        };
-      }
-      return rec;
-    }));
+    setAttendance(prev => {
+      const next = prev.map(rec => {
+        if (isTargetRecord(rec)) {
+          const curBreaks = (rec.breaks || []).map((b: any) => {
+            if (!b.endAt && !b.endTime) {
+              const startMs = new Date(b.startAt || b.startTime).getTime();
+              const dur = Math.max(1, Math.round((Date.now() - startMs) / 60000));
+              return { ...b, endAt: nowISO, endTime: nowISO, durationMinutes: dur };
+            }
+            return b;
+          });
+          return {
+            ...rec,
+            breaks: [...curBreaks, optimisticBreak]
+          };
+        }
+        return rec;
+      });
+      try {
+        localStorage.setItem('kss_v1_attendance', JSON.stringify(next.slice(0, 1000)));
+      } catch {}
+      return next;
+    });
 
     // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call breakActionApi directly!
     if (getAuthToken()) {
       const norm = (breakType || '').toLowerCase();
-      const apiType = norm.includes('tea') ? 'TEA_BREAK' : (norm.includes('lunch') ? 'LUNCH_BREAK' : 'TEA_BREAK');
+      let apiType = 'TEA_BREAK';
+      if (norm.includes('meal') || norm.includes('lunch')) apiType = 'LUNCH_BREAK';
+      else if (norm.includes('huddle')) apiType = 'TEAM_HUDDLE';
+      else if (norm.includes('meeting')) apiType = 'TEAM_MEETING';
+      else if (norm.includes('train') || norm.includes('attainment')) apiType = 'TRAINING';
+      else if (norm.includes('activity')) apiType = 'ACTIVITY';
+      else if (norm.includes('tea') || norm.includes('snack') || norm.includes('coffee')) apiType = 'TEA_BREAK';
+      else apiType = 'OTHER';
+
       try {
         await breakActionApi(apiType);
         addAuditLog('ATTENDANCE_BREAK_START', emp?.fullName || empUid, `Started ${breakType}`);
@@ -4854,6 +4892,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }));
           }
         }).catch(() => {});
+        fetchFastApiRecords(emp).catch(() => {});
         return { success: true, message: `${breakType} started!`, breaks: [optimisticBreak], totalBreakMinutes: 0 };
       } catch (fastApiErr: any) {
         console.warn('[FastAPI] breakActionApi fallback note:', fastApiErr);
@@ -4974,55 +5013,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Optimistic UI update so open break ends immediately with 0ms delay
     const isTargetRecord = (r: AttendanceRecord) => {
+      const isToday = !r.date || r.date === todayStr;
+      if (!isToday) return false;
       return r.id === recordId ||
         r.employeeId === employeeId ||
-        (emp && (r.employeeId === emp.id || r.employeeId === emp.employeeId || r.employeeCode === emp.employeeId)) ||
-        (r.date === todayStr && (r.employeeId === employeeId || (emp && (r.employeeId === emp.id || r.employeeCode === emp.employeeId))));
+        (emp && (r.employeeId === emp.id || r.employeeId === emp.employeeId || r.employeeCode === emp.employeeId));
     };
 
-    setAttendance(prev => prev.map(rec => {
-      if (isTargetRecord(rec)) {
-        const curBreaks = (rec.breaks || []).map((b: any) => {
-          if (!b.endAt && !b.endTime) {
-            const startMs = new Date(b.startAt || b.startTime).getTime();
-            const dur = Math.max(1, Math.round((nowMs - startMs) / 60000));
-            return { ...b, endAt: nowISO, endTime: nowISO, durationMinutes: dur };
-          }
-          return b;
-        });
-        return { ...rec, breaks: curBreaks };
-      }
-      return rec;
-    }));
+    setAttendance(prev => {
+      const next = prev.map(rec => {
+        if (isTargetRecord(rec)) {
+          const curBreaks = (rec.breaks || []).map((b: any) => {
+            if (!b.endAt && !b.endTime) {
+              const startMs = new Date(b.startAt || b.startTime).getTime();
+              const dur = Math.max(1, Math.round((nowMs - startMs) / 60000));
+              return { ...b, endAt: nowISO, endTime: nowISO, durationMinutes: dur };
+            }
+            return b;
+          });
+          const totalBreakMins = curBreaks.reduce((sum: number, b: any) => sum + (b.durationMinutes || 0), 0);
+          return { ...rec, breaks: curBreaks, totalBreakMinutes: totalBreakMins };
+        }
+        return rec;
+      });
+      try {
+        localStorage.setItem('kss_v1_attendance', JSON.stringify(next.slice(0, 1000)));
+      } catch {}
+      return next;
+    });
 
     // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call endBreakApi directly!
     if (getAuthToken()) {
       try {
         await endBreakApi();
-        addAuditLog('ATTENDANCE_BREAK_END', emp?.fullName || empUid, 'Ended break');
-        toast.success('Break ended. Welcome back! 👋');
-        // Background sync to Firestore without blocking the UI
-        runTransaction(db, async (tx) => {
-          const snap = await tx.get(docRef);
-          if (snap.exists()) {
-            const data = snap.data();
-            const curBreaks = (Array.isArray(data.breaks) ? data.breaks : []).map((b: any) => {
-              if (!b.endAt && !b.endTime) {
-                const startMs = new Date(b.startAt || b.startTime).getTime();
-                return { ...b, endAt: nowISO, durationMinutes: Math.max(1, Math.round((nowMs - startMs) / 60000)) };
-              }
-              return b;
-            });
-            tx.update(docRef, cleanFirestorePayload({
-              breaks: curBreaks,
-              updatedAt: serverTimestamp()
-            }));
-          }
-        }).catch(() => {});
-        return { success: true, message: 'Break ended successfully!' };
       } catch (fastApiErr: any) {
-        console.warn('[FastAPI] endBreakApi fallback note:', fastApiErr);
+        console.warn('[FastAPI] endBreakApi note (may already be ended):', fastApiErr);
       }
+      addAuditLog('ATTENDANCE_BREAK_END', emp?.fullName || empUid, 'Ended break');
+      toast.success('Break ended. Welcome back! 👋');
+      // Background sync to Firestore without blocking the UI
+      runTransaction(db, async (tx) => {
+        const snap = await tx.get(docRef);
+        if (snap.exists()) {
+          const data = snap.data();
+          const curBreaks = (Array.isArray(data.breaks) ? data.breaks : []).map((b: any) => {
+            if (!b.endAt && !b.endTime) {
+              const startMs = new Date(b.startAt || b.startTime).getTime();
+              return { ...b, endAt: nowISO, durationMinutes: Math.max(1, Math.round((nowMs - startMs) / 60000)) };
+            }
+            return b;
+          });
+          tx.update(docRef, cleanFirestorePayload({
+            breaks: curBreaks,
+            updatedAt: serverTimestamp()
+          }));
+        }
+      }).catch(() => {});
+      fetchFastApiRecords(emp).catch(() => {});
+      return { success: true, message: 'Break ended successfully!' };
     }
 
     try {

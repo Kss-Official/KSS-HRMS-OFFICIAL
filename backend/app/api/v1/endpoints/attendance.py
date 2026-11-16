@@ -279,8 +279,9 @@ async def start_break(
             and_(AttendanceBreak.attendance_id == att.id, AttendanceBreak.end_time.is_(None))
         )
     )
-    if b_res.scalar_one_or_none():
-        raise HTTPException(status_code=400, detail="A break is already active")
+    active_b = b_res.scalar_one_or_none()
+    if active_b:
+        return active_b
 
     new_break = AttendanceBreak(
         id=uuid.uuid4(),
@@ -319,6 +320,14 @@ async def end_break(
     )
     active_break = b_res.scalar_one_or_none()
     if not active_break:
+        last_b_res = await db.execute(
+            select(AttendanceBreak)
+            .where(AttendanceBreak.attendance_id == att.id)
+            .order_by(AttendanceBreak.start_time.desc())
+        )
+        last_break = last_b_res.scalars().first()
+        if last_break:
+            return last_break
         raise HTTPException(status_code=400, detail="No active break to end")
 
     active_break.end_time = now
