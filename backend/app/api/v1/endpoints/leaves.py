@@ -3,9 +3,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_
 from uuid import UUID
 from datetime import datetime, timezone
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 import uuid
 import random
+import time
 
 from app.core.database import get_db
 from app.models.employee import Employee
@@ -16,6 +17,12 @@ from app.api.deps import get_current_user, get_optional_current_user, require_ex
 
 router = APIRouter()
 
+# In-memory leaves cache with 15-second TTL
+_LEAVES_CACHE: Dict[str, Tuple[float, List[LeaveRequestOut]]] = {}
+
+def invalidate_leaves_cache():
+    _LEAVES_CACHE.clear()
+
 @router.get("/", response_model=List[LeaveRequestOut])
 async def list_leaves(
     employee_id: Optional[UUID] = None,
@@ -24,14 +31,19 @@ async def list_leaves(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[Employee] = Depends(get_optional_current_user)
 ):
+    target_emp_id = employee_id if employee_id else (current_user.id if (current_user and current_user.role == UserRole.EMPLOYEE) else None)
+    cache_key = f"{target_emp_id}:{status}:{limit}"
+    now_ts = time.time()
+    cached = _LEAVES_CACHE.get(cache_key)
+    if cached and cached[0] > now_ts:
+        return cached[1]
+
     stmt = (
         select(LeaveRequest, Employee.employee_code, Employee.full_name, Employee.department)
         .join(Employee, LeaveRequest.employee_id == Employee.id, isouter=True)
     )
-    if employee_id:
-        stmt = stmt.where(LeaveRequest.employee_id == employee_id)
-    elif current_user and current_user.role == UserRole.EMPLOYEE:
-        stmt = stmt.where(LeaveRequest.employee_id == current_user.id)
+    if target_emp_id:
+        stmt = stmt.where(LeaveRequest.employee_id == target_emp_id)
 
     if status:
         stmt = stmt.where(LeaveRequest.status == status)
@@ -48,6 +60,7 @@ async def list_leaves(
         leave_dict.department = dept
         out_leaves.append(leave_dict)
 
+    _LEAVES_CACHE[cache_key] = (now_ts + 15.0, out_leaves)
     return out_leaves
 
 @router.post("/", response_model=LeaveRequestOut)
@@ -78,6 +91,7 @@ async def submit_leave(
     db.add(leave)
     await db.commit()
     await db.refresh(leave)
+    invalidate_leaves_cache()
     emp_applicant = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
     applicant = emp_applicant.scalar_one_or_none()
     out = LeaveRequestOut.model_validate(leave)
@@ -176,6 +190,7 @@ async def review_leave(
 
     await db.commit()
     await db.refresh(leave)
+    invalidate_leaves_cache()
     emp_applicant = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
     applicant = emp_applicant.scalar_one_or_none()
     out = LeaveRequestOut.model_validate(leave)

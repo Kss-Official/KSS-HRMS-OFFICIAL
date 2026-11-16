@@ -21,18 +21,68 @@ export function removeAuthToken(): void {
   localStorage.removeItem('kalpanaaa_jwt_token');
 }
 
-// In-memory fast cache with 15-second TTL for idempotent GET requests
+// In-memory fast cache with 30-second TTL + persistent sessionStorage backing
 const apiCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_TTL_MS = 15 * 1000;
+const CACHE_TTL_MS = 30 * 1000;
+
+function getFromCache(url: string): any | null {
+  const mem = apiCache.get(url);
+  if (mem && Date.now() < mem.expiresAt) return mem.data;
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      const raw = sessionStorage.getItem(`kss_api_cache_${url}`);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed && Date.now() < parsed.expiresAt) {
+          apiCache.set(url, parsed);
+          return parsed.data;
+        } else {
+          sessionStorage.removeItem(`kss_api_cache_${url}`);
+        }
+      }
+    } catch {}
+  }
+  return null;
+}
+
+function setInCache(url: string, data: any, ttlMs: number = CACHE_TTL_MS): void {
+  const item = { data, expiresAt: Date.now() + ttlMs };
+  apiCache.set(url, item);
+  if (typeof window !== 'undefined' && window.sessionStorage) {
+    try {
+      sessionStorage.setItem(`kss_api_cache_${url}`, JSON.stringify(item));
+    } catch {}
+  }
+}
 
 export function clearApiCache(endpointPrefix?: string): void {
   if (!endpointPrefix) {
     apiCache.clear();
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.startsWith('kss_api_cache_')) keysToRemove.push(k);
+        }
+        keysToRemove.forEach(k => sessionStorage.removeItem(k));
+      } catch {}
+    }
   } else {
     for (const key of apiCache.keys()) {
       if (key.includes(endpointPrefix)) {
         apiCache.delete(key);
       }
+    }
+    if (typeof window !== 'undefined' && window.sessionStorage) {
+      try {
+        const keysToRemove: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.startsWith('kss_api_cache_') && k.includes(endpointPrefix)) keysToRemove.push(k);
+        }
+        keysToRemove.forEach(k => sessionStorage.removeItem(k));
+      } catch {}
     }
   }
 }
@@ -56,11 +106,11 @@ export async function apiRequest<T>(
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${API_BASE_URL}${cleanEndpoint}`;
 
-  // If GET request and cached within TTL, return cached value immediately
+  // If GET request and cached within TTL, return cached value immediately (0ms instant boot)
   if (method === 'GET') {
-    const cached = apiCache.get(url);
-    if (cached && Date.now() < cached.expiresAt) {
-      return cached.data as T;
+    const cached = getFromCache(url);
+    if (cached !== null) {
+      return cached as T;
     }
   } else {
     // Mutation: invalidate cache to prevent stale data
@@ -101,7 +151,7 @@ export async function apiRequest<T>(
 
     const data = await response.json();
     if (method === 'GET') {
-      apiCache.set(url, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+      setInCache(url, data);
     }
     return data;
   } catch (error) {

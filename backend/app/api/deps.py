@@ -2,8 +2,9 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+import time
 from uuid import UUID
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 
 from app.core.database import get_db
 from app.core.security import decode_token
@@ -12,6 +13,16 @@ from app.models.enums import UserRole, ExecutiveTier
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login")
 optional_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/login", auto_error=False)
+
+# In-memory high-speed auth cache with 60s TTL (avoids cross-continent round-trip per request)
+_USER_CACHE: Dict[UUID, Tuple[float, Employee]] = {}
+CACHE_TTL_SECONDS = 60.0
+
+def invalidate_user_cache(employee_id: Optional[UUID] = None) -> None:
+    if employee_id:
+        _USER_CACHE.pop(employee_id, None)
+    else:
+        _USER_CACHE.clear()
 
 async def get_optional_current_user(
     token: Optional[str] = Depends(optional_oauth2_scheme),
@@ -25,9 +36,16 @@ async def get_optional_current_user(
         if employee_id_str is None:
             return None
         employee_id = UUID(employee_id_str)
+        
+        now = time.time()
+        cached = _USER_CACHE.get(employee_id)
+        if cached and cached[0] > now and cached[1].is_active:
+            return cached[1]
+
         result = await db.execute(select(Employee).where(Employee.id == employee_id))
         emp = result.scalar_one_or_none()
         if emp and emp.is_active:
+            _USER_CACHE[employee_id] = (now + CACHE_TTL_SECONDS, emp)
             return emp
         return None
     except Exception:
@@ -51,12 +69,22 @@ async def get_current_user(
     except Exception:
         raise credentials_exception
 
+    now = time.time()
+    cached = _USER_CACHE.get(employee_id)
+    if cached and cached[0] > now:
+        cached_emp = cached[1]
+        if not cached_emp.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user account")
+        return cached_emp
+
     result = await db.execute(select(Employee).where(Employee.id == employee_id))
     employee = result.scalar_one_or_none()
     if employee is None:
         raise credentials_exception
     if not employee.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive user account")
+    
+    _USER_CACHE[employee_id] = (now + CACHE_TTL_SECONDS, employee)
     return employee
 
 def require_roles(allowed_roles: List[UserRole]):

@@ -1375,9 +1375,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   //   re-attach on every login, and detach cleanly on sign-out / token death.
   useEffect(() => {
     // ── High Performance: Single Source of Truth Guard ──────────────────────
-    // When VITE_USE_FASTAPI_ONLY is strictly configured without a Firebase session,
-    // bypass competing Firestore snapshot listeners to prevent network thrashing.
-    if (import.meta.env.VITE_USE_FASTAPI_ONLY === 'true' && !authUid) {
+    // When authenticated via FastAPI or when VITE_USE_FASTAPI_ONLY is enabled,
+    // bypass competing Firestore snapshot listeners to prevent network thrashing and state flapping.
+    if (getAuthToken() || (import.meta.env.VITE_USE_FASTAPI_ONLY === 'true' && !authUid)) {
       setAttendanceSyncStatus('synced');
       return;
     }
@@ -3075,12 +3075,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ── FastAPI Data Hydration Helper ─────────────────────────────────────────
   const fetchFastApiRecords = async (currentEmp?: Employee | null) => {
     try {
+      const isSuperOrHr = currentEmp ? (currentEmp.role === 'SUPER_ADMIN' || currentEmp.role === 'HR_ADMIN') : (role === 'SUPER_ADMIN' || role === 'HR_ADMIN');
       const [attList, leaveList, empList, settingsData, auditList] = await Promise.all([
-        getAttendanceRecordsApi(5000).catch(() => []),
-        getLeavesApi(500).catch(() => []),
-        getEmployeesApi(200).catch(() => []),
+        getAttendanceRecordsApi(1000).catch(() => []),
+        getLeavesApi(200).catch(() => []),
+        getEmployeesApi(100).catch(() => []),
         getSettingsApi().catch(() => null),
-        getAuditLogsApi(500).catch(() => [])
+        isSuperOrHr ? getAuditLogsApi(200).catch(() => []) : Promise.resolve([])
       ]);
 
       if (Array.isArray(empList) && empList.length > 0) {
@@ -3217,6 +3218,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   useEffect(() => {
     const token = getAuthToken();
     if (token) {
+      // Parallel execution: Hydrate data concurrently with profile validation
+      fetchFastApiRecords(activeEmployee);
       getCurrentProfileApi().then((profile) => {
         if (profile && (profile.id || profile.employee_code)) {
           const emp = mapBackendToFrontendEmployee(profile);
@@ -3225,11 +3228,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setIsAuthenticated(true);
           setIsSessionReady(true);
           setIsDemoMode(false);
-          fetchFastApiRecords(emp);
+          if (!activeEmployee || activeEmployee.id !== emp.id) {
+            fetchFastApiRecords(emp);
+          }
         }
       }).catch((err) => {
         console.warn('[FastAPI] Token validation note:', err);
-        fetchFastApiRecords(null);
       });
     } else {
       fetchFastApiRecords(null);

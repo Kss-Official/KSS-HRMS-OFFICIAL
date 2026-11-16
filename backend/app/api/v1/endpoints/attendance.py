@@ -7,6 +7,8 @@ from datetime import date, datetime, timezone, time
 from typing import List, Optional
 import uuid
 import math
+import time
+from typing import Dict, Tuple
 
 from app.core.database import get_db
 from app.core.config import settings
@@ -21,6 +23,12 @@ from app.schemas.attendance import (
 from app.api.deps import get_current_user, get_optional_current_user
 
 router = APIRouter()
+
+# High-speed in-memory records cache with 15-second TTL
+_RECORDS_CACHE: Dict[str, Tuple[float, List[AttendanceRecordOut]]] = {}
+
+def invalidate_records_cache() -> None:
+    _RECORDS_CACHE.clear()
 
 def calculate_distance_meters(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
     R = 6371000  # Earth radius in meters
@@ -214,6 +222,7 @@ async def check_in(
 
     await db.commit()
     await db.refresh(record)
+    invalidate_records_cache()
     return record
 
 @router.post("/check-out", response_model=AttendanceRecordOut)
@@ -243,6 +252,7 @@ async def check_out(
 
     await db.commit()
     await db.refresh(record)
+    invalidate_records_cache()
     return record
 
 @router.post("/breaks/start", response_model=AttendanceBreakOut)
@@ -282,6 +292,7 @@ async def start_break(
     db.add(new_break)
     await db.commit()
     await db.refresh(new_break)
+    invalidate_records_cache()
     return new_break
 
 @router.post("/breaks/end", response_model=AttendanceBreakOut)
@@ -316,6 +327,7 @@ async def end_break(
 
     await db.commit()
     await db.refresh(active_break)
+    invalidate_records_cache()
     return active_break
 
 @router.post("/break", response_model=AttendanceBreakOut)
@@ -335,15 +347,20 @@ async def get_records(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[Employee] = Depends(get_optional_current_user)
 ):
+    target_emp_id = current_user.id if (current_user and current_user.role.value == "EMPLOYEE") else employee_id
+    cache_key = f"{target_emp_id}:{start_date}:{end_date}:{limit}"
+    now_ts = time.time()
+    cached = _RECORDS_CACHE.get(cache_key)
+    if cached and cached[0] > now_ts:
+        return cached[1]
+
     stmt = (
         select(AttendanceRecord, Employee.employee_code, Employee.full_name, Employee.department)
         .join(Employee, AttendanceRecord.employee_id == Employee.id, isouter=True)
         .options(selectinload(AttendanceRecord.breaks))
     )
-    if current_user and current_user.role.value == "EMPLOYEE":
-        stmt = stmt.where(AttendanceRecord.employee_id == current_user.id)
-    elif employee_id:
-        stmt = stmt.where(AttendanceRecord.employee_id == employee_id)
+    if target_emp_id:
+        stmt = stmt.where(AttendanceRecord.employee_id == target_emp_id)
 
     if start_date:
         stmt = stmt.where(AttendanceRecord.date >= start_date)
@@ -362,4 +379,5 @@ async def get_records(
         record_dict.department = dept
         out_records.append(record_dict)
 
+    _RECORDS_CACHE[cache_key] = (now_ts + 15.0, out_records)
     return out_records

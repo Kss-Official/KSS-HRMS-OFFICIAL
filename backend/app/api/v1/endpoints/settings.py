@@ -1,7 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
-from typing import Optional
+import time
+from typing import Optional, Tuple
 
 from app.core.database import get_db
 from app.models.employee import Employee
@@ -12,11 +13,22 @@ from app.api.deps import get_current_user, get_optional_current_user, require_ro
 
 router = APIRouter()
 
+_SETTINGS_CACHE: Optional[Tuple[float, CompanySettingsOut]] = None
+
+def invalidate_settings_cache():
+    global _SETTINGS_CACHE
+    _SETTINGS_CACHE = None
+
 @router.get("/", response_model=CompanySettingsOut)
 async def get_settings(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[Employee] = Depends(get_optional_current_user)
 ):
+    global _SETTINGS_CACHE
+    now = time.time()
+    if _SETTINGS_CACHE and _SETTINGS_CACHE[0] > now:
+        return _SETTINGS_CACHE[1]
+
     result = await db.execute(select(CompanySettings).where(CompanySettings.id == 1))
     settings_obj = result.scalar_one_or_none()
     if not settings_obj:
@@ -34,7 +46,10 @@ async def get_settings(
         db.add(settings_obj)
         await db.commit()
         await db.refresh(settings_obj)
-    return settings_obj
+    
+    out = CompanySettingsOut.model_validate(settings_obj)
+    _SETTINGS_CACHE = (now + 60.0, out)
+    return out
 
 @router.put("/", response_model=CompanySettingsOut)
 async def update_settings(
@@ -54,4 +69,5 @@ async def update_settings(
 
     await db.commit()
     await db.refresh(settings_obj)
+    invalidate_settings_cache()
     return settings_obj

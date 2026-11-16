@@ -5,15 +5,23 @@ from uuid import UUID
 from typing import List, Optional
 import uuid
 import json
+import time
+from typing import Dict, Tuple
 
 from app.core.database import get_db
 from app.core.security import get_password_hash
 from app.models.employee import Employee
 from app.models.enums import UserRole
 from app.schemas.employee import EmployeeOut, EmployeeCreate, EmployeeUpdate, FaceEnrollRequest
-from app.api.deps import get_current_user, get_optional_current_user, require_roles
+from app.api.deps import get_current_user, get_optional_current_user, require_roles, invalidate_user_cache
 
 router = APIRouter()
+
+# In-memory employees list cache with 30-second TTL
+_EMPLOYEES_CACHE: Dict[str, Tuple[float, List[EmployeeOut]]] = {}
+
+def invalidate_employees_cache():
+    _EMPLOYEES_CACHE.clear()
 
 @router.get("/", response_model=List[EmployeeOut])
 async def list_employees(
@@ -26,6 +34,12 @@ async def list_employees(
     db: AsyncSession = Depends(get_db),
     current_user: Optional[Employee] = Depends(get_optional_current_user)
 ):
+    cache_key = f"{department}:{role}:{is_active}:{search}:{skip}:{limit}"
+    now_ts = time.time()
+    cached = _EMPLOYEES_CACHE.get(cache_key)
+    if cached and cached[0] > now_ts:
+        return cached[1]
+
     stmt = select(Employee)
     if department:
         stmt = stmt.where(Employee.department == department)
@@ -66,7 +80,9 @@ async def list_employees(
         else:
             setattr(e, 'reporting_manager', 'D. Koushik')
 
-    return employees
+    out = [EmployeeOut.model_validate(e) for e in employees]
+    _EMPLOYEES_CACHE[cache_key] = (now_ts + 30.0, out)
+    return out
 
 @router.get("/{identifier}", response_model=EmployeeOut)
 async def get_employee(
@@ -156,6 +172,7 @@ async def create_employee(
     db.add(new_emp)
     await db.commit()
     await db.refresh(new_emp)
+    invalidate_employees_cache()
     return new_emp
 
 @router.patch("/{employee_id}", response_model=EmployeeOut)
@@ -176,6 +193,8 @@ async def update_employee(
 
     await db.commit()
     await db.refresh(emp)
+    invalidate_employees_cache()
+    invalidate_user_cache(emp.id)
     return emp
 
 @router.post("/{employee_id}/enroll-face")
