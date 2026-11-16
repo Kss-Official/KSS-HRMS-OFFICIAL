@@ -1375,10 +1375,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   //   re-attach on every login, and detach cleanly on sign-out / token death.
   useEffect(() => {
     // ── High Performance: Single Source of Truth Guard ──────────────────────
-    // When authenticated via FastAPI or in FastAPI-only mode, Neon PostgreSQL is
-    // the single source of truth. Bypassing competing Firestore snapshot listeners
-    // prevents network thrashing, duplicate re-renders, and data fluctuation.
-    if (getAuthToken() || import.meta.env.VITE_USE_FASTAPI_ONLY === 'true') {
+    // When VITE_USE_FASTAPI_ONLY is strictly configured without a Firebase session,
+    // bypass competing Firestore snapshot listeners to prevent network thrashing.
+    if (import.meta.env.VITE_USE_FASTAPI_ONLY === 'true' && !authUid) {
       setAttendanceSyncStatus('synced');
       return;
     }
@@ -3077,11 +3076,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const fetchFastApiRecords = async (currentEmp?: Employee | null) => {
     try {
       const [attList, leaveList, empList, settingsData, auditList] = await Promise.all([
-        getAttendanceRecordsApi(300).catch(() => []),
-        getLeavesApi(100).catch(() => []),
-        getEmployeesApi(100).catch(() => []),
+        getAttendanceRecordsApi(5000).catch(() => []),
+        getLeavesApi(500).catch(() => []),
+        getEmployeesApi(200).catch(() => []),
         getSettingsApi().catch(() => null),
-        getAuditLogsApi(100).catch(() => [])
+        getAuditLogsApi(500).catch(() => [])
       ]);
 
       if (Array.isArray(empList) && empList.length > 0) {
@@ -3092,7 +3091,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (Array.isArray(attList) && attList.length > 0) {
         const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {
-          const matchedEmp = employeesRef.current.find(e => e.id === String(r.employee_id) || e.employeeId === String(r.employee_id)) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
+          const matchedEmp = employeesRef.current.find(e => e.id === String(r.employee_id) || e.employeeId === String(r.employee_id) || (r.employee_code && e.employeeId === String(r.employee_code))) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
           const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => ({
             id: String(b.id),
             type: b.type === 'LUNCH_BREAK' ? 'Lunch Break' : (b.type === 'TEA_BREAK' ? 'Tea Break' : 'Other Break'),
@@ -3104,7 +3103,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           })) : [];
 
           const empCode = r.employee_code || matchedEmp?.employeeId || currentEmp?.employeeId || String(r.employee_id);
-          const empUid = matchedEmp?.uid || String(r.employee_id);
+          const empUid = matchedEmp?.uid || matchedEmp?.id || String(r.employee_id);
+
+          const rawStatus = String(r.status || '').toUpperCase();
+          let cleanStatus: AttendanceStatus = 'Present';
+          if (rawStatus === 'WORK_FROM_HOME' || rawStatus === 'WFH') cleanStatus = 'Work From Home';
+          else if (rawStatus === 'ON_LEAVE') cleanStatus = 'On Leave';
+          else if (rawStatus === 'HALF_DAY') cleanStatus = 'Half Day';
+          else if (rawStatus === 'HOLIDAY') cleanStatus = 'Holiday';
+          else if (rawStatus === 'LATE') cleanStatus = 'Late';
+          else if (rawStatus === 'ABSENT') cleanStatus = 'Absent';
+          else if (rawStatus === 'PRESENT') cleanStatus = 'Present';
+          else if (r.status) cleanStatus = (r.status.charAt(0) + r.status.slice(1).toLowerCase()) as AttendanceStatus;
+
+          const rawMethod = String(r.attendance_method || '').toUpperCase();
+          let cleanMethod: AttendanceMethod = 'Self Portal';
+          if (rawMethod.includes('FACE') || rawMethod.includes('RECOGNITION')) cleanMethod = 'Facial Recognition';
+          else if (rawMethod.includes('BIOMETRIC')) cleanMethod = 'Biometric';
+          else if (rawMethod.includes('MANUAL') || rawMethod.includes('ADMIN')) cleanMethod = 'Manual Admin';
+          else if (rawMethod.includes('QR')) cleanMethod = 'QR Code';
+          else if (rawMethod.includes('PORTAL')) cleanMethod = 'Self Portal';
+
+          const dateStr = typeof r.date === 'string' ? r.date : (r.date ? new Date(r.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
 
           return {
             id: String(r.id),
@@ -3114,12 +3134,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             employeeCode: empCode,
             employeeName: r.employee_name || matchedEmp?.fullName || currentEmp?.fullName || '',
             department: r.department || matchedEmp?.department || currentEmp?.department || 'Engineering',
-            date: r.date,
+            date: dateStr,
             checkInAt: r.check_in_at || null,
             checkOutAt: r.check_out_at || null,
             workingMinutes: r.working_minutes || 0,
-            status: (r.status === 'WORK_FROM_HOME' ? 'Work From Home' : r.status.charAt(0) + r.status.slice(1).toLowerCase()) as AttendanceStatus,
-            attendanceMethod: (r.attendance_method ? r.attendance_method.replace('_', ' ') : 'Self Portal') as AttendanceMethod,
+            status: cleanStatus,
+            attendanceMethod: cleanMethod,
             isWfh: !!r.is_wfh,
             locationVerified: !!r.location_verified,
             latitude: r.check_in_lat ?? null,
@@ -3134,7 +3154,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setAttendance(mappedAtt);
         setAttendanceSyncStatus('synced');
         try {
-          localStorage.setItem('kss_v1_attendance', JSON.stringify(mappedAtt.slice(0, 300)));
+          localStorage.setItem('kss_v1_attendance', JSON.stringify(mappedAtt.slice(0, 1000)));
         } catch {}
       }
 
