@@ -35,6 +35,7 @@ class AttendanceMethod(str, Enum):
 
 class BreakType(str, Enum):
     TEA_BREAK = "TEA_BREAK"
+    SNACK_BREAK = "SNACK_BREAK"
     LUNCH_BREAK = "LUNCH_BREAK"
     TEAM_HUDDLE = "TEAM_HUDDLE"
     TEAM_MEETING = "TEAM_MEETING"

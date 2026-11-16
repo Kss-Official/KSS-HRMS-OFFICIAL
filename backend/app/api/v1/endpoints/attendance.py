@@ -286,7 +286,11 @@ async def start_break(
     )
     active_b = b_res.scalar_one_or_none()
     if active_b:
-        return active_b
+        if active_b.type == payload.break_type:
+            return active_b
+        # Auto-close previous break and start new break
+        active_b.end_time = now
+        active_b.duration_minutes = max(1, int((now - active_b.start_time).total_seconds() / 60.0))
 
     new_break = AttendanceBreak(
         id=uuid.uuid4(),

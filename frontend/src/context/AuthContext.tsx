@@ -3089,43 +3089,57 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, [isAuthenticated, role]);
 
   // ── FastAPI Data Hydration Helper ─────────────────────────────────────────
+  const fastApiFetchPromiseRef = useRef<Promise<void> | null>(null);
   const fetchFastApiRecords = async (currentEmp?: Employee | null) => {
-    try {
-      const isSuperOrHr = currentEmp ? (currentEmp.role === 'SUPER_ADMIN' || currentEmp.role === 'HR_ADMIN') : (role === 'SUPER_ADMIN' || role === 'HR_ADMIN');
-      const [attList, leaveList, empList, settingsData, auditList] = await Promise.all([
-        getAttendanceRecordsApi(1000).catch(() => []),
-        getLeavesApi(200).catch(() => []),
-        getEmployeesApi(100).catch(() => []),
-        getSettingsApi().catch(() => null),
-        isSuperOrHr ? getAuditLogsApi(200).catch(() => []) : Promise.resolve([])
-      ]);
+    if (fastApiFetchPromiseRef.current) return fastApiFetchPromiseRef.current;
+    fastApiFetchPromiseRef.current = (async () => {
+      try {
+        const isSuperOrHr = currentEmp ? (currentEmp.role === 'SUPER_ADMIN' || currentEmp.role === 'HR_ADMIN') : (role === 'SUPER_ADMIN' || role === 'HR_ADMIN');
+        const [attList, leaveList, empList, settingsData, auditList] = await Promise.all([
+          getAttendanceRecordsApi(1000).catch(() => []),
+          getLeavesApi(200).catch(() => []),
+          getEmployeesApi(100).catch(() => []),
+          getSettingsApi().catch(() => null),
+          isSuperOrHr ? getAuditLogsApi(200).catch(() => []) : Promise.resolve([])
+        ]);
 
-      if (Array.isArray(empList) && empList.length > 0) {
-        const mappedEmps: Employee[] = empList.map(mapBackendToFrontendEmployee);
-        setEmployees(mappedEmps);
-        employeesRef.current = mappedEmps;
-      }
+        if (Array.isArray(empList) && empList.length > 0) {
+          const mappedEmps: Employee[] = empList.map(mapBackendToFrontendEmployee);
+          setEmployees(mappedEmps);
+          employeesRef.current = mappedEmps;
+        }
 
-      if (Array.isArray(attList) && attList.length > 0) {
-        const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {
-          const matchedEmp = employeesRef.current.find(e => e.id === String(r.employee_id) || e.employeeId === String(r.employee_id) || (r.employee_code && e.employeeId === String(r.employee_code))) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
-          const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => {
-            const startIso = formatTimestampToISO(b.start_time || b.startAt) || b.start_time;
-            const endIso = formatTimestampToISO(b.end_time || b.endAt) || null;
-            let duration = b.duration_minutes || b.durationMinutes || 0;
-            if (duration <= 0 && startIso && endIso) {
-              duration = Math.max(1, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000));
-            }
-            return {
-              id: String(b.id),
-              type: (b.type === 'LUNCH_BREAK' || b.type === 'MEAL_BREAK') ? 'Meal Break' : (b.type === 'TEA_BREAK' ? 'Tea Break' : (b.type === 'SNACK_BREAK' ? 'Snack Break' : (b.type === 'TEAM_HUDDLE' ? 'Team Huddle' : (b.type === 'TEAM_MEETING' ? 'Team Meeting' : (b.type === 'TRAINING' ? 'Training' : (b.type === 'ACTIVITY' ? 'Activity' : 'Other Break')))))),
-              startTime: startIso,
-              startAt: startIso,
-              endTime: endIso,
-              endAt: endIso,
-              durationMinutes: duration
-            };
-          }) : [];
+        if (Array.isArray(attList) && attList.length > 0) {
+          const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {
+            const matchedEmp = employeesRef.current.find(e => e.id === String(r.employee_id) || e.employeeId === String(r.employee_id) || (r.employee_code && e.employeeId === String(r.employee_code))) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
+            const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => {
+              const startIso = formatTimestampToISO(b.start_time || b.startAt) || b.start_time;
+              const endIso = formatTimestampToISO(b.end_time || b.endAt) || null;
+              let duration = b.duration_minutes || b.durationMinutes || 0;
+              if (duration <= 0 && startIso && endIso) {
+                duration = Math.max(1, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000));
+              }
+              const rawType = String(b.type || '').toUpperCase();
+              let cleanType: BreakType = 'Meal Break';
+              if (rawType.includes('SNACK')) cleanType = 'Snack Break';
+              else if (rawType.includes('TEA') || rawType.includes('COFFEE')) cleanType = 'Tea Break';
+              else if (rawType.includes('MEAL') || rawType.includes('LUNCH')) cleanType = 'Meal Break';
+              else if (rawType.includes('HUDDLE')) cleanType = 'Team Huddle';
+              else if (rawType.includes('MEETING')) cleanType = 'Team Meeting';
+              else if (rawType.includes('TRAIN') || rawType.includes('ATTAINMENT')) cleanType = 'Attainment / Training';
+              else if (rawType.includes('ACTIVITY')) cleanType = 'Activity';
+              else if (b.type) cleanType = (normalizeBreakType(b.type) || 'Meal Break') as BreakType;
+
+              return {
+                id: String(b.id),
+                type: cleanType,
+                startTime: startIso,
+                startAt: startIso,
+                endTime: endIso,
+                endAt: endIso,
+                durationMinutes: duration
+              };
+            }).sort((a: any, b: any) => new Date(a.startAt || a.startTime).getTime() - new Date(b.startAt || b.startTime).getTime()) : [];
 
           const empCode = r.employee_code || matchedEmp?.employeeId || currentEmp?.employeeId || String(r.employee_id);
           const empUid = matchedEmp?.uid || matchedEmp?.id || String(r.employee_id);
@@ -3245,8 +3259,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch (e) {
       console.warn('Failed to fetch FastAPI records:', e);
+    } finally {
+      fastApiFetchPromiseRef.current = null;
     }
-  };
+  })();
+  return fastApiFetchPromiseRef.current;
+};
 
   // ── High-Speed FastAPI Token Boot Validator (<100ms) ───────────────────────
   useEffect(() => {
@@ -4886,32 +4904,50 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (getAuthToken()) {
       const norm = (breakType || '').toLowerCase();
       let apiType = 'TEA_BREAK';
-      if (norm.includes('meal') || norm.includes('lunch')) apiType = 'LUNCH_BREAK';
+      if (norm.includes('snack')) apiType = 'SNACK_BREAK';
+      else if (norm.includes('meal') || norm.includes('lunch')) apiType = 'LUNCH_BREAK';
       else if (norm.includes('huddle')) apiType = 'TEAM_HUDDLE';
       else if (norm.includes('meeting')) apiType = 'TEAM_MEETING';
       else if (norm.includes('train') || norm.includes('attainment')) apiType = 'TRAINING';
       else if (norm.includes('activity')) apiType = 'ACTIVITY';
-      else if (norm.includes('tea') || norm.includes('snack') || norm.includes('coffee')) apiType = 'TEA_BREAK';
+      else if (norm.includes('tea') || norm.includes('coffee')) apiType = 'TEA_BREAK';
       else apiType = 'OTHER';
 
       try {
-        await breakActionApi(apiType);
+        const backendBreak = await breakActionApi(apiType);
         addAuditLog('ATTENDANCE_BREAK_START', emp?.fullName || empUid, `Started ${breakType}`);
         toast.success(`${breakType} started!`);
-        // Background sync to Firestore without blocking the UI
-        runTransaction(db, async (tx) => {
-          const snap = await tx.get(docRef);
-          if (snap.exists()) {
-            const data = snap.data();
-            const curBreaks = Array.isArray(data.breaks) ? data.breaks : [];
-            tx.update(docRef, cleanFirestorePayload({
-              breaks: [...curBreaks, optimisticBreak],
-              updatedAt: serverTimestamp()
-            }));
-          }
-        }).catch(() => {});
-        fetchFastApiRecords(emp).catch(() => {});
-        return { success: true, message: `${breakType} started!`, breaks: [optimisticBreak], totalBreakMinutes: 0 };
+
+        // Reconcile optimistic break with confirmed backend response (real id and normalized start time)
+        const confirmedStartIso = (backendBreak?.start_time ? formatTimestampToISO(backendBreak.start_time) : null) || nowISO;
+        const confirmedBreak = {
+          id: String(backendBreak?.id || Date.now()),
+          type: canonicalBreakType,
+          startAt: confirmedStartIso,
+          startTime: confirmedStartIso,
+          endAt: null,
+          endTime: null,
+          durationMinutes: 0
+        };
+
+        setAttendance(prev => {
+          const next = prev.map(rec => {
+            if (isTargetRecord(rec)) {
+              const curBreaks = (rec.breaks || []).filter((b: any) => b !== optimisticBreak);
+              return {
+                ...rec,
+                breaks: [...curBreaks, confirmedBreak]
+              };
+            }
+            return rec;
+          });
+          try {
+            localStorage.setItem('kss_v1_attendance', JSON.stringify(next.slice(0, 1000)));
+          } catch {}
+          return next;
+        });
+
+        return { success: true, message: `${breakType} started!`, breaks: [confirmedBreak], totalBreakMinutes: 0 };
       } catch (fastApiErr: any) {
         console.warn('[FastAPI] breakActionApi fallback note:', fastApiErr);
       }
@@ -5062,32 +5098,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call endBreakApi directly!
     if (getAuthToken()) {
+      let backendBreak: any = null;
       try {
-        await endBreakApi();
+        backendBreak = await endBreakApi();
       } catch (fastApiErr: any) {
         console.warn('[FastAPI] endBreakApi note (may already be ended):', fastApiErr);
       }
       addAuditLog('ATTENDANCE_BREAK_END', emp?.fullName || empUid, 'Ended break');
       toast.success('Break ended. Welcome back! 👋');
-      // Background sync to Firestore without blocking the UI
-      runTransaction(db, async (tx) => {
-        const snap = await tx.get(docRef);
-        if (snap.exists()) {
-          const data = snap.data();
-          const curBreaks = (Array.isArray(data.breaks) ? data.breaks : []).map((b: any) => {
-            if (!b.endAt && !b.endTime) {
-              const startMs = new Date(b.startAt || b.startTime).getTime();
-              return { ...b, endAt: nowISO, durationMinutes: Math.max(1, Math.round((nowMs - startMs) / 60000)) };
+
+      if (backendBreak) {
+        const confirmedEndIso = (backendBreak.end_time ? formatTimestampToISO(backendBreak.end_time) : null) || nowISO;
+        const dur = Number(backendBreak.duration_minutes) || Math.max(1, Math.round((nowMs - new Date(backendBreak.start_time || nowMs).getTime()) / 60000));
+        setAttendance(prev => {
+          const next = prev.map(rec => {
+            if (isTargetRecord(rec)) {
+              const curBreaks = (rec.breaks || []).map((b: any) => {
+                if (!b.endAt && !b.endTime) {
+                  return { ...b, endAt: confirmedEndIso, endTime: confirmedEndIso, durationMinutes: dur };
+                }
+                return b;
+              });
+              const totalBreakMins = curBreaks.reduce((sum: number, b: any) => sum + (b.durationMinutes || 0), 0);
+              return { ...rec, breaks: curBreaks, totalBreakMinutes: totalBreakMins };
             }
-            return b;
+            return rec;
           });
-          tx.update(docRef, cleanFirestorePayload({
-            breaks: curBreaks,
-            updatedAt: serverTimestamp()
-          }));
-        }
-      }).catch(() => {});
-      fetchFastApiRecords(emp).catch(() => {});
+          try {
+            localStorage.setItem('kss_v1_attendance', JSON.stringify(next.slice(0, 1000)));
+          } catch {}
+          return next;
+        });
+      }
+
       return { success: true, message: 'Break ended successfully!' };
     }
 

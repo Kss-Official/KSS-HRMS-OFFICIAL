@@ -531,11 +531,13 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   };
 
   const getTodayActivities = () => {
-    const activities: { time: string; text: string; color: string }[] = [];
+    const activities: { ts: number; time: string; text: string; color: string }[] = [];
     if (!todayRecord) return activities;
 
     if (todayRecord.checkInAt) {
+      const ts = safeGetTimestampMillis(todayRecord.checkInAt) || 0;
       activities.push({
+        ts,
         time: toISTTimeString(todayRecord.checkInAt),
         text: `Checked In ${todayRecord.isWfh ? '(Work From Home)' : '(Office GPS Verified)'}`,
         color: 'bg-emerald-400'
@@ -545,16 +547,22 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     if (todayRecord.breaks) {
       todayRecord.breaks.forEach(b => {
         const breakConfig = getBreakColorConfig(b.type);
-        if (b.startAt) {
+        const startIso = b.startAt || (b as any).startTime;
+        const endIso = b.endAt || (b as any).endTime;
+        if (startIso) {
+          const startTs = safeGetTimestampMillis(startIso) || 0;
           activities.push({
-            time: new Date(b.startAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            ts: startTs,
+            time: toISTTimeString(startIso),
             text: `${b.type} Started`,
             color: breakConfig.dotBg
           });
         }
-        if (b.endAt) {
+        if (endIso) {
+          const endTs = safeGetTimestampMillis(endIso) || 0;
           activities.push({
-            time: new Date(b.endAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+            ts: endTs,
+            time: toISTTimeString(endIso),
             text: `Resumed Work (${b.durationMinutes || 0}m break completed)`,
             color: 'bg-blue-400'
           });
@@ -563,13 +571,16 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     }
 
     if (todayRecord.checkOutAt) {
+      const checkOutTs = safeGetTimestampMillis(todayRecord.checkOutAt) || 0;
       activities.push({
-        time: new Date(todayRecord.checkOutAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        ts: checkOutTs,
+        time: toISTTimeString(todayRecord.checkOutAt),
         text: `Checked Out (Total Worked: ${calculateWorkHours(todayRecord)})`,
         color: 'bg-purple-400'
       });
     }
 
+    activities.sort((a, b) => a.ts - b.ts);
     return activities;
   };
 
@@ -603,9 +614,9 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
   // PERF: Lazy face model loading on-demand prevents initial mobile CPU/WebGL lockups
 
-  // Acquire Continuous Real-Time Geolocation (only on dashboard tab to save battery & CPU)
+  // Acquire Continuous Real-Time Geolocation (only on dashboard tab when awaiting check-in to save battery & CPU)
   useEffect(() => {
-    if (activeTab !== 'emp_dashboard') return;
+    if (activeTab !== 'emp_dashboard' || todayRecord?.checkInAt) return;
     if (!('geolocation' in navigator)) {
       setGpsError('Geolocation is not supported by your browser.');
       return;
@@ -687,7 +698,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       navigator.geolocation.clearWatch(watchId);
       if (fallbackWatchId !== null) navigator.geolocation.clearWatch(fallbackWatchId);
     };
-  }, [activeTab]);
+  }, [activeTab, todayRecord?.checkInAt]);
 
   const liveDistanceMeters = (gpsLocation && companyWorkZone)
     ? calculateGpsDistanceMeters(gpsLocation.lat, gpsLocation.lon, companyWorkZone.latitude, companyWorkZone.longitude)
@@ -868,6 +879,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   const handleStartBreak = async (type: BreakType) => {
     if (breakOpInProgressRef.current) return;
     breakOpInProgressRef.current = true;
+    setIsProcessingBreak(true);
     triggerHaptic('medium');
 
     const nowIso = new Date().toISOString();
@@ -904,6 +916,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   const handleEndBreak = async () => {
     if (breakOpInProgressRef.current) return;
     breakOpInProgressRef.current = true;
+    setIsProcessingBreak(true);
     triggerHaptic('medium');
 
     // 0ms Instant Optimistic Deactivation: Close active break UI immediately
@@ -1395,31 +1408,63 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                        {activeBreak ? (() => {
                          const cfg = getBreakColorConfig(activeBreak.type);
                          return (
-                           <button onClick={handleEndBreak} className={`w-full py-2.5 rounded-2xl ${cfg.btnBg} font-black text-xs shadow-lg flex items-center justify-center gap-2 ${animations.tap}`}>
+                           <button 
+                             onClick={handleEndBreak} 
+                             disabled={isProcessingBreak}
+                             className={`w-full py-2.5 rounded-2xl ${cfg.btnBg} font-black text-xs shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${animations.tap}`}
+                           >
                              <StopCircle className="w-4 h-4" /> End {activeBreak.type} ({String(Math.floor(breakElapsedSec / 60)).padStart(2, '0')}:{String(breakElapsedSec % 60).padStart(2, '0')})
                            </button>
                          );
                        })() : (
                          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                           <button onClick={() => handleStartBreak('Tea Break')} className="px-2.5 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors">
+                           <button 
+                             onClick={() => handleStartBreak('Tea Break')} 
+                             disabled={isProcessingBreak}
+                             className="px-2.5 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
                              🍵 Tea Break
                            </button>
-                            <button onClick={() => handleStartBreak('Snack Break')} className="px-2.5 py-2 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-300 hover:bg-orange-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors">
-                              🍿 Snack Break
-                            </button>
-                            <button onClick={() => handleStartBreak('Meal Break')} className="px-2.5 py-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors">
+                           <button 
+                             onClick={() => handleStartBreak('Snack Break')} 
+                             disabled={isProcessingBreak}
+                             className="px-2.5 py-2 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-300 hover:bg-orange-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
+                             🍿 Snack Break
+                           </button>
+                           <button 
+                             onClick={() => handleStartBreak('Meal Break')} 
+                             disabled={isProcessingBreak}
+                             className="px-2.5 py-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
                              🍱 Meal Break
                            </button>
-                           <button onClick={() => handleStartBreak('Team Huddle')} className="px-2.5 py-2 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 hover:bg-blue-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors">
+                           <button 
+                             onClick={() => handleStartBreak('Team Huddle')} 
+                             disabled={isProcessingBreak}
+                             className="px-2.5 py-2 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 hover:bg-blue-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
                              👥 Team Huddle
                            </button>
-                           <button onClick={() => handleStartBreak('Team Meeting')} className="px-2.5 py-2 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors">
+                           <button 
+                             onClick={() => handleStartBreak('Team Meeting')} 
+                             disabled={isProcessingBreak}
+                             className="px-2.5 py-2 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
                              📅 Team Meeting
                            </button>
-                           <button onClick={() => handleStartBreak('Attainment / Training')} className="px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors">
+                           <button 
+                             onClick={() => handleStartBreak('Attainment / Training')} 
+                             disabled={isProcessingBreak}
+                             className="px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
                              🎓 Training
                            </button>
-                           <button onClick={() => handleStartBreak('Activity')} className="px-2.5 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors">
+                           <button 
+                             onClick={() => handleStartBreak('Activity')} 
+                             disabled={isProcessingBreak}
+                             className="px-2.5 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                           >
                              ⚡ Activity
                            </button>
                          </div>
