@@ -3109,15 +3109,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (Array.isArray(attList) && attList.length > 0) {
         const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {
           const matchedEmp = employeesRef.current.find(e => e.id === String(r.employee_id) || e.employeeId === String(r.employee_id) || (r.employee_code && e.employeeId === String(r.employee_code))) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
-          const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => ({
-            id: String(b.id),
-            type: (b.type === 'LUNCH_BREAK' || b.type === 'MEAL_BREAK') ? 'Meal Break' : (b.type === 'TEA_BREAK' ? 'Tea Break' : (b.type === 'SNACK_BREAK' ? 'Snack Break' : (b.type === 'TEAM_HUDDLE' ? 'Team Huddle' : (b.type === 'TEAM_MEETING' ? 'Team Meeting' : (b.type === 'TRAINING' ? 'Training' : (b.type === 'ACTIVITY' ? 'Activity' : 'Other Break')))))),
-            startTime: b.start_time,
-            startAt: b.start_time,
-            endTime: b.end_time || null,
-            endAt: b.end_time || null,
-            durationMinutes: b.duration_minutes || 0
-          })) : [];
+          const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => {
+            const startIso = formatTimestampToISO(b.start_time || b.startAt) || b.start_time;
+            const endIso = formatTimestampToISO(b.end_time || b.endAt) || null;
+            let duration = b.duration_minutes || b.durationMinutes || 0;
+            if (duration <= 0 && startIso && endIso) {
+              duration = Math.max(1, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000));
+            }
+            return {
+              id: String(b.id),
+              type: (b.type === 'LUNCH_BREAK' || b.type === 'MEAL_BREAK') ? 'Meal Break' : (b.type === 'TEA_BREAK' ? 'Tea Break' : (b.type === 'SNACK_BREAK' ? 'Snack Break' : (b.type === 'TEAM_HUDDLE' ? 'Team Huddle' : (b.type === 'TEAM_MEETING' ? 'Team Meeting' : (b.type === 'TRAINING' ? 'Training' : (b.type === 'ACTIVITY' ? 'Activity' : 'Other Break')))))),
+              startTime: startIso,
+              startAt: startIso,
+              endTime: endIso,
+              endAt: endIso,
+              durationMinutes: duration
+            };
+          }) : [];
 
           const empCode = r.employee_code || matchedEmp?.employeeId || currentEmp?.employeeId || String(r.employee_id);
           const empUid = matchedEmp?.uid || matchedEmp?.id || String(r.employee_id);
@@ -3142,6 +3150,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           else if (rawMethod.includes('PORTAL')) cleanMethod = 'Self Portal';
 
           const dateStr = typeof r.date === 'string' ? r.date : (r.date ? new Date(r.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+          const checkInIso = formatTimestampToISO(r.check_in_at);
+          const checkOutIso = formatTimestampToISO(r.check_out_at);
+          const totalBreakMins = mappedBreaks.reduce((sum: number, b: any) => sum + (b.durationMinutes || 0), 0);
+
+          let workingMins = Number(r.working_minutes) || 0;
+          if (workingMins <= 0 && checkInIso) {
+            const endMs = checkOutIso ? new Date(checkOutIso).getTime() : (dateStr === todayInIST() ? Date.now() : new Date(checkInIso).getTime() + (8.5 * 3600000));
+            const totalMs = Math.max(0, endMs - new Date(checkInIso).getTime());
+            workingMins = Math.max(0, Math.floor(totalMs / 60000) - totalBreakMins);
+          }
 
           return {
             id: String(r.id),
@@ -3152,16 +3170,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             employeeName: r.employee_name || matchedEmp?.fullName || currentEmp?.fullName || '',
             department: r.department || matchedEmp?.department || currentEmp?.department || 'Engineering',
             date: dateStr,
-            checkInAt: r.check_in_at || null,
-            checkOutAt: r.check_out_at || null,
-            workingMinutes: r.working_minutes || 0,
+            checkInAt: checkInIso,
+            checkOutAt: checkOutIso,
+            workingMinutes: workingMins,
             status: cleanStatus,
             attendanceMethod: cleanMethod,
             isWfh: !!r.is_wfh,
             locationVerified: !!r.location_verified,
             latitude: r.check_in_lat ?? null,
             longitude: r.check_in_lon ?? null,
-            totalBreakMinutes: mappedBreaks.reduce((sum: number, b: any) => sum + (b.durationMinutes || 0), 0),
+            totalBreakMinutes: totalBreakMins,
             breaks: mappedBreaks,
             notes: r.notes || '',
             createdAt: r.created_at || new Date().toISOString(),

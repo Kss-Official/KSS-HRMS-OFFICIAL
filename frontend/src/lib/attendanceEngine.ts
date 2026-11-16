@@ -931,7 +931,13 @@ export function formatTimestampToISO(val: any): string | null {
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') return null;
-    const d = new Date(trimmed);
+    let s = trimmed;
+    // CRITICAL: If string has date & time without timezone suffix, ensure UTC 'Z' suffix
+    // so Date() does NOT mistakenly parse UTC database timestamps as local device time!
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}/.test(s) && !s.endsWith('Z') && !/[+-]\d{2}:?\d{2}$/.test(s)) {
+      s = s.replace(' ', 'T') + 'Z';
+    }
+    const d = new Date(s);
     return isNaN(d.getTime()) ? null : d.toISOString();
   }
   if (val && typeof val.toDate === 'function') {

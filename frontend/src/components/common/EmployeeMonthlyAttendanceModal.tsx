@@ -40,7 +40,7 @@ import { toast } from 'sonner';
 import { adjustLeaveBalance } from '../../lib/leaveBalanceService';
 import { generateAttendanceReportPdf } from '../../lib/pdfGenerator';
 import { toISTTimeString, todayInIST } from '../../lib/absoluteTime';
-import { isNonWorkingDay, getHolidayInfo, isLateCheckIn, isWfhType, COMPANY_START_DATE, computeTotalLeaveBalances } from '../../lib/attendanceEngine';
+import { isNonWorkingDay, getHolidayInfo, isLateCheckIn, isWfhType, COMPANY_START_DATE, computeTotalLeaveBalances, formatTimestampToISO } from '../../lib/attendanceEngine';
 import { PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { useHaptic } from '../../hooks/useHaptic';
 
@@ -1022,10 +1022,13 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
     
     let workingMins = Number(record.workingMinutes) || 0;
     if (workingMins <= 0 && record.checkInAt) {
-      const shiftEndTime = record.checkOutAt 
-        ? new Date(record.checkOutAt).getTime() 
-        : (isToday ? Date.now() : new Date(record.checkInAt).getTime() + (8.5 * 3600000));
-      const totalShiftMs = shiftEndTime - new Date(record.checkInAt).getTime();
+      const inIso = formatTimestampToISO(record.checkInAt) || record.checkInAt;
+      const outIso = record.checkOutAt ? (formatTimestampToISO(record.checkOutAt) || record.checkOutAt) : null;
+      const inMs = new Date(inIso).getTime();
+      const shiftEndTime = outIso 
+        ? new Date(outIso).getTime() 
+        : (isToday ? Date.now() : inMs + (8.5 * 3600000));
+      const totalShiftMs = Math.max(0, shiftEndTime - inMs);
       const totalShiftMins = Math.max(0, Math.floor(totalShiftMs / 60000));
       workingMins = Math.max(0, totalShiftMins - totalBreakMins);
     }
@@ -1140,8 +1143,9 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
       continue;
     }
 
-    const wfhReq = empLeaveRequests.find(l => (isWfhType(l.type) || isWfhType(l.leaveCategory)) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
-    const hasLeave = empLeaveRequests.some(l => !isWfhType(l.type) && !isWfhType(l.leaveCategory) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
+    const isReqApproved = (l: any) => l.status === 'Approved' || l.status === 'APPROVED' || l.ceoStatus === 'Approved' || l.ceoStatus === 'APPROVED';
+    const wfhReq = empLeaveRequests.find(l => isReqApproved(l) && (isWfhType(l.type) || isWfhType(l.leaveCategory)) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
+    const hasLeave = empLeaveRequests.some(l => isReqApproved(l) && !isWfhType(l.type) && !isWfhType(l.leaveCategory) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
     const isApprovedWfh = !hasLeave && (!!wfhReq || (employee.approvedWfhDates || []).includes(dateFormatted) || ((settings as any)?.companyWideWfhDates || []).includes(dateFormatted) || (rec && (rec.isWfh === true || rec.status === 'Work From Home')));
 
     if (rec) {
@@ -1726,8 +1730,9 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
                   const dayNum = i + 1;
                   const dateFormatted = `${selectedYearMonth}-${String(dayNum).padStart(2, '0')}`;
                   const rec = recordsByDate.get(dateFormatted);
-                  const wfhReq = empLeaveRequests.find(l => (isWfhType(l.type) || isWfhType(l.leaveCategory)) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
-                  const isApprovedLeave = empLeaveRequests.some(l => !isWfhType(l.type) && !isWfhType(l.leaveCategory) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
+                  const isReqApproved = (l: any) => l.status === 'Approved' || l.status === 'APPROVED' || l.ceoStatus === 'Approved' || l.ceoStatus === 'APPROVED';
+                  const wfhReq = empLeaveRequests.find(l => isReqApproved(l) && (isWfhType(l.type) || isWfhType(l.leaveCategory)) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
+                  const isApprovedLeave = empLeaveRequests.some(l => isReqApproved(l) && !isWfhType(l.type) && !isWfhType(l.leaveCategory) && dateFormatted >= (l.startDate || (l as any).fromDate) && dateFormatted <= (l.endDate || (l as any).toDate || l.startDate));
                   const isApprovedWfh = !isApprovedLeave && (!!wfhReq || (employee.approvedWfhDates || []).includes(dateFormatted) || ((settings as any)?.companyWideWfhDates || []).includes(dateFormatted) || (rec && (rec.isWfh === true || rec.status === 'Work From Home')));
                   const isNonWorking = isNonWorkingDay(dateFormatted, holidayDates);
                   const holidayInfo = getHolidayInfo(dateFormatted);

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, text
+from sqlalchemy import select, and_, text, func
 from sqlalchemy.orm import selectinload
 from uuid import UUID
 from datetime import date, datetime, timezone, time
@@ -66,7 +66,7 @@ async def verify_biometric_face(
         lookup_sql = text("""
             SELECT id, employee_code, full_name, (face_embedding IS NOT NULL) as has_embedding
             FROM employees
-            WHERE is_active = true AND (id = :emp_uuid OR employee_code = :emp_code OR legacy_firebase_id = :emp_code)
+            WHERE is_active = true AND (id = :emp_uuid OR LOWER(employee_code) = LOWER(:emp_code) OR LOWER(legacy_firebase_id) = LOWER(:emp_code))
             LIMIT 1;
         """)
         lookup_res = await db.execute(lookup_sql, {"emp_uuid": emp_uuid, "emp_code": emp_code})
@@ -157,7 +157,7 @@ async def check_in(
     target_emp = current_user
     if payload.employee_code and payload.employee_code != current_user.employee_code:
         # Check if HR / Super Admin is checking in another employee
-        res = await db.execute(select(Employee).where(Employee.employee_code == payload.employee_code))
+        res = await db.execute(select(Employee).where(func.lower(Employee.employee_code) == payload.employee_code.strip().lower()))
         target = res.scalar_one_or_none()
         if target:
             target_emp = target
@@ -181,12 +181,12 @@ async def check_in(
         )
         location_ok = (dist <= settings.GEOFENCE_RADIUS_METERS)
 
-    # Determine status (e.g. LATE if past 10:00 AM IST)
-    # 10:00 AM IST = 04:30 AM UTC
+    # Determine status (e.g. LATE if past 10:15 AM IST, 15m grace period)
+    # 10:15 AM IST = 04:45 AM UTC
     status = AttendanceStatus.PRESENT
     if payload.is_wfh:
         status = AttendanceStatus.WORK_FROM_HOME
-    elif now.time() > time(4, 30):
+    elif now.time() > time(4, 45):
         status = AttendanceStatus.LATE
 
     method = AttendanceMethod.PORTAL_1CLICK
@@ -244,9 +244,14 @@ async def check_out(
         raise HTTPException(status_code=400, detail="Cannot check out without checking in first")
 
     record.check_out_at = now
-    # Calculate working minutes
-    delta = (now - record.check_in_at).total_seconds() / 60.0
-    record.working_minutes = max(0, int(delta))
+    # Calculate net working minutes = total shift minutes - break minutes
+    b_res = await db.execute(
+        select(AttendanceBreak).where(AttendanceBreak.attendance_id == record.id)
+    )
+    breaks = b_res.scalars().all()
+    total_break_mins = sum(b.duration_minutes or 0 for b in breaks)
+    total_shift_mins = max(0, int((now - record.check_in_at).total_seconds() / 60.0))
+    record.working_minutes = max(0, total_shift_mins - total_break_mins)
     if payload.notes:
         record.notes = payload.notes
 

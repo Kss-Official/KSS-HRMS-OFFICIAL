@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, or_, text
+from sqlalchemy import select, or_, text, func
 from uuid import UUID
 from typing import List, Optional
 import uuid
@@ -207,13 +207,21 @@ async def enroll_face(
     if len(payload.face_descriptor) != 128:
         raise HTTPException(status_code=400, detail="Face descriptor must be exactly 128 float values")
 
-    # Find employee by UUID, employee_code, or legacy_firebase_id
+    # Find employee by UUID, employee_code, or legacy_firebase_id (case-insensitive)
+    clean_id = employee_id.strip()
     query = select(Employee)
     try:
-        val_uuid = uuid.UUID(employee_id)
-        query = query.where(or_(Employee.id == val_uuid, Employee.employee_code == employee_id, Employee.legacy_firebase_id == employee_id))
+        val_uuid = uuid.UUID(clean_id)
+        query = query.where(or_(
+            Employee.id == val_uuid,
+            func.lower(Employee.employee_code) == clean_id.lower(),
+            func.lower(Employee.legacy_firebase_id) == clean_id.lower()
+        ))
     except ValueError:
-        query = query.where(or_(Employee.employee_code == employee_id, Employee.legacy_firebase_id == employee_id))
+        query = query.where(or_(
+            func.lower(Employee.employee_code) == clean_id.lower(),
+            func.lower(Employee.legacy_firebase_id) == clean_id.lower()
+        ))
 
     result = await db.execute(query)
     emp = result.scalar_one_or_none()
