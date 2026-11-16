@@ -3094,7 +3094,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const matchedEmp = employeesRef.current.find(e => e.id === String(r.employee_id) || e.employeeId === String(r.employee_id) || (r.employee_code && e.employeeId === String(r.employee_code))) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
           const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => ({
             id: String(b.id),
-            type: b.type === 'LUNCH_BREAK' ? 'Lunch Break' : (b.type === 'TEA_BREAK' ? 'Tea Break' : 'Other Break'),
+            type: (b.type === 'LUNCH_BREAK' || b.type === 'MEAL_BREAK') ? 'Meal Break' : (b.type === 'TEA_BREAK' ? 'Tea Break' : (b.type === 'SNACK_BREAK' ? 'Snack Break' : (b.type === 'TEAM_HUDDLE' ? 'Team Huddle' : (b.type === 'TEAM_MEETING' ? 'Team Meeting' : (b.type === 'TRAINING' ? 'Training' : (b.type === 'ACTIVITY' ? 'Activity' : 'Other Break')))))),
             startTime: b.start_time,
             startAt: b.start_time,
             endTime: b.end_time || null,
