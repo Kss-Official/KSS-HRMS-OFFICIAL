@@ -267,7 +267,7 @@ export const EmployeeTeamDirectory: React.FC = () => {
       }
 
       // 3. Rahul kr Pathak is THIRD (COO)
-      if (name.includes('rahul') || id === 'kss2407015' || execRole === 'COO' || (emp?.designation || '').toLowerCase().includes('coo')) {
+      if (name.includes('rahul') || id === 'kss2407015' || execRole === 'COO' || (emp as any)?.executiveTier === 'COO') {
         return 3;
       }
 
