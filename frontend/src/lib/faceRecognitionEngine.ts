@@ -1,0 +1,243 @@
+// 100% Client-Side Real Facial Recognition Engine
+// Powered by @vladmandic/face-api (TensorFlow.js backend)
+// Provides 128-float biometric embedding vector extraction & euclidean distance matching
+
+import * as faceapi from '@vladmandic/face-api';
+
+const MODEL_URLS = [
+  '/models/',
+  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/',
+  'https://raw.githubusercontent.com/vladmandic/face-api/master/model/',
+  'https://cdn.jsdelivr.net/gh/vladmandic/face-api@master/model/'
+];
+
+let isModelsLoaded = false;
+let modelLoadingPromise: Promise<void> | null = null;
+
+// Initialize and load lightweight face recognition models with multi-CDN fallback
+export const loadFaceModels = async (): Promise<void> => {
+  if (isModelsLoaded) return;
+  if (modelLoadingPromise) return modelLoadingPromise;
+
+  modelLoadingPromise = (async () => {
+    for (const url of MODEL_URLS) {
+      try {
+        console.log(`[FaceEngine] Loading neural face models from ${url}...`);
+        await Promise.all([
+          faceapi.nets.tinyFaceDetector.loadFromUri(url),
+          faceapi.nets.faceLandmark68TinyNet.loadFromUri(url),
+          faceapi.nets.faceRecognitionNet.loadFromUri(url)
+        ]);
+        isModelsLoaded = true;
+        console.log('[FaceEngine] Neural face models loaded successfully into memory!');
+        return;
+      } catch (err) {
+        console.warn(`[FaceEngine] CDN source ${url} failed, trying next fallback...`, err);
+      }
+    }
+    // Fallback: mark loaded if nets are loaded in background
+    if (faceapi.nets.tinyFaceDetector.isLoaded && faceapi.nets.faceRecognitionNet.isLoaded) {
+      isModelsLoaded = true;
+      return;
+    }
+    modelLoadingPromise = null;
+    throw new Error('Could not load face recognition neural models from CDN sources.');
+  })();
+
+  return modelLoadingPromise;
+};
+
+// Automatic background preload on idle browser time so biometric modals open with 0ms delay
+if (typeof window !== 'undefined') {
+  const idlePreload = () => {
+    loadFaceModels().catch(() => {});
+  };
+  if ('requestIdleCallback' in window) {
+    (window as any).requestIdleCallback(idlePreload, { timeout: 3000 });
+  } else {
+    setTimeout(idlePreload, 1000);
+  }
+}
+
+export interface FaceScanResult {
+  detected: boolean;
+  descriptor?: Float32Array;
+  detectionBox?: { x: number; y: number; width: number; height: number };
+  score?: number;
+  landmarks?: faceapi.FaceLandmarks68;
+  fullResult?: any;
+}
+
+// Extract real 128-point face descriptor vector from a live HTMLVideoElement
+export const detectSingleFaceDescriptor = async (
+  video: HTMLVideoElement
+): Promise<FaceScanResult> => {
+  if (!isModelsLoaded) {
+    await loadFaceModels();
+  }
+
+  if (!video || video.readyState < 2 || !video.videoWidth || !video.videoHeight) {
+    return { detected: false };
+  }
+
+  try {
+    // Fast high-accuracy real-time detection (224x224 input size executes 4x faster on CPU)
+    const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.35 });
+    const result = await faceapi
+      .detectSingleFace(video, options)
+      .withFaceLandmarks(true)
+      .withFaceDescriptor();
+
+    if (!result) {
+      return { detected: false };
+    }
+
+    const { box, score } = result.detection;
+    return {
+      detected: true,
+      descriptor: result.descriptor,
+      detectionBox: { x: box.x, y: box.y, width: box.width, height: box.height },
+      score,
+      landmarks: result.landmarks,
+      fullResult: result
+    };
+  } catch (err) {
+    console.warn('[FaceEngine] detectSingleFace error:', err);
+    return { detected: false };
+  }
+};
+
+// Render real-time 68-point facial landmark mesh & bounding box on a target HTMLCanvasElement
+export const drawFaceMeshOverVideo = (
+  video: HTMLVideoElement,
+  canvas: HTMLCanvasElement,
+  scanResult: FaceScanResult,
+  color: 'emerald' | 'rose' | 'blue' = 'emerald'
+): void => {
+  if (!scanResult.detected || !scanResult.fullResult || !canvas || !video) {
+    if (canvas) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+    return;
+  }
+
+  try {
+    const displaySize = { 
+      width: video.clientWidth || video.videoWidth || 640, 
+      height: video.clientHeight || video.videoHeight || 480 
+    };
+    faceapi.matchDimensions(canvas, displaySize);
+
+    const resizedResult = faceapi.resizeResults(scanResult.fullResult, displaySize);
+
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+    }
+
+    // Draw face landmarks (eye dots, nose bridge, lip contour)
+    const drawOptions = {
+      drawLines: true,
+      lineWidth: 1.5,
+      color: color === 'rose' ? '#f43f5e' : color === 'blue' ? '#3b82f6' : '#10b981'
+    };
+    
+    const landmarkDrawBox = new faceapi.draw.DrawFaceLandmarks(resizedResult.landmarks, drawOptions);
+    landmarkDrawBox.draw(canvas);
+  } catch {}
+};
+
+// Extract face descriptor from an image URL (e.g. Employee's official profile photo)
+export const extractDescriptorFromImageUrl = async (
+  imageUrl: string
+): Promise<Float32Array | null> => {
+  try {
+    if (!isModelsLoaded) await loadFaceModels();
+    const img = await faceapi.fetchImage(imageUrl);
+    // Fast high-accuracy real-time detection (224x224 input size executes 4x faster on CPU)
+    const options = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.35 });
+    const result = await faceapi
+      .detectSingleFace(img, options)
+      .withFaceLandmarks(true)
+      .withFaceDescriptor();
+
+    return result ? result.descriptor : null;
+  } catch (err) {
+    console.warn('[FaceEngine] Could not extract descriptor from profile photo URL:', err);
+    return null;
+  }
+};
+
+// Biometric Profile Storage (in-memory cache + localStorage).
+// PERF FIX (audit): these helpers were moved to a face-api-free module
+// (faceDescriptorStore) so that AuthContext / EmployeePortal can import them
+// without dragging the multi-MB @vladmandic/face-api bundle into the initial
+// load. Re-exported here for backward compatibility; verifyFaceAgainstEnrolled
+// below uses getEmployeeDescriptor internally via the import beneath.
+export {
+  clearAllFaceEngineState,
+  saveEmployeeDescriptor,
+  getEmployeeDescriptor,
+  clearEmployeeDescriptor,
+  isFaceBiometricEnrolled
+} from './faceDescriptorStore';
+import { getEmployeeDescriptor } from './faceDescriptorStore';
+
+export interface MatchVerificationResult {
+  isMatch: boolean;
+  confidencePercent: number;
+  distance: number;
+  enrolled: boolean;
+  matchedAgainstProfilePhoto?: boolean;
+  message?: string;
+}
+
+export const BIOMETRIC_MATCH_THRESHOLD = 0.45;
+
+// Compare scanned face descriptor STRICTLY against employee's enrolled descriptor.
+// Euclidean distance threshold: < 0.45 = MATCH, >= 0.45 = MISMATCH (strict biometric boundary)
+//
+// SECURITY: An unenrolled employee MUST explicitly register their face before checking in.
+// Never fall back to unverified stock avatars or loose thresholds.
+export const verifyFaceAgainstEnrolled = (
+  scannedDescriptor: Float32Array,
+  employeeId: string,
+  profilePhotoDescriptor?: Float32Array | null,
+  cloudDescriptor?: number[]
+): MatchVerificationResult => {
+  const referenceDescriptor = getEmployeeDescriptor(employeeId, cloudDescriptor);
+
+  // If NO genuine biometric face template is enrolled for this employee:
+  if (!referenceDescriptor) {
+    return {
+      isMatch: false,
+      confidencePercent: 0,
+      distance: 1.0,
+      enrolled: false,
+      message: 'No biometric face template registered for this account. Please register your face first.'
+    };
+  }
+
+  // Calculate Euclidean Distance between 128-float descriptors
+  const distance = faceapi.euclideanDistance(scannedDescriptor, referenceDescriptor);
+  // Strict matching threshold: 0.45 reliably distinguishes genuine individuals from impostors
+  const isMatch = distance < BIOMETRIC_MATCH_THRESHOLD;
+
+  // Confidence formula: scale 0..0.45 distance to 99..82 range for genuine match
+  let confidencePercent = 0;
+  if (isMatch) {
+    confidencePercent = Math.max(82, Math.min(99, Math.round(99 - (distance / BIOMETRIC_MATCH_THRESHOLD) * 17)));
+  } else {
+    confidencePercent = Math.max(5, Math.min(45, Math.round((1 - Math.min(distance, 1.0)) * 45)));
+  }
+
+  return {
+    isMatch,
+    confidencePercent,
+    distance,
+    enrolled: true,
+    matchedAgainstProfilePhoto: false,
+    message: isMatch ? 'Biometric match verified' : 'Scanned face does not match enrolled profile'
+  };
+};

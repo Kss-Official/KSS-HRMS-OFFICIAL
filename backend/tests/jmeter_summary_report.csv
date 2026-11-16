@@ -1,0 +1,2 @@
+Label,# Samples,Average,Median,90% Line,95% Line,99% Line,Min,Max,Error %,Throughput
+HRMS_API_Aggregate,200,1905.72,1342.98,4365.03,4712.30,6232.39,1084.64,6315.83,0.00%,8.88/sec

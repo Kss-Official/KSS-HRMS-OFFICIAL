@@ -1,0 +1,315 @@
+import React, { useState, useEffect } from 'react';
+import kalpanaLogo from '../../assets/images/kalpana_logo.jpeg';
+import { useAuth } from '../../context/AuthContext';
+import { 
+  LogOut, 
+  Clock, 
+  ChevronDown,
+  Menu,
+  X,
+  Download,
+  UserCheck
+} from 'lucide-react';
+import { toast } from 'sonner';
+import { UserRole } from '../../types';
+import { getEmployeeWorkDate, resolveAttendanceRecord } from '../../lib/attendanceEngine';
+import { NotificationBell } from './NotificationBell';
+import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
+import { getEmployeeAvatar } from '../../lib/avatarHelper';
+
+interface HeaderProps {
+  onOpenScanner?: () => void;
+  onToggleMobileSidebar?: () => void;
+  isMobileSidebarOpen?: boolean;
+}
+
+export const Header: React.FC<HeaderProps> = ({ 
+  onToggleMobileSidebar, 
+  isMobileSidebarOpen,
+}) => {
+  const { activeEmployee, attendance, checkIn, checkOut, role, logout, settings, updateEmployee } = useAuth();
+  const [timeStr, setTimeStr] = useState('');
+  const [showUserDropdown, setShowUserDropdown] = useState(false);
+  const [, setHeaderActionLoading] = useState(false);
+
+  // ROOT-CAUSE FIX: use the IST work-day (not UTC toISOString date) and the canonical
+  // resolver so the header reflects the same record the backend transactions write to.
+  const todayStr = getEmployeeWorkDate(new Date());
+  const myTodayRecord = activeEmployee 
+    ? resolveAttendanceRecord(attendance, activeEmployee, todayStr) ?? null
+    : null;
+
+  const [isHeaderFaceModalOpen, setIsHeaderFaceModalOpen] = useState(false);
+
+  const executeHeaderCheckInProcess = async () => {
+    if (!activeEmployee) return;
+    setHeaderActionLoading(true);
+
+    const submit = (lat?: number, lon?: number, accuracy: number = 10) =>
+      checkIn(activeEmployee.id, lat, lon, 'Facial Recognition', accuracy)
+        .then(res => {
+          // The result used to be discarded (.finally only), so a REJECTED
+          // check-in looked identical to a successful one from the employee's
+          // side — they had no way to tell they had been blocked.
+          if (res.success) toast.success(res.message || 'Checked in.');
+          else toast.error(res.message || 'Check-In failed.');
+        })
+        .catch(err => toast.error(err?.message || 'Check-In failed.'))
+        .finally(() => setHeaderActionLoading(false));
+
+    // ── GEOFENCE FIX ─────────────────────────────────────────────────────────
+    // This used to arm a 1200ms timer that called checkIn() with NO coordinates,
+    // and the geolocation error callback did exactly the same. So denying the
+    // location prompt — or merely taking longer than 1.2s to answer it, which a
+    // real GPS fix almost always does — checked the employee in from anywhere.
+    // A coordinate-less check-in is now refused outright while the geofence is
+    // on; only an admin turning settings.gpsRequired off still permits one.
+    // The timeout is also raised to 10s to match the employee portal, because
+    // 1200ms was never long enough to acquire a fix in the first place.
+    const geofenceOn = settings.gpsRequired !== false;
+
+    if (!navigator.geolocation) {
+      if (geofenceOn) {
+        toast.error('GPS Required: this device cannot report a location, so office check-in is not possible.');
+        setHeaderActionLoading(false);
+        return;
+      }
+      submit();
+      return;
+    }
+
+    navigator.geolocation.getCurrentPosition(
+      pos => submit(pos.coords.latitude, pos.coords.longitude, Math.round(pos.coords.accuracy) || 10),
+      err => {
+        if (geofenceOn) {
+          toast.error(
+            err && err.code === 1
+              ? 'Location Permission Denied: you must allow location access to check in at the office.'
+              : `GPS Location Required: your location could not be determined (${err?.message || 'unavailable'}). Move to a spot with a clearer signal and try again.`
+          );
+          setHeaderActionLoading(false);
+          return;
+        }
+        submit();
+      },
+      { enableHighAccuracy: true, maximumAge: 30000, timeout: 10000 }
+    );
+  };
+
+  useEffect(() => {
+    const updateClock = () => {
+      const now = new Date();
+      setTimeStr(now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
+    };
+    updateClock();
+    const timer = setInterval(updateClock, 10000);
+    return () => clearInterval(timer);
+  }, []);
+
+  // PWA Install Prompt State
+  const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
+
+  useEffect(() => {
+    const handleBeforeInstallPrompt = (e: any) => {
+      e.preventDefault();
+      setDeferredPrompt(e);
+    };
+    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+    return () => window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
+  }, []);
+
+  const handleInstallApp = async () => {
+    if (!deferredPrompt) return;
+    deferredPrompt.prompt();
+    const { outcome } = await deferredPrompt.userChoice;
+    if (outcome === 'accepted') {
+      setDeferredPrompt(null);
+    }
+    setShowUserDropdown(false);
+  };
+
+  const getRoleBadgeColor = (r: UserRole) => {
+    switch (r) {
+      case 'SUPER_ADMIN':    return 'bg-purple-500/20 text-purple-300 border-purple-500/40';
+      case 'HR_ADMIN':       return 'bg-blue-500/20 text-blue-300 border-blue-500/40';
+      case 'PROJECT_MANAGER': return 'bg-amber-500/20 text-amber-300 border-amber-500/40';
+      case 'EMPLOYEE':       return 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40';
+    }
+  };
+
+  const getRoleLabel = (r: UserRole, designation?: string) => {
+    if (r === 'SUPER_ADMIN') return designation?.includes('CEO') ? 'CEO' : 'CTO/MD';
+    if (r === 'HR_ADMIN') return 'HR Lead';
+    if (r === 'PROJECT_MANAGER') return 'PM';
+    return 'Employee';
+  };
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!showUserDropdown) return;
+    const close = () => setShowUserDropdown(false);
+    window.addEventListener('click', close);
+    return () => window.removeEventListener('click', close);
+  }, [showUserDropdown]);
+
+  return (
+    <header className="h-14 bg-slate-950/95 border-b border-slate-800 px-3 sm:px-5 flex items-center justify-between sticky top-0 z-30 backdrop-blur-xl shadow-md">
+      
+      {/* LEFT — hamburger + logo + name */}
+      <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+        {/* Mobile hamburger */}
+        {onToggleMobileSidebar && (
+          <button
+            onClick={onToggleMobileSidebar}
+            className="md:hidden p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer shrink-0"
+            aria-label="Toggle Navigation"
+          >
+            {isMobileSidebarOpen ? <X className="w-5 h-5" /> : <Menu className="w-5 h-5" />}
+          </button>
+        )}
+
+        {/* Logo + company name */}
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl overflow-hidden shrink-0 border border-slate-700/60 shadow-md shadow-blue-950/40">
+            <img src={kalpanaLogo} alt="Logo" className="w-full h-full object-cover" />
+          </div>
+          <div className="min-w-0">
+            <h1 className="text-xs sm:text-sm font-extrabold text-white leading-tight truncate max-w-[130px] sm:max-w-[200px] md:max-w-none">
+              <span className="hidden sm:inline">{settings.companyName}</span>
+              <span className="sm:hidden">KSS</span>
+            </h1>
+            <p className="text-[10px] text-slate-500 font-medium hidden md:block truncate">{settings.officeName}</p>
+          </div>
+        </div>
+      </div>
+
+      {/* RIGHT — clock, scanner, profile dropdown */}
+      <div className="flex items-center gap-2 shrink-0">
+
+        {/* Live clock — hidden on small screens */}
+        <div className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-900 border border-slate-800 text-xs text-slate-300 font-mono">
+          <Clock className="w-3 h-3 text-slate-500" />
+          <span className="font-bold text-white">{timeStr}</span>
+        </div>
+
+        {/* Live Sync Active Badge */}
+        <div className="hidden sm:flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-[11px] font-bold text-emerald-400 shadow-sm">
+          <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+          <span>Live Sync Active</span>
+        </div>
+
+        {/* Quick Check-In Button for Current User */}
+        {activeEmployee && !myTodayRecord?.checkInAt && (
+          <button
+            onClick={() => setIsHeaderFaceModalOpen(true)}
+            className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-[11px] font-bold text-white shadow-md cursor-pointer transition-all hover:scale-105"
+            title="Biometric Face / GPS Check-In"
+          >
+            <UserCheck className="w-3.5 h-3.5 text-emerald-200" />
+            <span>Check In</span>
+          </button>
+        )}
+
+        {/* Notification Bell — visible for all authenticated roles */}
+        <NotificationBell />
+
+        {/* Role badge — hidden on small screens */}
+        {(() => {
+          const effectiveRole = activeEmployee?.role || role;
+          return (
+            <div className="hidden sm:flex items-center gap-1 bg-slate-900 px-2.5 py-1 rounded-lg border border-slate-800 text-xs">
+              <span className={`px-2 py-0.5 rounded-md text-[11px] font-extrabold border ${getRoleBadgeColor(effectiveRole)}`}>
+                {getRoleLabel(effectiveRole, activeEmployee?.designation)}
+              </span>
+            </div>
+          );
+        })()}
+
+        {/* Profile avatar dropdown */}
+        <div className="relative" onClick={e => e.stopPropagation()}>
+          <button
+            onClick={() => setShowUserDropdown(!showUserDropdown)}
+            className="flex items-center gap-1.5 p-1 rounded-xl bg-slate-900 hover:bg-slate-800 transition-colors cursor-pointer border border-slate-800"
+          >
+            <img
+              src={getEmployeeAvatar(activeEmployee)}
+              alt={activeEmployee?.fullName || 'User'}
+              onError={(e) => {
+                e.currentTarget.onerror = null;
+                e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(activeEmployee?.fullName || 'User')}&background=0f172a&color=fff`;
+              }}
+              className="w-7 h-7 sm:w-8 sm:h-8 rounded-lg object-cover border border-slate-700"
+            />
+            <div className="hidden sm:block text-left leading-tight pr-0.5">
+              <div className="text-xs font-bold text-white truncate max-w-[90px]">
+                {activeEmployee?.fullName || 'User'}
+              </div>
+              <div className="text-[10px] text-slate-400 truncate max-w-[90px]">
+                {activeEmployee?.designation?.split(' ')[0] || role}
+              </div>
+            </div>
+            <ChevronDown className="w-3 h-3 text-slate-500 hidden sm:block" />
+          </button>
+
+          {showUserDropdown && (
+            <div className="absolute right-0 mt-2 w-56 bg-slate-900 text-slate-200 rounded-2xl shadow-2xl border border-slate-800 py-1.5 z-50">
+              {/* User info */}
+              <div className="px-4 py-3 border-b border-slate-800">
+                <p className="text-xs font-bold text-white truncate">{activeEmployee?.fullName || 'Logged In'}</p>
+                <p className="text-[11px] text-slate-400 truncate mt-0.5">{activeEmployee?.email || ''}</p>
+                <span className={`inline-block mt-2 px-2 py-0.5 text-[10px] font-bold rounded-md border ${getRoleBadgeColor(role)}`}>
+                  {role}
+                </span>
+              </div>
+
+              {/* Install App Button */}
+              {deferredPrompt && (
+                <div className="px-2 py-1">
+                  <button
+                    onClick={handleInstallApp}
+                    className="w-full text-left px-4 py-2.5 text-xs font-bold text-emerald-400 hover:bg-emerald-950/40 rounded-xl flex items-center gap-2 cursor-pointer transition-colors"
+                  >
+                    <Download className="w-4 h-4 text-emerald-400" />
+                    Install App
+                  </button>
+                </div>
+              )}
+
+              {/* Sign out */}
+              <button
+                onClick={() => { setShowUserDropdown(false); logout(); }}
+                className="w-full text-left px-4 py-2.5 text-xs font-bold text-rose-400 hover:bg-rose-950/40 flex items-center gap-2 cursor-pointer transition-colors"
+              >
+                <LogOut className="w-4 h-4 text-rose-400" />
+                Sign Out
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Mandatory Face Biometric Verification Modal for Header Check-Ins */}
+      {activeEmployee && (
+        <FaceCaptureModal
+          isOpen={isHeaderFaceModalOpen}
+          onClose={() => setIsHeaderFaceModalOpen(false)}
+          onSuccess={() => {
+            setIsHeaderFaceModalOpen(false);
+            executeHeaderCheckInProcess();
+          }}
+          onEnrollSuccess={(descriptorArray) => {
+            updateEmployee(activeEmployee.id, {
+              isFaceEnrolled: true,
+              faceEnrolledAt: new Date().toISOString(),
+              faceDescriptor: descriptorArray
+            });
+          }}
+          employeeName={activeEmployee.fullName}
+          employeeId={activeEmployee.id}
+          profilePhotoUrl={activeEmployee.profilePhotoUrl}
+          cloudDescriptor={activeEmployee.faceDescriptor}
+        />
+      )}
+    </header>
+  );
+};

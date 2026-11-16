@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8" />
+  <link rel="icon" href="/favicon.png?v=3" type="image/png">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Kalpanaaa Software Solutions-Employees MGMNT</title>
+  <style>
+    html, body, #root {
+      margin: 0;
+      padding: 0;
+      width: 100vw;
+      min-height: 100vh;
+      background: #020617 !important;
+      overscroll-behavior: none !important;
+      overscroll-behavior-x: none !important;
+      overscroll-behavior-y: none !important;
+      overflow-x: hidden !important;
+    }
+    #splash-screen {
+      position: fixed; inset: 0;
+      background: #020617;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 32px;
+      z-index: 99999;
+      transition: opacity 0.5s ease-in-out;
+    }
+    #splash-screen .splash-logo {
+      width: min(300px, 75vw);
+      border-radius: 28px;
+      box-shadow: 0 0 60px rgba(59,130,246,0.35), 0 0 120px rgba(59,130,246,0.12);
+    }
+    #splash-screen .splash-footer {
+      display: flex; flex-direction: column; align-items: center; gap: 16px;
+    }
+    /* Clean CSS spinner — no blinking */
+    #splash-screen .splash-spinner {
+      width: 32px; height: 32px;
+      border: 2.5px solid rgba(255,255,255,0.1);
+      border-top-color: #3b82f6;
+      border-radius: 50%;
+      animation: spin 0.9s linear infinite;
+    }
+    #splash-screen .splash-tagline {
+      font-family: -apple-system, system-ui, sans-serif;
+      font-size: 11px; font-weight: 600;
+      letter-spacing: 0.2em; text-transform: uppercase;
+      color: rgba(255,255,255,0.35);
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+
+<body>
+  <div id="splash-screen">
+    <img src="/pwa-512x512.png" class="splash-logo" alt="Kalpanaaa Software Solutions" onerror="this.src='/pwa-192x192.png'">
+    <div class="splash-footer">
+      <div class="splash-spinner"></div>
+      <div class="splash-tagline">Kalpanaaa Software Solutions</div>
+    </div>
+  </div>
+  <div id="root"></div>
+  <script>
+    (function() {
+      // ── Self-healing auto-recovery for module script / MIME / chunk errors ──
+      var healingInProgress = false;
+      function triggerAutoHeal(reason) {
+        if (healingInProgress) return;
+        healingInProgress = true;
+        console.warn('[KSS Platform Recovery] Module/Chunk error detected:', reason);
+
+        var attempts = parseInt(sessionStorage.getItem('kss_auto_heal') || '0', 10);
+        if (attempts < 2) {
+          sessionStorage.setItem('kss_auto_heal', (attempts + 1).toString());
+          // 1. Unregister any stale service workers
+          if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.getRegistrations().then(function(regs) {
+              regs.forEach(function(r) { r.unregister(); });
+            }).catch(function() {});
+          }
+          // 2. Clear CacheStorage
+          if ('caches' in window) {
+            caches.keys().then(function(keys) {
+              keys.forEach(function(k) { caches.delete(k); });
+            }).catch(function() {});
+          }
+          // 3. Force hard reload with timestamp query to bypass stale browser HTTP cache
+          setTimeout(function() {
+            var target = window.location.origin + window.location.pathname + '?_kss_v=' + Date.now();
+            window.location.replace(target);
+          }, 100);
+        } else {
+          // If already retried and still failing, display graceful recovery UI instead of blank screen
+          var splash = document.getElementById('splash-screen');
+          if (splash) {
+            splash.style.opacity = '1';
+            splash.style.display = 'flex';
+            splash.innerHTML = [
+              '<img src="/pwa-192x192.png" style="width:96px;height:96px;border-radius:22px;box-shadow:0 0 50px rgba(59,130,246,0.35);" alt="KSS">',
+              '<div style="text-align:center;color:#fff;font-family:system-ui,-apple-system,sans-serif;padding:0 24px;max-width:380px;">',
+              '  <h2 style="font-size:22px;font-weight:700;margin:0 0 10px 0;letter-spacing:-0.02em;">Platform Update Available</h2>',
+              '  <p style="font-size:14px;color:rgba(255,255,255,0.7);margin:0 0 24px 0;line-height:1.5;">A new version of Kalpanaaa HRMS has been released. Tap below to refresh and load the latest updates.</p>',
+              '  <button id="kss-heal-btn" style="background:#2563eb;color:#fff;border:none;padding:14px 32px;border-radius:12px;font-weight:600;font-size:15px;cursor:pointer;box-shadow:0 10px 25px -5px rgba(37,99,235,0.5);">Refresh &amp; Update Now</button>',
+              '</div>'
+            ].join('');
+            var btn = document.getElementById('kss-heal-btn');
+            if (btn) {
+              btn.onclick = function() {
+                sessionStorage.clear();
+                if ('serviceWorker' in navigator) {
+                  navigator.serviceWorker.getRegistrations().then(function(regs) {
+                    regs.forEach(function(r) { r.unregister(); });
+                  });
+                }
+                if ('caches' in window) {
+                  caches.keys().then(function(keys) {
+                    keys.forEach(function(k) { caches.delete(k); });
+                  });
+                }
+                window.location.replace(window.location.origin + window.location.pathname + '?_t=' + Date.now());
+              };
+            }
+          }
+        }
+      }
+
+      // Catch module / script / link load errors in capture phase
+      window.addEventListener('error', function(e) {
+        if (e && e.target && (e.target.tagName === 'SCRIPT' || e.target.tagName === 'LINK')) {
+          triggerAutoHeal('Asset load failure: ' + (e.target.src || e.target.href));
+        }
+      }, true);
+
+      // Catch Vite preload errors
+      window.addEventListener('vite:preloadError', function(e) {
+        if (e && e.preventDefault) e.preventDefault();
+        triggerAutoHeal('Vite chunk preload error');
+      });
+
+      // Graceful timeout: If React is still initializing on slow networks, don't destroy session
+      setTimeout(function() {
+        var root = document.getElementById('root');
+        if (!root || !root.firstElementChild) {
+          console.warn('[KSS Platform] Cold start taking longer than usual on slow network.');
+          var splashFooter = document.querySelector('#splash-screen .splash-footer');
+          if (splashFooter && !document.getElementById('kss-slow-net-retry')) {
+            var retryNotice = document.createElement('div');
+            retryNotice.id = 'kss-slow-net-retry';
+            retryNotice.style.cssText = 'text-align:center;margin-top:12px;';
+            retryNotice.innerHTML = '<p style="color:#94a3b8;font-size:12px;margin:0 0 8px 0;">Loading resources on slow network...</p>' +
+              '<button onclick="window.location.reload()" style="background:#1e293b;color:#38bdf8;border:1px solid #334155;padding:6px 16px;border-radius:8px;font-size:12px;cursor:pointer;">Reload</button>';
+            splashFooter.appendChild(retryNotice);
+          }
+        }
+      }, 20000);
+
+      // Global splash hider invoked by React App on successful render
+      window.__hideSplash = function() {
+        sessionStorage.removeItem('kss_auto_heal');
+        var splash = document.getElementById('splash-screen');
+        if (splash) {
+          splash.style.opacity = '0';
+          setTimeout(function() {
+            if (splash && splash.parentNode) splash.parentNode.removeChild(splash);
+          }, 500);
+        }
+      };
+    })();
+  </script>
+  <script type="module" src="/src/main.tsx"></script>
+</body>
+
+</html>

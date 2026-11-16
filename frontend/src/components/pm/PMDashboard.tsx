@@ -1,0 +1,2178 @@
+import React, { useState, useEffect, useMemo } from 'react';
+import { useAuth } from '../../context/AuthContext';
+import { getEmployeeAvatar } from '../../lib/avatarHelper';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  Kanban, 
+  Clock, 
+  CheckCircle2, 
+  XCircle,
+  AlertTriangle, 
+  Users, 
+  Calendar, 
+  TrendingUp, 
+  ChevronLeft,
+  ChevronRight,
+  ChevronDown,
+  ChevronUp,
+  Flame,
+  FileText,
+  UserCheck,
+  Coffee,
+  Loader2,
+  PieChart as PieChartIcon,
+  Sparkles,
+  X,
+  Search,
+  Eye,
+  Timer,
+  UtensilsCrossed,
+  Briefcase,
+  GraduationCap,
+  Zap,
+  MapPin,
+  Edit3,
+  LogOut,
+  CheckCheck,
+  SlidersHorizontal,
+  ShieldCheck,
+  StopCircle
+} from 'lucide-react';
+import { Project, LeaveRequest, Employee, AttendanceRecord } from '../../types';
+import { db, subscribeWithRecovery } from '../../lib/firebase';
+import { collection, setDoc, doc } from 'firebase/firestore';
+import { toast } from 'sonner';
+import {
+  getEmployeeWorkDate,
+  resolveAttendanceRecord,
+  isShiftComplete,
+  buildWorkWeek,
+  buildWeekWorkRow,
+  hasApprovedLeaveOn,
+  EXCUSED_LEAVE_TYPES,
+  formatDuration,
+  formatShortDate,
+  SHIFT_LABEL,
+  SHIFT_TOTAL_MINUTES,
+  WORK_WEEK_DAYS,
+  isExecutiveOrLeadership,
+  isAttendanceExempt,
+  getWorkDate,
+  formatShiftTiming,
+  isLateCheckIn,
+  isWfhType,
+  isApprovedWfhForEmployee
+} from '../../lib/attendanceEngine';
+import type { DayWorkSummary, WorkWeekDay } from '../../lib/attendanceEngine';
+import { toISTTimeString, todayInIST } from '../../lib/absoluteTime';
+import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
+import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
+import { useHaptic } from '../../hooks/useHaptic';
+import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
+import { PMAttendanceCycleSection } from './PMAttendanceCycleSection';
+import { PMLeaveManagement } from './PMLeaveManagement';
+import { PMWorkSchedule } from './PMWorkSchedule';
+
+interface PMDashboardProps {
+  onNavigateTab: (tab: string) => void;
+}
+
+const DEFAULT_PROJECTS: Project[] = [
+  {
+    id: 'proj-1',
+    name: 'Core API & Auth Engine Refactor',
+    description: 'Optimizing Firestore indexing and sub-100ms response times.',
+    client: 'Internal Platform',
+    startDate: '2026-07-01',
+    deadline: '2026-08-20',
+    status: 'In Progress',
+    progressPercent: 72,
+    teamMemberIds: ['emp-1', 'emp-2'],
+    managerId: 'pm-1',
+    createdAt: '2026-07-01',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'proj-2',
+    name: 'PWA Biometric & Face ID Integration',
+    description: 'Client-side TinyFaceDetector and MediaPipe liveness mesh.',
+    client: 'Enterprise HRMS',
+    startDate: '2026-07-15',
+    deadline: '2026-08-25',
+    status: 'In Progress',
+    progressPercent: 58,
+    teamMemberIds: ['emp-3', 'emp-4'],
+    managerId: 'pm-1',
+    createdAt: '2026-07-15',
+    updatedAt: '2026-08-01'
+  },
+  {
+    id: 'proj-3',
+    name: 'Executive Dashboard Analytics',
+    description: 'Stripe KPI card layout and SVG sparklines.',
+    client: 'Management Team',
+    startDate: '2026-08-01',
+    deadline: '2026-08-30',
+    status: 'At Risk',
+    progressPercent: 35,
+    teamMemberIds: ['emp-1'],
+    managerId: 'pm-1',
+    createdAt: '2026-08-01',
+    updatedAt: '2026-08-05'
+  }
+];
+
+export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
+  const { employees, leaveRequests, attendance, activeEmployee, startBreak, endBreak, isAuthenticated, settings, companyWideWfhDates, applyAttendanceCorrection, checkIn, checkOut, updateEmployee, updateLeaveRequestStage } = useAuth();
+  const { triggerHaptic } = useHaptic();
+
+  const todayStr = getWorkDate(new Date());
+
+  const [nowMs, setNowMs] = useState(() => Date.now());
+
+  // Filter operational workforce (excluding Executives & HR Operations)
+  const operationalEmployees = useMemo(() => {
+    return employees.filter(e => e.status !== 'Terminated' && e.status !== 'Inactive' && !isAttendanceExempt(e));
+  }, [employees]);
+
+  const totalWorkforceCount = operationalEmployees.length;
+
+  const todayRecords = useMemo(() => {
+    return attendance.filter(a => a && a.date === todayStr && a.employeeName && a.employeeName.trim() !== '' && a.employeeName !== '.');
+  }, [attendance, todayStr]);
+
+  // High-performance O(1) indexed lookup maps for today's records and approved leaves
+  const todayRecordsMap = useMemo(() => {
+    const map = new Map<string, AttendanceRecord>();
+    for (const r of todayRecords) {
+      if (r.employeeId) map.set(r.employeeId, r);
+      if (r.employeeCode) map.set(r.employeeCode, r);
+      if (r.employeeName) {
+        map.set(r.employeeName.trim().toLowerCase(), r);
+        map.set(r.employeeName.replace(/\s+/g, '').toLowerCase(), r);
+      }
+    }
+    return map;
+  }, [todayRecords]);
+
+  const todayApprovedLeavesMap = useMemo(() => {
+    const map = new Map<string, LeaveRequest>();
+    for (const l of leaveRequests) {
+      const isApproved = l.status === 'Approved' ||
+        ((l.pmStatus === 'Approved' || l.pmStatus === 'N/A' || l.pmStatus === 'Bypassed') &&
+         (l.hrStatus === 'Approved' || l.hrStatus === 'N/A' || l.hrStatus === 'Bypassed') &&
+         l.ceoStatus === 'Approved' && l.ctoStatus === 'Approved');
+      if (!isApproved) continue;
+      const start = l.startDate || (l as any).fromDate;
+      const end = l.endDate || (l as any).toDate || start;
+      if (start && end && todayStr >= start && todayStr <= end) {
+        if (l.employeeId) map.set(l.employeeId, l);
+        if (l.employeeUid) map.set(l.employeeUid, l);
+        if (l.employeeName) {
+          map.set(l.employeeName.trim().toLowerCase(), l);
+          map.set(l.employeeName.replace(/\s+/g, '').toLowerCase(), l);
+        }
+      }
+    }
+    return map;
+  }, [leaveRequests, todayStr]);
+
+  // Build daily roster for PM view with live status using fast O(1) lookups
+  const dailyRoster = useMemo(() => {
+    return operationalEmployees.map(emp => {
+      const rec = todayRecordsMap.get(emp.id) || 
+                  (emp.employeeId ? todayRecordsMap.get(emp.employeeId) : undefined) ||
+                  (emp.fullName ? (todayRecordsMap.get(emp.fullName.trim().toLowerCase()) || todayRecordsMap.get(emp.fullName.replace(/\s+/g, '').toLowerCase())) : undefined);
+
+      const leaveReq = todayApprovedLeavesMap.get(emp.id) ||
+                       (emp.employeeId ? todayApprovedLeavesMap.get(emp.employeeId) : undefined) ||
+                       (emp.uid ? todayApprovedLeavesMap.get(emp.uid) : undefined) ||
+                       (emp.fullName ? (todayApprovedLeavesMap.get(emp.fullName.trim().toLowerCase()) || todayApprovedLeavesMap.get(emp.fullName.replace(/\s+/g, '').toLowerCase())) : undefined);
+
+      const hasApprovedLeave = !!leaveReq && !isWfhType(leaveReq.type) && !isWfhType(leaveReq.leaveCategory);
+      
+      const isWfh = isApprovedWfhForEmployee(emp, todayStr, {
+        leaveRequests,
+        companyWideWfhDates,
+        settings,
+        record: rec
+      });
+
+      const activeBreak = rec?.breaks?.find(b => !b.endAt && !(b as any).endTime);
+      const isComplete = isShiftComplete(rec);
+      const isCheckedIn = !!rec?.checkInAt && !isComplete;
+      const isLate = rec?.status === 'Late' || (!!rec?.checkInAt && isLateCheckIn(rec.checkInAt));
+
+      let computedStatus: 'Present' | 'Work From Home' | 'On Leave' | 'LOP' | 'On Break' | 'Absent' = 'Absent';
+
+      if (activeBreak && isCheckedIn) {
+        computedStatus = 'On Break';
+      } else if (hasApprovedLeave || rec?.status === 'On Leave' || emp.status === 'On Leave') {
+        computedStatus = 'On Leave';
+      } else if (isWfh) {
+        computedStatus = 'Work From Home';
+      } else if (rec?.checkInAt) {
+        computedStatus = 'Present';
+      } else if (rec) {
+        if (rec.status === 'Present' || rec.status === 'Late' || rec.checkInAt) {
+          computedStatus = 'Present';
+        } else if (rec.status === 'On Leave' || rec.status === 'Half Day') {
+          computedStatus = 'On Leave';
+        } else if (rec.status === 'Absent') {
+          computedStatus = 'Absent';
+        }
+      } else if (emp.status === 'On Leave') {
+        computedStatus = 'On Leave';
+      }
+
+      if (emp.status === 'Suspended' || (rec && (rec.notes || '').toLowerCase().includes('lop'))) {
+        computedStatus = 'LOP';
+      }
+
+      return {
+        employee: emp,
+        record: rec,
+        status: computedStatus,
+        isCheckedIn,
+        activeBreak,
+        isLate,
+        isWfh: computedStatus === 'Work From Home',
+        isShiftComplete: isComplete,
+        leaveReq
+      };
+    });
+  }, [operationalEmployees, todayRecordsMap, todayApprovedLeavesMap, leaveRequests, todayStr, companyWideWfhDates, settings]);
+
+  // Turnout KPI Counts computed in a single consolidated memoized pass
+  const {
+    presentCount,
+    onTimePresentCount,
+    onBreakCount,
+    lateCount,
+    wfhCount,
+    onLeaveCount,
+    lopCount,
+    absentCount,
+    totalActiveWorkingToday
+  } = useMemo(() => {
+    let present = 0;
+    let onTime = 0;
+    let onBreak = 0;
+    let late = 0;
+    let wfh = 0;
+    let onLeave = 0;
+    let lop = 0;
+    let activeWorking = 0;
+
+    for (const r of dailyRoster) {
+      if (r.status === 'On Break') onBreak++;
+      if ((r.status === 'Present' || r.status === 'On Break') && !r.isWfh) present++;
+      if (r.status === 'Present' && !r.isLate && !r.isWfh) onTime++;
+      if (r.isLate && !r.isWfh) late++;
+      if (r.status === 'Work From Home' || r.isWfh) wfh++;
+      if (r.status === 'On Leave') onLeave++;
+      if (r.status === 'LOP' || r.status === 'Absent') lop++;
+      if (r.status === 'Present' || r.status === 'On Break' || r.status === 'Work From Home') activeWorking++;
+    }
+
+    return {
+      presentCount: present,
+      onTimePresentCount: onTime,
+      onBreakCount: onBreak,
+      lateCount: late,
+      wfhCount: wfh,
+      onLeaveCount: onLeave,
+      lopCount: lop,
+      absentCount: lop,
+      totalActiveWorkingToday: activeWorking
+    };
+  }, [dailyRoster]);
+
+  // Donut Pie Data - Mutually exclusive slices whose sum matches totalWorkforceCount exactly
+  const statusDistributionData = useMemo(() => {
+    return [
+      { name: 'Present (On-Time)', value: onTimePresentCount, color: '#10b981' },
+      { name: 'Late Check-In', value: lateCount, color: '#f97316' },
+      { name: 'On Break', value: onBreakCount, color: '#eab308' },
+      { name: 'Work From Home', value: wfhCount, color: '#0ea5e9' },
+      { name: 'Leave (PL/EL)', value: onLeaveCount, color: '#a855f7' },
+      { name: 'LOP', value: lopCount, color: '#f43f5e' },
+    ].filter(d => d.value > 0);
+  }, [onTimePresentCount, lateCount, onBreakCount, wfhCount, onLeaveCount, lopCount]);
+
+  // Modals
+  const [isRosterModalOpen, setIsRosterModalOpen] = useState(false);
+  const [rosterFilter, setRosterFilter] = useState<string>('ALL');
+  const [rosterSearch, setRosterSearch] = useState('');
+
+  const [selectedEmployeeActivity, setSelectedEmployeeActivity] = useState<{
+    employee: Employee;
+    record?: AttendanceRecord | null;
+  } | null>(null);
+
+  const [monthlyAttendanceEmp, setMonthlyAttendanceEmp] = useState<Employee | null>(null);
+
+  // ── PM-only management panels (collapsed by default) ──────────────────────
+  const [showLeaveManagement, setShowLeaveManagement] = useState(false);
+  const [showWorkSchedule, setShowWorkSchedule] = useState(false);
+
+  // Time & ISO String formatting helpers for PM Overrides
+  const getCurrentIstTimeInput = (): string => {
+    const d = new Date();
+    const istOffset = 5.5 * 60 * 60 * 1000;
+    const istDate = new Date(d.getTime() + istOffset);
+    const hh = istDate.getUTCHours().toString().padStart(2, '0');
+    const mm = istDate.getUTCMinutes().toString().padStart(2, '0');
+    return `${hh}:${mm}`;
+  };
+
+  const makeIstIsoString = (dateStr: string, timeStr: string): string => {
+    const parts = (timeStr || '10:00').split(':');
+    const hours = parseInt(parts[0] || '10', 10);
+    const minutes = parseInt(parts[1] || '0', 10);
+    const pad = (n: number) => n.toString().padStart(2, '0');
+    return `${dateStr}T${pad(hours)}:${pad(minutes)}:00+05:30`;
+  };
+
+  // Active checked-in personnel who can be checked out
+  const activeCheckedInEmployees = useMemo(() => {
+    return dailyRoster.filter(r => r.isCheckedIn && !r.isShiftComplete);
+  }, [dailyRoster]);
+
+  // ── Bulk Checkout State & Handlers ──
+  const [isBulkCheckoutModalOpen, setIsBulkCheckoutModalOpen] = useState(false);
+  const [bulkCheckoutTime, setBulkCheckoutTime] = useState<string>(() => getCurrentIstTimeInput());
+  const [bulkCheckoutNotes, setBulkCheckoutNotes] = useState('End of Day Bulk Check-Out by Project Manager');
+  const [bulkCheckoutLoading, setBulkCheckoutLoading] = useState(false);
+  const [bulkCheckoutProgress, setBulkCheckoutProgress] = useState<{ current: number; total: number } | null>(null);
+
+  const handleExecuteBulkCheckout = async () => {
+    if (activeCheckedInEmployees.length === 0) {
+      alert('No active checked-in employees to check out.');
+      setIsBulkCheckoutModalOpen(false);
+      return;
+    }
+    setBulkCheckoutLoading(true);
+    setBulkCheckoutProgress({ current: 0, total: activeCheckedInEmployees.length });
+
+    try {
+      const checkoutIso = makeIstIsoString(todayStr, bulkCheckoutTime || getCurrentIstTimeInput());
+      const checkoutMs = new Date(checkoutIso).getTime();
+
+      let successCount = 0;
+      for (let i = 0; i < activeCheckedInEmployees.length; i++) {
+        const item = activeCheckedInEmployees[i];
+        setBulkCheckoutProgress({ current: i + 1, total: activeCheckedInEmployees.length });
+        
+        const rec = item.record;
+        const targetRecord = rec || {
+          id: `synthetic_${item.employee.id}_${todayStr}`,
+          employeeId: item.employee.id,
+          employeeCode: item.employee.employeeId || '',
+          employeeName: item.employee.fullName || '',
+          department: item.employee.department || '',
+          date: todayStr,
+          checkInAt: makeIstIsoString(todayStr, '10:00'),
+          checkOutAt: null,
+          workingMinutes: 0,
+          status: item.status,
+          attendanceMethod: 'PM_BULK_CHECKOUT' as any,
+          locationVerified: false,
+          breaks: [],
+          totalBreakMinutes: 0,
+          isSynthetic: true
+        };
+
+        const checkInIso = targetRecord.checkInAt || makeIstIsoString(todayStr, '10:00');
+        const checkInMs = new Date(checkInIso).getTime();
+
+        // Close any active breaks
+        const breaks = (targetRecord.breaks || []).map((b: any) => {
+          if (!b.endAt && !b.endTime) {
+            const startMs = new Date(b.startAt || b.startTime).getTime();
+            const dur = Math.max(1, Math.floor((checkoutMs - startMs) / 60000));
+            return {
+              ...b,
+              endAt: checkoutIso,
+              endTime: checkoutIso,
+              durationMinutes: dur
+            };
+          }
+          return b;
+        });
+
+        const totalBreakMinutes = breaks.reduce((sum: number, b: any) => sum + (Number(b.durationMinutes) || 0), 0);
+        const grossMinutes = Math.max(0, Math.floor((checkoutMs - checkInMs) / 60000));
+        const workingMinutes = Math.max(0, grossMinutes - totalBreakMinutes);
+
+        const res = await applyAttendanceCorrection(targetRecord, {
+          checkOutAt: checkoutIso,
+          workingMinutes,
+          breaks,
+          totalBreakMinutes,
+          notes: targetRecord.notes 
+            ? `${targetRecord.notes} | ${bulkCheckoutNotes}` 
+            : bulkCheckoutNotes
+        });
+
+        if (res.success) successCount++;
+      }
+
+      alert(`✓ Successfully checked out ${successCount} of ${activeCheckedInEmployees.length} active employees!`);
+      setIsBulkCheckoutModalOpen(false);
+    } catch (err: any) {
+      console.error('Bulk checkout error:', err);
+      alert('Error during bulk checkout: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setBulkCheckoutLoading(false);
+      setBulkCheckoutProgress(null);
+    }
+  };
+
+  // ── Override Check-In Time State & Handlers ──
+  const [overrideModalTarget, setOverrideModalTarget] = useState<{
+    employee: Employee;
+    record?: AttendanceRecord | null;
+  } | null>(null);
+
+  const [overrideCheckInTime, setOverrideCheckInTime] = useState('10:00');
+  const [overrideStatus, setOverrideStatus] = useState<'Present' | 'Late' | 'Work From Home'>('Present');
+  const [overrideReasonPreset, setOverrideReasonPreset] = useState('Software / App Check-In Glitch');
+  const [overrideCustomReason, setOverrideCustomReason] = useState('');
+  const [overrideLoading, setOverrideLoading] = useState(false);
+
+  const openCheckInOverride = (employee: Employee, record?: AttendanceRecord | null) => {
+    let initialTime = '10:00';
+    if (record?.checkInAt) {
+      const d = new Date(record.checkInAt);
+      if (!isNaN(d.getTime())) {
+        const istOffset = 5.5 * 60 * 60 * 1000;
+        const istDate = new Date(d.getTime() + istOffset);
+        const hh = istDate.getUTCHours().toString().padStart(2, '0');
+        const mm = istDate.getUTCMinutes().toString().padStart(2, '0');
+        initialTime = `${hh}:${mm}`;
+      }
+    }
+
+    setOverrideModalTarget({ employee, record });
+    setOverrideCheckInTime(initialTime);
+    setOverrideStatus(record?.status === 'Work From Home' ? 'Work From Home' : record?.status === 'Late' || (record?.checkInAt && isLateCheckIn(record.checkInAt)) ? 'Late' : 'Present');
+    setOverrideReasonPreset('Software / App Check-In Glitch');
+    setOverrideCustomReason('');
+  };
+
+  const handleSaveCheckInOverride = async () => {
+    if (!overrideModalTarget) return;
+    setOverrideLoading(true);
+    try {
+      const { employee, record } = overrideModalTarget;
+      const targetRecord = record || {
+        id: `synthetic_${employee.id}_${todayStr}`,
+        employeeId: employee.id,
+        employeeCode: employee.employeeId || '',
+        employeeName: employee.fullName || '',
+        department: employee.department || '',
+        date: todayStr,
+        checkInAt: null,
+        checkOutAt: null,
+        workingMinutes: 0,
+        status: overrideStatus,
+        attendanceMethod: 'PM_OVERRIDE' as any,
+        locationVerified: false,
+        breaks: [],
+        totalBreakMinutes: 0,
+        isSynthetic: true
+      };
+
+      const newCheckInIso = makeIstIsoString(todayStr, overrideCheckInTime);
+      const newCheckInMs = new Date(newCheckInIso).getTime();
+
+      let workingMinutes = targetRecord.workingMinutes || 0;
+      if (targetRecord.checkOutAt) {
+        const checkOutMs = new Date(targetRecord.checkOutAt).getTime();
+        const totalBreakMinutes = targetRecord.totalBreakMinutes || 0;
+        const grossMinutes = Math.max(0, Math.floor((checkOutMs - newCheckInMs) / 60000));
+        workingMinutes = Math.max(0, grossMinutes - totalBreakMinutes);
+      }
+
+      const reason = overrideCustomReason.trim() ? `${overrideReasonPreset} - ${overrideCustomReason.trim()}` : overrideReasonPreset;
+      const pmName = activeEmployee?.fullName || 'Project Manager';
+      const auditNote = `Check-In time overridden to ${overrideCheckInTime} (${reason}) by ${pmName}`;
+
+      const res = await applyAttendanceCorrection(targetRecord, {
+        checkInAt: newCheckInIso,
+        status: overrideStatus,
+        workingMinutes,
+        notes: targetRecord.notes ? `${targetRecord.notes} | ${auditNote}` : auditNote
+      });
+
+      if (res.success) {
+        alert(`✓ Check-in time for ${employee.fullName} updated to ${toISTTimeString(newCheckInIso)}!`);
+        setOverrideModalTarget(null);
+      } else {
+        alert(`Failed to update check-in time: ${res.message}`);
+      }
+    } catch (err: any) {
+      console.error('Error saving check-in override:', err);
+      alert('Error updating check-in time: ' + (err?.message || 'Unknown error'));
+    } finally {
+      setOverrideLoading(false);
+    }
+  };
+
+  // PM's own live attendance record
+  const pmTodayRecord = resolveAttendanceRecord(attendance, activeEmployee, todayStr);
+  const isPmCheckedIn = !!pmTodayRecord?.checkInAt && !isShiftComplete(pmTodayRecord);
+  const pmShiftCompleted = !!pmTodayRecord && isShiftComplete(pmTodayRecord);
+  const activePmBreak = pmTodayRecord?.breaks?.find(b => !b.endAt && !(b as any).endTime);
+  const [isBreakActionLoading, setIsBreakActionLoading] = useState(false);
+  const [isPmFaceModalOpen, setIsPmFaceModalOpen] = useState(false);
+  const [isPmCheckInLoading, setIsPmCheckInLoading] = useState(false);
+  const [isPmCheckOutLoading, setIsPmCheckOutLoading] = useState(false);
+
+  const handlePmSelfCheckIn = async () => {
+    if (!activeEmployee) return;
+    setIsPmCheckInLoading(true);
+    try {
+      let fix: { lat: number; lon: number; accuracy: number } | null = null;
+      if (navigator.geolocation) {
+        fix = await new Promise(resolve => {
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) || 10 }),
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 }
+          );
+        });
+      }
+      const res = await checkIn(activeEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Facial Recognition');
+      if (res.success) {
+        toast.success(res.message || 'PM Duty Check-In recorded successfully! Shift active.');
+      } else {
+        toast.error(res.message || 'Check-In failed.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Check-In failed.');
+    } finally {
+      setIsPmCheckInLoading(false);
+    }
+  };
+
+  const handlePmSelfCheckOut = async () => {
+    if (!activeEmployee) return;
+    if (!confirm('Are you sure you want to end your shift and check out for today?')) return;
+    setIsPmCheckOutLoading(true);
+    try {
+      let fix: { lat: number; lon: number; accuracy: number } | null = null;
+      if (navigator.geolocation) {
+        fix = await new Promise(resolve => {
+          navigator.geolocation.getCurrentPosition(
+            pos => resolve({ lat: pos.coords.latitude, lon: pos.coords.longitude, accuracy: Math.round(pos.coords.accuracy) || 10 }),
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 6000, maximumAge: 30000 }
+          );
+        });
+      }
+      const res = await checkOut(activeEmployee.id, fix?.lat, fix?.lon, fix?.accuracy);
+      if (res.success) {
+        toast.success(res.message || 'Shift completed! PM Check-Out recorded.');
+      } else {
+        toast.error(res.message || 'Check-Out failed.');
+      }
+    } catch (err: any) {
+      toast.error(err?.message || 'Check-Out failed.');
+    } finally {
+      setIsPmCheckOutLoading(false);
+    }
+  };
+
+  const [showPmBreakPicker, setShowPmBreakPicker] = useState(false);
+
+  const handlePmStartBreak = async (breakType: string) => {
+    if (!activeEmployee) return;
+    if (!isPmCheckedIn) {
+      toast.error("You are not checked in yet today. Please check in first before taking a break.");
+      return;
+    }
+    setIsBreakActionLoading(true);
+    setShowPmBreakPicker(false);
+    try {
+      await startBreak(activeEmployee.id, breakType);
+      toast.success(`${breakType} started. Remember to clear break when you return!`);
+    } catch (e: any) {
+      console.error('Break action error:', e);
+      toast.error(e?.message || 'Failed to update break status.');
+    } finally {
+      setIsBreakActionLoading(false);
+    }
+  };
+
+  const handlePmEndBreak = async () => {
+    if (!activeEmployee) return;
+    setIsBreakActionLoading(true);
+    try {
+      await endBreak(activeEmployee.id);
+      toast.success("Break cleared! Resumed on duty.");
+    } catch (e: any) {
+      console.error('Break action error:', e);
+      toast.error(e?.message || 'Failed to update break status.');
+    } finally {
+      setIsBreakActionLoading(false);
+    }
+  };
+
+  // Modal State for PM Custom Sprint Conflict / Rejection Reason
+  const [rejectModalReq, setRejectModalReq] = useState<LeaveRequest | null>(null);
+  const [customRejectReason, setCustomRejectReason] = useState('Sprint 14 Deadline Conflict — Key deliverable scheduled during request dates');
+
+  const handleRecommend = (reqId: string, type: 'Approved' | 'Flagged', customReason?: string) => {
+    const reasonText = customReason || (type === 'Approved' ? 'PM Recommended Approval' : 'Sprint 14 Deadline Conflict');
+    const targetReq = leaveRequests.find(r => r.id === reqId);
+
+    updateLeaveRequestStage(
+      reqId,
+      'PM',
+      type === 'Approved' ? 'Approved' : 'Rejected',
+      activeEmployee?.fullName || 'Project Manager',
+      reasonText,
+      targetReq?.employeeId,
+      targetReq?.startDate,
+      targetReq?.endDate
+    );
+
+    if (type === 'Approved') {
+      toast.success(`Recommended approval for ${targetReq?.employeeName || 'employee'}'s ${targetReq?.type || 'leave'} request.`);
+    } else {
+      toast.error(`Flagged conflict for ${targetReq?.employeeName || 'employee'}'s ${targetReq?.type || 'request'}. Marked as Rejected in Team Leave Approvals.`);
+    }
+  };
+
+  // Capacity week (decoupled from timer to prevent heavy heatmap recalculations)
+  const [weekOffset, setWeekOffset] = useState(0);
+  const weekAnchor = React.useMemo(() => {
+    const d = new Date(`${todayStr}T12:00:00Z`);
+    d.setDate(d.getDate() + weekOffset * 7);
+    return d;
+  }, [todayStr, weekOffset]);
+
+  const holidayDates = React.useMemo<string[]>(
+    () => (((settings as any)?.holidayDates) || []) as string[],
+    [settings]
+  );
+
+  const weekDays = React.useMemo(
+    () => buildWorkWeek(weekAnchor, { holidayDates }),
+    [weekAnchor, holidayDates]
+  );
+
+  const weekLabel = weekDays.length
+    ? `${formatShortDate(weekDays[0].dateStr)} → ${formatShortDate(weekDays[weekDays.length - 1].dateStr)}`
+    : '';
+  const isCurrentWeek = weekOffset === 0;
+
+  // Memoized team active leave requests for PM observer view (Read-only status ledger, approvals are strictly CEO -> CTO)
+  const pendingTeamRequests = useMemo(() => {
+    return leaveRequests.filter(r => {
+      if (r.status !== 'Pending') return false;
+
+      if (
+        r.employeeUid === activeEmployee?.uid ||
+        r.employeeId === activeEmployee?.id ||
+        r.employeeId === activeEmployee?.employeeId ||
+        (r.employeeName && activeEmployee?.fullName && r.employeeName.trim().toLowerCase() === activeEmployee.fullName.trim().toLowerCase())
+      ) {
+        return false;
+      }
+
+      const isHrOrPmEmployee = (r.department || '').toLowerCase().includes('hr') ||
+        r.employeeRole === 'HR_ADMIN' ||
+        r.employeeRole === 'SUPER_ADMIN';
+
+      return !isHrOrPmEmployee;
+    });
+  }, [leaveRequests, activeEmployee]);
+
+  // High-performance precomputed Team Weekly Capacity Rows (memoized O(1) rendering)
+  const weeklyCapacityRows = useMemo(() => {
+    const weekDatesSet = new Set(weekDays.map(d => d.dateStr));
+    const weekAttendance = attendance.filter(a => a.date && weekDatesSet.has(a.date));
+
+    return operationalEmployees.map(emp => {
+      const weekRow = buildWeekWorkRow(weekDays, emp, weekAttendance, {
+        leaveRequests,
+        holidayDates
+      });
+
+      const cells = weekDays.map((d, dIdx) => {
+        const daySummary = weekRow.days[dIdx] || weekRow.days.find(s => s.dateStr === d.dateStr);
+        const rec = resolveAttendanceRecord(weekAttendance, emp, d.dateStr);
+        
+        const isApprovedLeave = hasApprovedLeaveOn(
+          leaveRequests, emp, d.dateStr, EXCUSED_LEAVE_TYPES as unknown as string[]
+        );
+        const isWfhApproved = !isApprovedLeave && (hasApprovedLeaveOn(leaveRequests, emp, d.dateStr, ['WFH', 'wfh']) || (emp.approvedWfhDates || []).includes(d.dateStr));
+
+        let status = daySummary?.status || rec?.status || 'Absent';
+        if (d.isFuture) status = 'Upcoming';
+        else if (d.isNonWorking) status = 'Holiday';
+        else if (isApprovedLeave) status = 'On Leave';
+        else if (isWfhApproved) status = 'Work From Home';
+        else if (status === 'Work From Home') {
+          status = (daySummary?.checkInMs || rec?.checkInAt) ? (isLateCheckIn(rec?.checkInAt) ? 'Late' : 'Present') : 'Absent';
+        }
+
+        const isCheckedIn = !!(daySummary?.checkInMs || rec?.checkInAt);
+        const workedMins = daySummary?.workedMinutes || (rec?.workingMinutes ? Number(rec.workingMinutes) : 0);
+        const isWfhDay = isWfhApproved;
+
+        let cellColor = 'bg-slate-950 text-slate-600 border-slate-800';
+
+        if (daySummary?.isOnBreak) {
+          cellColor = 'bg-amber-500/15 text-amber-300 border-amber-500/40 font-bold animate-pulse';
+        } else if (status === 'On Leave' || isApprovedLeave) {
+          cellColor = 'bg-purple-500/15 text-purple-300 border-purple-500/40 font-bold';
+        } else if (isWfhDay) {
+          cellColor = 'bg-sky-500/15 text-sky-300 border-sky-500/40 font-bold';
+        } else if (status === 'Late') {
+          cellColor = 'bg-orange-500/15 text-orange-400 border-orange-500/30 font-bold';
+        } else if (isCheckedIn || status === 'Present') {
+          cellColor = 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 font-bold';
+        } else if (status === 'Holiday') {
+          cellColor = 'bg-slate-900 text-slate-500 border-slate-800/60';
+        } else if (d.isFuture) {
+          cellColor = 'bg-slate-950/40 text-slate-700 border-slate-900';
+        }
+
+        const displayText = d.isFuture
+          ? '—'
+          : isWfhDay
+            ? isCheckedIn && workedMins > 0 ? `🏠 ${Math.floor(workedMins / 60)}h ${workedMins % 60}m` : '🏠 WFH'
+            : isCheckedIn && workedMins > 0
+              ? `${Math.floor(workedMins / 60)}h ${workedMins % 60}m`
+              : isCheckedIn
+                ? 'Active'
+                : status;
+
+        return {
+          dateStr: d.dateStr,
+          cellColor,
+          displayText
+        };
+      });
+
+      return {
+        emp,
+        cells
+      };
+    });
+  }, [operationalEmployees, weekDays, attendance, leaveRequests, holidayDates]);
+
+  // Filtered Roster for Modal Table
+  const filteredRosterModal = useMemo(() => {
+    return dailyRoster.filter(r => {
+      if (rosterFilter === 'ALL') {
+        // match all
+      } else if (rosterFilter === 'Late') {
+        if (!r.isLate) return false;
+      } else if (rosterFilter === 'Present') {
+        if (r.status !== 'Present' && r.status !== 'On Break') return false;
+      } else if (rosterFilter === 'On Break') {
+        if (r.status !== 'On Break') return false;
+      } else if (rosterFilter === 'Work From Home' || rosterFilter === 'WFH') {
+        if (r.status !== 'Work From Home' && !r.isWfh) return false;
+      } else if (rosterFilter === 'On Leave' || rosterFilter === 'Leave') {
+        if (r.status !== 'On Leave') return false;
+      } else if (rosterFilter === 'LOP' || rosterFilter === 'Absent') {
+        if (r.status !== 'LOP' && r.status !== 'Absent') return false;
+      } else if (r.status !== rosterFilter) {
+        return false;
+      }
+
+      if (rosterSearch.trim() !== '') {
+        const q = rosterSearch.toLowerCase();
+        const matchesName = (r.employee.fullName || '').toLowerCase().includes(q);
+        const matchesId = (r.employee.employeeId || '').toLowerCase().includes(q);
+        const matchesDept = (r.employee.department || '').toLowerCase().includes(q);
+        return matchesName || matchesId || matchesDept;
+      }
+      return true;
+    });
+  }, [dailyRoster, rosterFilter, rosterSearch]);
+
+  return (
+    <div className="space-y-6 pb-28 md:pb-8 animate-in fade-in zoom-in-95 duration-300">
+      
+      {/* Top Banner Header */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-slate-900/80 p-5 rounded-2xl border border-slate-800 shadow-xl backdrop-blur-md">
+        <div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20">
+              Project Delivery &amp; Workforce Portal
+            </span>
+            <span className="text-xs text-slate-500 font-mono">Live Sync Active</span>
+          </div>
+          <h1 className="text-xl sm:text-2xl font-black text-white tracking-tight mt-1">Project Manager Dashboard</h1>
+          <p className="text-xs text-slate-400 mt-0.5">
+            Monitor real-time team turnout ({totalActiveWorkingToday}/{totalWorkforceCount} active today), review sprints, and edit 30-day attendance.
+          </p>
+        </div>
+
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
+          {/* Bulk Check-Out All Active Button */}
+          <button
+            onClick={() => {
+              triggerHaptic();
+              setBulkCheckoutTime(getCurrentIstTimeInput());
+              setIsBulkCheckoutModalOpen(true);
+            }}
+            className="px-4 py-2.5 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-lg shadow-rose-950/40 flex items-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
+            title="Bulk Check-Out all active employees at shift end"
+          >
+            <LogOut className="w-4 h-4" />
+            <span>Check Out All ({activeCheckedInEmployees.length})</span>
+          </button>
+        </div>
+      </div>
+
+      {/* ── PM PERSONAL DUTY & ATTENDANCE COMMAND CENTER ── */}
+      <div className="bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-950 rounded-2xl p-4 sm:p-5 border border-slate-800/80 shadow-2xl backdrop-blur-xl relative overflow-hidden">
+        {/* Subtle decorative glow */}
+        <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl pointer-events-none" />
+        <div className="absolute bottom-0 left-1/3 -mb-16 w-64 h-64 bg-blue-500/5 rounded-full blur-3xl pointer-events-none" />
+
+        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4 relative z-10">
+          {/* Left: PM Identity & Shift Timing */}
+          <div className="flex items-center gap-3.5">
+            <div className="relative">
+              <img
+                src={getEmployeeAvatar(activeEmployee)}
+                alt={activeEmployee?.fullName || 'Project Manager'}
+                className="w-12 h-12 rounded-2xl object-cover border-2 border-slate-700/70 shadow-md"
+              />
+              <span className={`absolute -bottom-1 -right-1 w-3.5 h-3.5 rounded-full border-2 border-slate-900 ${
+                activePmBreak
+                  ? 'bg-amber-400 animate-pulse'
+                  : isPmCheckedIn
+                    ? 'bg-emerald-400'
+                    : pmShiftCompleted
+                      ? 'bg-blue-400'
+                      : 'bg-slate-500'
+              }`} />
+            </div>
+
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-base font-black text-white">{activeEmployee?.fullName || 'D. Koushik'}</span>
+                <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-md bg-amber-500/15 text-amber-300 border border-amber-500/30">
+                  {activeEmployee?.designation || 'Project Manager'}
+                </span>
+                <span className="text-[10px] font-mono text-slate-400 bg-slate-800/60 px-1.5 py-0.5 rounded border border-slate-700/50">
+                  {activeEmployee?.employeeId || 'KSS2407003'}
+                </span>
+              </div>
+              <div className="flex items-center gap-3 text-xs text-slate-400 mt-1">
+                <span className="flex items-center gap-1">
+                  <Clock className="w-3.5 h-3.5 text-slate-500" />
+                  <span>Standard Shift: <strong className="text-slate-300 font-semibold">{SHIFT_LABEL}</strong></span>
+                </span>
+                <span className="hidden sm:inline text-slate-600">•</span>
+                <span className="hidden sm:inline text-slate-400">
+                  Work Mode: <strong className="text-slate-300 font-semibold">{pmTodayRecord?.isWfh ? '🏠 Remote (WFH)' : '🏢 Office HQ'}</strong>
+                </span>
+              </div>
+            </div>
+          </div>
+
+          {/* Middle: Shift Live Metrics Badge */}
+          <div className="flex items-center gap-2 sm:gap-4 bg-slate-950/60 p-2.5 sm:px-4 sm:py-2 rounded-xl border border-slate-800/80 flex-wrap">
+            <div>
+              <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Duty Status</div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                {activePmBreak ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-amber-400">
+                    <span className="w-2 h-2 rounded-full bg-amber-400 animate-ping" />
+                    On Break
+                  </span>
+                ) : isPmCheckedIn ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-emerald-400">
+                    <span className="w-2 h-2 rounded-full bg-emerald-400" />
+                    On Duty (Active)
+                  </span>
+                ) : pmShiftCompleted ? (
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-400">
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    Shift Completed
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-xs font-bold text-slate-400">
+                    <AlertTriangle className="w-3.5 h-3.5 text-amber-500/80" />
+                    Not Checked In
+                  </span>
+                )}
+              </div>
+            </div>
+
+            <div className="h-7 w-[1px] bg-slate-800 hidden sm:block" />
+
+            <div>
+              <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Check-In</div>
+              <div className="text-xs font-mono font-bold text-white mt-0.5">
+                {pmTodayRecord?.checkInAt ? toISTTimeString(pmTodayRecord.checkInAt) : '—'}
+              </div>
+            </div>
+
+            <div className="h-7 w-[1px] bg-slate-800 hidden sm:block" />
+
+            <div>
+              <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Time Worked</div>
+              <div className="text-xs font-mono font-bold text-emerald-400 mt-0.5">
+                {isPmCheckedIn || pmShiftCompleted
+                  ? `${Math.floor((pmTodayRecord?.workingMinutes || 0) / 60)}h ${(pmTodayRecord?.workingMinutes || 0) % 60}m`
+                  : '0h 0m'}
+              </div>
+            </div>
+
+            {pmTodayRecord?.checkOutAt && (
+              <>
+                <div className="h-7 w-[1px] bg-slate-800 hidden sm:block" />
+                <div>
+                  <div className="text-[9px] uppercase tracking-wider text-slate-500 font-bold">Check-Out</div>
+                  <div className="text-xs font-mono font-bold text-slate-300 mt-0.5">
+                    {toISTTimeString(pmTodayRecord.checkOutAt)}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+
+          {/* Right: Quick Action Buttons */}
+          <div className="flex items-center gap-2">
+            {!isPmCheckedIn && !pmShiftCompleted && (
+              <button
+                onClick={() => setIsPmFaceModalOpen(true)}
+                disabled={isPmCheckInLoading}
+                className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/40 flex items-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
+                title="Mark Attendance & Start Shift with Face Recognition"
+              >
+                {isPmCheckInLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-emerald-200" />}
+                <span>Check In (Start Shift)</span>
+              </button>
+            )}
+
+            {isPmCheckedIn && (
+              <>
+                {activePmBreak ? (
+                  <button
+                    onClick={handlePmEndBreak}
+                    disabled={isBreakActionLoading}
+                    className="px-3.5 py-2 rounded-xl font-black text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-500/30 animate-pulse"
+                    title="Clear current active break and return to on-duty work"
+                  >
+                    {isBreakActionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin text-slate-950" /> : <StopCircle className="w-3.5 h-3.5 text-slate-950" />}
+                    <span>Clear Break ({activePmBreak.type})</span>
+                  </button>
+                ) : (
+                  <div className="relative">
+                    <button
+                      onClick={() => setShowPmBreakPicker(!showPmBreakPicker)}
+                      disabled={isBreakActionLoading}
+                      className="px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-md bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700"
+                    >
+                      {isBreakActionLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Coffee className="w-3.5 h-3.5 text-amber-400" />}
+                      <span>Take Break ▾</span>
+                    </button>
+
+                    {showPmBreakPicker && (
+                      <div className="absolute right-0 top-full mt-2 w-52 bg-slate-900 border border-slate-800 rounded-2xl p-2 shadow-2xl z-50 animate-in fade-in zoom-in-95 space-y-1">
+                        <div className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">Select Break Type</div>
+                        <button
+                          onClick={() => handlePmStartBreak('Lunch Break')}
+                          className="w-full text-left px-2.5 py-2 text-xs font-bold text-rose-300 hover:bg-rose-500/15 rounded-xl flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <span>🍽️</span>
+                          <span>Lunch Break</span>
+                        </button>
+                        <button
+                          onClick={() => handlePmStartBreak('Team Meeting')}
+                          className="w-full text-left px-2.5 py-2 text-xs font-bold text-purple-300 hover:bg-purple-500/15 rounded-xl flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <span>📅</span>
+                          <span>Team Meeting</span>
+                        </button>
+                        <button
+                          onClick={() => handlePmStartBreak('Team Huddle')}
+                          className="w-full text-left px-2.5 py-2 text-xs font-bold text-sky-300 hover:bg-sky-500/15 rounded-xl flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <span>👥</span>
+                          <span>Team Huddle</span>
+                        </button>
+                        <button
+                          onClick={() => handlePmStartBreak('Tea Break')}
+                          className="w-full text-left px-2.5 py-2 text-xs font-bold text-amber-300 hover:bg-amber-500/15 rounded-xl flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <span>🍵</span>
+                          <span>Tea Break</span>
+                        </button>
+                        <button
+                          onClick={() => handlePmStartBreak('Attainment / Training')}
+                          className="w-full text-left px-2.5 py-2 text-xs font-bold text-emerald-300 hover:bg-emerald-500/15 rounded-xl flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <span>🎓</span>
+                          <span>Training</span>
+                        </button>
+                        <button
+                          onClick={() => handlePmStartBreak('Activity')}
+                          className="w-full text-left px-2.5 py-2 text-xs font-bold text-cyan-300 hover:bg-cyan-500/15 rounded-xl flex items-center gap-2 cursor-pointer transition-colors"
+                        >
+                          <span>⚡</span>
+                          <span>Activity</span>
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                <button
+                  onClick={handlePmSelfCheckOut}
+                  disabled={isPmCheckOutLoading}
+                  className="px-3.5 py-2 bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-md"
+                  title="End duty and record check-out"
+                >
+                  {isPmCheckOutLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <LogOut className="w-3.5 h-3.5 text-rose-400" />}
+                  <span>Check Out</span>
+                </button>
+              </>
+            )}
+
+            {pmShiftCompleted && (
+              <div className="px-3 py-1.5 bg-blue-500/10 text-blue-300 border border-blue-500/20 rounded-xl text-xs font-bold flex items-center gap-1.5">
+                <CheckCheck className="w-4 h-4 text-blue-400" />
+                <span>Today's Shift Done</span>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── 1. WORKFORCE TURNOUT KPI CARDS (Clickable for Roster Modal) ── */}
+      <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-3">
+        {/* Total Active (9/15 Box) */}
+        <div
+          onClick={() => { triggerHaptic(); setRosterFilter('ALL'); setIsRosterModalOpen(true); }}
+          className="bg-gradient-to-br from-blue-900/40 via-slate-900 to-slate-900 rounded-2xl p-4 border-2 border-blue-500/40 shadow-xl hover:border-blue-400 hover:scale-[1.02] transition-all cursor-pointer group col-span-2 sm:col-span-2 lg:col-span-1"
+        >
+          <span className="text-[10px] font-black text-blue-400 uppercase tracking-wider block">Total Workforce</span>
+          <div className="flex items-baseline gap-1 mt-1">
+            <span className="text-2xl font-black text-white font-mono">{totalActiveWorkingToday}</span>
+            <span className="text-xs font-bold text-slate-400 font-mono">/ {totalWorkforceCount}</span>
+          </div>
+          <span className="text-[10px] text-blue-300 font-bold mt-1 block group-hover:underline">Click for Live Table →</span>
+        </div>
+
+        {/* Present */}
+        <div
+          onClick={() => { triggerHaptic(); setRosterFilter('Present'); setIsRosterModalOpen(true); }}
+          className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-md hover:border-emerald-500/50 transition-all cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Present</span>
+          <span className="text-2xl font-black text-emerald-400 font-mono mt-1 block">{presentCount}</span>
+          <span className="text-[9px] text-slate-500 font-semibold block mt-0.5">On Duty</span>
+        </div>
+
+        {/* On Break (Glowing Live Beacon) */}
+        <div
+          onClick={() => { triggerHaptic(); setRosterFilter('On Break'); setIsRosterModalOpen(true); }}
+          className="bg-slate-900/90 rounded-2xl p-4 border-2 border-amber-500/40 shadow-lg shadow-amber-950/20 hover:border-amber-400 transition-all cursor-pointer relative overflow-hidden"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-amber-300 uppercase tracking-wider">On Break</span>
+            <span className="flex h-2 w-2 relative">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-amber-500" />
+            </span>
+          </div>
+          <span className="text-2xl font-black text-amber-400 font-mono mt-1 block">{onBreakCount}</span>
+          <span className="text-[9px] text-amber-300/80 font-semibold block mt-0.5">Live Active</span>
+        </div>
+
+        {/* Late */}
+        <div
+          onClick={() => { triggerHaptic(); setRosterFilter('Late'); setIsRosterModalOpen(true); }}
+          className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-md hover:border-amber-500/50 transition-all cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Late</span>
+          <span className="text-2xl font-black text-amber-400 font-mono mt-1 block">{lateCount}</span>
+          <span className="text-[9px] text-slate-500 font-semibold block mt-0.5">Shift Delayed</span>
+        </div>
+
+        {/* Work From Home */}
+        <div
+          onClick={() => { triggerHaptic(); setRosterFilter('Work From Home'); setIsRosterModalOpen(true); }}
+          className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-md hover:border-sky-500/50 transition-all cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">WFH</span>
+          <span className="text-2xl font-black text-sky-400 font-mono mt-1 block">{wfhCount}</span>
+          <span className="text-[9px] text-slate-500 font-semibold block mt-0.5">Remote Staff</span>
+        </div>
+
+        {/* On Leave (PL/EL) */}
+        <div
+          onClick={() => { triggerHaptic(); setRosterFilter('On Leave'); setIsRosterModalOpen(true); }}
+          className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-md hover:border-purple-500/50 transition-all cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Leave</span>
+          <span className="text-2xl font-black text-purple-400 font-mono mt-1 block">{onLeaveCount}</span>
+          <span className="text-[9px] text-slate-500 font-semibold block mt-0.5">Sanctioned Leave (PL/EL)</span>
+        </div>
+
+        {/* LOP (Loss of Pay / Not Checked In) */}
+        <div
+          onClick={() => { triggerHaptic(); setRosterFilter('LOP'); setIsRosterModalOpen(true); }}
+          className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-md hover:border-rose-500/50 transition-all cursor-pointer"
+        >
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">LOP</span>
+          <span className="text-2xl font-black text-rose-400 font-mono mt-1 block">{lopCount}</span>
+          <span className="text-[9px] text-slate-500 font-semibold block mt-0.5">Loss of Pay (Unexcused)</span>
+        </div>
+      </div>
+
+      {/* ── 2. WORKFORCE STATUS PIE CHART & PENDING SPRINT LEAVES ── */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        
+        {/* Today's Workforce Status Donut Pie Chart */}
+        <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-5 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <PieChartIcon className="w-4 h-4 text-emerald-400" />
+              <h3 className="text-xs font-black text-white uppercase tracking-wider">Today's Workforce Status</h3>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400 font-bold">{todayStr}</span>
+          </div>
+
+          <div className="relative w-full h-44 flex items-center justify-center">
+            <ResponsiveContainer width="100%" height="100%" minWidth={0} minHeight={0}>
+              <PieChart>
+                <Pie
+                  data={statusDistributionData}
+                  cx="50%"
+                  cy="50%"
+                  innerRadius={50}
+                  outerRadius={75}
+                  paddingAngle={statusDistributionData.length > 1 ? 3 : 0}
+                  isAnimationActive={false}
+                  dataKey="value"
+                >
+                  {statusDistributionData.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={entry.color} stroke="#020617" strokeWidth={2} />
+                  ))}
+                </Pie>
+                <Tooltip
+                  formatter={(val: any, name: any) => [`${val} Employees`, name]}
+                  contentStyle={{ backgroundColor: '#020617', borderRadius: '12px', border: '1px solid #1e293b', color: '#fff', fontSize: '12px' }}
+                />
+              </PieChart>
+            </ResponsiveContainer>
+            <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+              <span className="text-xl font-black text-white font-mono leading-none">
+                {totalActiveWorkingToday}/{totalWorkforceCount}
+              </span>
+              <span className="text-[8px] font-bold text-emerald-400 uppercase tracking-wider mt-0.5">Active Workforce</span>
+            </div>
+          </div>
+
+          {/* Legend Grid */}
+          <div className="grid grid-cols-2 gap-2 text-[11px] pt-1">
+            {statusDistributionData.map((item, idx) => (
+              <div key={idx} className="flex items-center justify-between p-2 bg-slate-950 rounded-xl border border-slate-800">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: item.color }} />
+                  <span className="text-slate-300 font-semibold truncate text-[10px]">{item.name}</span>
+                </div>
+                <span className="font-mono font-bold text-white text-[11px]">{item.value}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        {/* Pending Team Sprint Leave Approvals */}
+        <div className="lg:col-span-2 bg-slate-900/90 rounded-3xl border border-slate-800 p-5 shadow-xl space-y-4">
+          <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Clock className="w-4 h-4 text-amber-400" />
+              <h3 className="text-xs font-black text-white uppercase tracking-wider">
+                Team Leave &amp; WFH Status
+              </h3>
+            </div>
+            <span className="text-[10px] font-mono text-slate-400">Executive Flow (CEO &amp; CTO)</span>
+          </div>
+
+          {pendingTeamRequests.length === 0 ? (
+            <div className="py-12 text-center text-slate-500 text-xs">
+              <CheckCircle2 className="w-8 h-8 text-emerald-500/40 mx-auto mb-2" />
+              <span>Leave and WFH approvals are handled directly by CEO and CTO.</span>
+            </div>
+          ) : (
+            <div className="space-y-3 max-h-72 overflow-y-auto pr-1">
+              {pendingTeamRequests.map(req => (
+                <div key={req.id} className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-black text-white text-xs">{req.employeeName}</span>
+                      <span className="text-[9px] font-mono bg-slate-900 text-slate-400 px-2 py-0.5 rounded-md border border-slate-800">{req.employeeId}</span>
+                      <span className="text-[9px] font-black uppercase px-2 py-0.5 rounded-md bg-blue-500/10 text-blue-400 border border-blue-500/20">{req.type}</span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 mt-1 font-medium">
+                      Dates: <strong className="text-slate-200">{req.startDate}</strong> to <strong className="text-slate-200">{req.endDate}</strong>
+                    </p>
+                    <p className="text-[10px] text-slate-500 italic mt-0.5">"{req.reason}"</p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0 text-[10px] font-bold">
+                    <span className={`px-2 py-0.5 rounded-md border ${
+                      req.ceoStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
+                      req.ceoStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
+                      'bg-purple-950/60 text-purple-400 border-purple-500/30'
+                    }`}>
+                      CEO: {req.ceoStatus || 'Pending'}
+                    </span>
+                    <span className={`px-2 py-0.5 rounded-md border ${
+                      req.ctoStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
+                      req.ctoStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
+                      req.ceoStatus === 'Approved' ? 'bg-cyan-950/60 text-cyan-400 border-cyan-500/30' :
+                      'bg-slate-900 text-slate-500 border-slate-800'
+                    }`}>
+                      CTO: {req.ctoStatus || (req.ceoStatus === 'Approved' ? 'Pending' : 'Waiting CEO')}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+      </div>
+
+      {/* ── 3. TEAM WEEKLY CAPACITY & HEATMAP MATRIX ── */}
+      <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-5 shadow-xl space-y-4">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+          <div>
+            <h3 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
+              <Calendar className="w-4 h-4 text-blue-400" />
+              Team Weekly Shift Capacity &amp; Heatmap
+            </h3>
+            <p className="text-[11px] text-slate-400 mt-0.5">Mon–Sat working schedule with individual day hours</p>
+          </div>
+
+          {/* Week Switcher */}
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setWeekOffset(o => o - 1)}
+              className="p-1.5 bg-slate-950 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 cursor-pointer"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+            <span className="text-xs font-mono font-bold text-white bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800">
+              {weekLabel} {isCurrentWeek && '(Current)'}
+            </span>
+            <button
+              onClick={() => setWeekOffset(o => o + 1)}
+              className="p-1.5 bg-slate-950 hover:bg-slate-800 text-slate-300 rounded-xl border border-slate-800 cursor-pointer"
+            >
+              <ChevronRight className="w-4 h-4" />
+            </button>
+          </div>
+        </div>
+
+        {/* Heatmap Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left border-collapse min-w-[700px]">
+            <thead>
+              <tr className="bg-slate-950 text-[10px] font-black text-slate-500 uppercase tracking-wider border-b border-slate-800">
+                <th className="py-3 px-4">Team Member</th>
+                {weekDays.map(d => (
+                  <th key={d.dateStr} className="py-3 px-3 text-center">
+                    <div>{d.dayName}</div>
+                    <div className="text-[9px] text-slate-600">{d.shortDate}</div>
+                  </th>
+                ))}
+                <th className="py-3 px-4 text-right">Actions</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-800/60 text-xs">
+              {weeklyCapacityRows.map(({ emp, cells }) => (
+                <tr key={emp.id} className="hover:bg-slate-800/30 transition-colors">
+                  <td className="py-3 px-4">
+                    <div className="flex items-center gap-2.5">
+                      <img
+                        src={getEmployeeAvatar(emp)}
+                        alt={emp.fullName}
+                        className="w-8 h-8 rounded-xl object-cover border border-slate-700/60"
+                      />
+                      <div>
+                        <div className="font-bold text-white text-xs">{emp.fullName}</div>
+                        <div className="text-[10px] text-slate-500 font-mono">{emp.employeeId}</div>
+                      </div>
+                    </div>
+                  </td>
+
+                  {cells.map(cell => (
+                    <td key={cell.dateStr} className="py-2.5 px-2 text-center">
+                      <div className={`p-1.5 rounded-xl border text-[10px] font-mono whitespace-nowrap min-w-[70px] shadow-sm ${cell.cellColor}`}>
+                        {cell.displayText}
+                      </div>
+                    </td>
+                  ))}
+
+                  <td className="py-3 px-4 text-right">
+                    <button
+                      onClick={() => setMonthlyAttendanceEmp(emp)}
+                      className="px-3 py-1.5 bg-blue-600/15 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-[11px] font-bold rounded-xl flex items-center gap-1 ml-auto cursor-pointer"
+                      title="View 30-Day Calendar & Edit Attendance"
+                    >
+                      <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                      <span>Monthly Calendar &amp; Override</span>
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* ── 3.5. EXECUTIVE ATTENDANCE & SALARY DISBURSEMENT STATEMENT (26TH TO 26TH) ── */}
+      <PMAttendanceCycleSection />
+
+
+      {/* ── 4. FULL LIVE WORKFORCE ROSTER TABLE MODAL ── */}
+      {isRosterModalOpen && (
+        <div className="fixed inset-0 z-[150] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl w-full max-w-6xl overflow-hidden flex flex-col max-h-[92vh]">
+            
+            {/* Modal Header */}
+            <div className="bg-slate-950 p-5 border-b border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2">
+                  <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest bg-emerald-500/10 px-2.5 py-0.5 rounded-md border border-emerald-500/20">
+                    Live Shift Roster
+                  </span>
+                  <span className="text-xs text-slate-400 font-mono">{todayStr}</span>
+                </div>
+                <h3 className="text-lg font-black text-white tracking-tight mt-1">Today's Workforce Roster &amp; Shift Table</h3>
+                <p className="text-xs text-slate-400">
+                  Real-time status, check-in timestamps, working durations, and breakdown pie charts.
+                </p>
+              </div>
+
+              <div className="flex items-center gap-3 self-end sm:self-auto">
+                <button
+                  onClick={() => {
+                    triggerHaptic();
+                    setBulkCheckoutTime(getCurrentIstTimeInput());
+                    setIsBulkCheckoutModalOpen(true);
+                  }}
+                  className="px-3.5 py-2 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-all hover:scale-[1.02] cursor-pointer"
+                  title="Bulk Check-Out all active employees"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  <span>Check Out All ({activeCheckedInEmployees.length})</span>
+                </button>
+
+                <button
+                  onClick={() => setIsRosterModalOpen(false)}
+                  className="p-2 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
+            </div>
+
+            {/* Filter Tabs & Search */}
+            <div className="p-4 bg-slate-950/60 border-b border-slate-800 flex flex-col md:flex-row items-center justify-between gap-3">
+              <div className="flex items-center gap-1.5 overflow-x-auto w-full md:w-auto pb-1 md:pb-0">
+                {['ALL', 'Present', 'On Break', 'Late', 'Work From Home', 'On Leave', 'LOP'].map(st => {
+                  let count = 0;
+                  if (st === 'ALL') count = dailyRoster.length;
+                  else if (st === 'Present') count = presentCount;
+                  else if (st === 'On Break') count = onBreakCount;
+                  else if (st === 'Late') count = lateCount;
+                  else if (st === 'Work From Home') count = wfhCount;
+                  else if (st === 'On Leave') count = onLeaveCount;
+                  else if (st === 'LOP') count = lopCount;
+
+                  return (
+                    <button
+                      key={st}
+                      onClick={() => setRosterFilter(st)}
+                      className={`px-3 py-1.5 rounded-xl text-xs font-bold border transition-all cursor-pointer shrink-0 flex items-center gap-1.5 ${
+                        rosterFilter === st
+                          ? 'bg-blue-600 text-white border-blue-500 shadow-md'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      <span>{st === 'Work From Home' ? 'WFH' : st === 'On Leave' ? 'Leave' : st}</span>
+                      <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-bold ${
+                        rosterFilter === st ? 'bg-white/20 text-white' : st === 'Late' && lateCount > 0 ? 'bg-orange-500/20 text-orange-400 border border-orange-500/30' : 'bg-slate-800 text-slate-500'
+                      }`}>
+                        {count}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="relative w-full md:w-72">
+                <Search className="w-4 h-4 text-slate-500 absolute left-3.5 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search employee, ID, department..."
+                  value={rosterSearch}
+                  onChange={e => setRosterSearch(e.target.value)}
+                  className="w-full pl-9 pr-4 py-2 text-xs bg-slate-900 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-hidden focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Roster Table */}
+            <div className="p-4 overflow-y-auto flex-1">
+              <div className="overflow-x-auto">
+                <table className="w-full text-left border-collapse min-w-[800px]">
+                  <thead>
+                    <tr className="bg-slate-950 border-b border-slate-800 text-[10px] font-black text-slate-400 uppercase tracking-wider">
+                      <th className="py-3.5 px-4">Employee</th>
+                      <th className="py-3.5 px-4">Status</th>
+                      <th className="py-3.5 px-4">Check-In</th>
+                      <th className="py-3.5 px-4">Check-Out</th>
+                      <th className="py-3.5 px-4">Working Time</th>
+                      <th className="py-3.5 px-4">Shift Timings</th>
+                      <th className="py-3.5 px-4 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/80 text-xs">
+                    {filteredRosterModal.length === 0 ? (
+                      <tr>
+                        <td colSpan={7} className="py-12 text-center text-slate-500 font-medium">
+                          No employees match the selected filter.
+                        </td>
+                      </tr>
+                    ) : (
+                      filteredRosterModal.map(r => {
+                        const isBreak = r.status === 'On Break';
+
+                        return (
+                          <tr key={r.employee.id} className="hover:bg-slate-800/40 transition-colors group">
+                            {/* Employee */}
+                            <td className="py-3.5 px-4">
+                              <div className="flex items-center gap-3">
+                                <img
+                                  src={getEmployeeAvatar(r.employee)}
+                                  alt={r.employee.fullName}
+                                  className="w-9 h-9 rounded-xl object-cover border border-slate-700/60"
+                                />
+                                <div>
+                                  <div className="font-bold text-white">{r.employee.fullName}</div>
+                                  <div className="text-[10px] text-slate-400 font-mono">{r.employee.employeeId} • {r.employee.department}</div>
+                                </div>
+                              </div>
+                            </td>
+
+                            {/* Status */}
+                            <td className="py-3.5 px-4">
+                              {isBreak ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-amber-500/15 text-amber-300 border border-amber-500/30 animate-pulse">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
+                                  <span>On Break</span>
+                                </span>
+                              ) : r.status === 'Present' ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
+                                  <span>Present</span>
+                                </span>
+                              ) : r.status === 'Work From Home' ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-sky-500/15 text-sky-300 border border-sky-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-sky-400" />
+                                  <span>WFH</span>
+                                </span>
+                              ) : r.status === 'On Leave' ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-purple-500/15 text-purple-300 border border-purple-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
+                                  <span>Leave {r.leaveReq?.reason ? `(${r.leaveReq.reason})` : '(PL / EL)'}</span>
+                                </span>
+                              ) : r.status === 'LOP' || r.status === 'Absent' ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                                  <span>LOP (Unexcused)</span>
+                                </span>
+                              ) : (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-rose-500/15 text-rose-300 border border-rose-500/30">
+                                  <span className="w-1.5 h-1.5 rounded-full bg-rose-400" />
+                                  <span>{r.status}</span>
+                                </span>
+                              )}
+                            </td>
+
+                            {/* Check-In */}
+                            <td className="py-3.5 px-4 font-mono font-bold">
+                              <div className="flex items-center gap-1.5 group/in">
+                                {r.record?.checkInAt ? (
+                                  <span className={`inline-flex items-center gap-1.5 ${r.isLate ? 'text-orange-500 font-black' : 'text-slate-200'}`}>
+                                    <span className={`w-2 h-2 rounded-full ${r.isLate ? 'bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.9)] animate-pulse' : 'bg-emerald-400'}`} />
+                                    <span className={r.isLate ? 'text-orange-500 font-black tracking-wide' : ''}>{toISTTimeString(r.record.checkInAt)}</span>
+                                    {r.isLate && (
+                                      <span className="text-[9px] font-sans font-bold text-orange-400 bg-orange-500/15 border border-orange-500/30 px-1 py-0.2 rounded ml-1">
+                                        LATE
+                                      </span>
+                                    )}
+                                  </span>
+                                ) : (
+                                  <span className="text-slate-600 font-bold">—</span>
+                                )}
+                                <button
+                                  onClick={() => openCheckInOverride(r.employee, r.record)}
+                                  className="opacity-0 group-hover/in:opacity-100 p-1 hover:bg-blue-500/20 text-blue-400 rounded-md transition-all cursor-pointer"
+                                  title="Override / Correct Check-In Time"
+                                >
+                                  <Edit3 className="w-3 h-3" />
+                                </button>
+                              </div>
+                            </td>
+
+                            {/* Check-Out */}
+                            <td className="py-3.5 px-4 font-mono font-bold text-slate-300">
+                              {r.record?.checkOutAt ? toISTTimeString(r.record.checkOutAt) : r.isCheckedIn ? <span className="text-emerald-400">In Progress</span> : '—'}
+                            </td>
+
+                            {/* Working Time */}
+                            <td className="py-3.5 px-4 font-mono text-slate-200">
+                              {r.record?.workingMinutes ? `${Math.floor(r.record.workingMinutes / 60)}h ${r.record.workingMinutes % 60}m` : '0m'}
+                            </td>
+
+                            {/* Shift */}
+                            <td className="py-3.5 px-4 text-slate-300 font-medium text-xs">
+                              {formatShiftTiming(r.employee.shift || r.employee.preferredShift)}
+                            </td>
+
+                            {/* Actions */}
+                            <td className="py-3.5 px-4 text-right">
+                              <div className="flex items-center justify-end gap-2">
+                                <button
+                                  onClick={() => openCheckInOverride(r.employee, r.record)}
+                                  className="px-2.5 py-1.5 bg-blue-600/15 hover:bg-blue-600/30 text-blue-300 border border-blue-500/30 text-xs font-bold rounded-xl flex items-center gap-1 cursor-pointer transition-all"
+                                  title="Override / Correct Check-In Time (Software glitch / Edge cases)"
+                                >
+                                  <Clock className="w-3.5 h-3.5 text-blue-400" />
+                                  <span>Override In</span>
+                                </button>
+
+                                <button
+                                  onClick={() => setSelectedEmployeeActivity({ employee: r.employee, record: r.record })}
+                                  className="px-3 py-1.5 bg-emerald-600/15 hover:bg-emerald-600/30 text-emerald-300 border border-emerald-500/30 text-xs font-bold rounded-xl flex items-center gap-1 cursor-pointer"
+                                  title="Inspect Today's Live Pie Chart"
+                                >
+                                  <PieChartIcon className="w-3.5 h-3.5 text-emerald-400" />
+                                  <span>Live Day Pie</span>
+                                </button>
+
+                                <button
+                                  onClick={() => setMonthlyAttendanceEmp(r.employee)}
+                                  className="p-1.5 text-slate-400 hover:text-blue-400 hover:bg-slate-800 rounded-lg cursor-pointer"
+                                  title="Open Monthly Attendance & Edit Calendar"
+                                >
+                                  <Calendar className="w-4 h-4 text-blue-400" />
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* ── 5. SINGLE EMPLOYEE LIVE DAY ACTIVITY & DONUT PIE CHART MODAL ── */}
+      {selectedEmployeeActivity && (
+        <div className="fixed inset-0 z-[160] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden p-6 space-y-6">
+            
+            {/* Modal Header */}
+            <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+              <div className="flex items-center gap-3.5">
+                <img
+                  src={selectedEmployeeActivity.employee.profilePhotoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedEmployeeActivity.employee.fullName)}&background=0f172a&color=fff`}
+                  alt={selectedEmployeeActivity.employee.fullName}
+                  className="w-12 h-12 rounded-2xl object-cover border-2 border-emerald-500/50 shadow-md"
+                />
+                <div>
+                  <h3 className="text-base font-black text-white">{selectedEmployeeActivity.employee.fullName}</h3>
+                  <p className="text-xs text-slate-400 font-mono">
+                    {selectedEmployeeActivity.employee.employeeId} • {selectedEmployeeActivity.employee.department}
+                  </p>
+                </div>
+              </div>
+
+              <button
+                onClick={() => setSelectedEmployeeActivity(null)}
+                className="p-2 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Donut Pie Chart & Stats Breakdown */}
+            {(() => {
+              const rec = selectedEmployeeActivity.record;
+              const breaks = rec?.breaks || [];
+              
+              let workingMins = Number(rec?.workingMinutes) || 0;
+              let teaMins = 0;
+              let mealMins = 0;
+              let huddleMins = 0;
+              let meetingMins = 0;
+              let trainingMins = 0;
+              let activityMins = 0;
+              let otherMins = 0;
+
+              breaks.forEach(b => {
+                let duration = Number(b.durationMinutes) || 0;
+                if (duration <= 0 && b.startAt) {
+                  const end = b.endAt ? new Date(b.endAt).getTime() : Date.now();
+                  duration = Math.max(1, Math.floor((end - new Date(b.startAt).getTime()) / 60000));
+                }
+                const t = b.type || 'Break';
+                if (t === 'Tea Break') teaMins += duration;
+                else if (t === 'Meal Break' || t.includes('Lunch')) mealMins += duration;
+                else if (t === 'Team Huddle') huddleMins += duration;
+                else if (t === 'Team Meeting') meetingMins += duration;
+                else if (t.includes('Training')) trainingMins += duration;
+                else if (t === 'Activity') activityMins += duration;
+                else otherMins += duration;
+              });
+
+              const totalBreakMins = teaMins + mealMins + huddleMins + meetingMins + trainingMins + activityMins + otherMins;
+              if (workingMins <= 0 && rec?.checkInAt) {
+                const shiftEnd = rec.checkOutAt ? new Date(rec.checkOutAt).getTime() : Date.now();
+                const totalMins = Math.max(0, Math.floor((shiftEnd - new Date(rec.checkInAt).getTime()) / 60000));
+                workingMins = Math.max(0, totalMins - totalBreakMins);
+              }
+
+              const categories = [
+                { name: 'Working Time', value: workingMins, color: '#10b981' },
+                { name: 'Tea Break', value: teaMins, color: '#f59e0b' },
+                { name: 'Meal Break', value: mealMins, color: '#f43f5e' },
+                { name: 'Team Huddle', value: huddleMins, color: '#3b82f6' },
+                { name: 'Team Meeting', value: meetingMins, color: '#a855f7' },
+                { name: 'Training', value: trainingMins, color: '#06b6d4' },
+                { name: 'Activity', value: activityMins, color: '#eab308' },
+                { name: 'Other Breaks', value: otherMins, color: '#64748b' },
+              ].filter(c => c.value > 0);
+
+              const grandTotal = workingMins + totalBreakMins;
+
+              return (
+                <div className="space-y-6">
+                  {categories.length === 0 ? (
+                    <div className="py-12 text-center text-slate-500 text-xs">
+                      No shift activities or check-in recorded for today yet.
+                    </div>
+                  ) : (
+                    <div className="flex flex-col sm:flex-row items-center justify-between gap-6">
+                      <div className="relative w-48 h-48 shrink-0 flex items-center justify-center">
+                        <PieChart width={192} height={192}>
+                          <Pie
+                            data={categories}
+                            cx="50%"
+                            cy="50%"
+                            innerRadius={55}
+                            outerRadius={80}
+                            paddingAngle={categories.length > 1 ? 3 : 0}
+                            isAnimationActive={false}
+                            dataKey="value"
+                          >
+                            {categories.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={entry.color} stroke="#020617" strokeWidth={2} />
+                            ))}
+                          </Pie>
+                          <Tooltip
+                            formatter={(val: any) => [`${Math.floor(Number(val) / 60)}h ${Number(val) % 60}m`, 'Duration']}
+                            contentStyle={{ backgroundColor: '#020617', borderRadius: '12px', border: '1px solid #1e293b', color: '#fff', fontSize: '12px' }}
+                          />
+                        </PieChart>
+                        <div className="absolute inset-0 flex flex-col items-center justify-center pointer-events-none text-center">
+                          <span className="text-base font-black text-white font-mono leading-none">
+                            {Math.floor(grandTotal / 60)}h {grandTotal % 60}m
+                          </span>
+                          <span className="text-[8px] font-bold text-slate-400 uppercase tracking-wider mt-1">Total Shift</span>
+                        </div>
+                      </div>
+
+                      <div className="flex-1 grid grid-cols-2 gap-2.5 text-xs w-full">
+                        {categories.map((cat, idx) => (
+                          <div key={idx} className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between">
+                            <div className="flex items-center gap-1.5 min-w-0">
+                              <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: cat.color }} />
+                              <span className="text-slate-300 font-semibold truncate text-[11px]">{cat.name}</span>
+                            </div>
+                            <span className="font-mono text-xs font-black text-white">
+                              {cat.value >= 60 ? `${Math.floor(cat.value / 60)}h ${cat.value % 60}m` : `${cat.value}m`}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Actions */}
+                  <div className="flex items-center justify-between pt-4 border-t border-slate-800">
+                    <button
+                      onClick={() => {
+                        const emp = selectedEmployeeActivity.employee;
+                        setSelectedEmployeeActivity(null);
+                        setMonthlyAttendanceEmp(emp);
+                      }}
+                      className="px-4 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl flex items-center gap-1.5 shadow-md shadow-blue-900/40 cursor-pointer"
+                    >
+                      <Calendar className="w-4 h-4" />
+                      <span>Open Monthly Calendar &amp; Override</span>
+                    </button>
+
+                    <button
+                      onClick={() => setSelectedEmployeeActivity(null)}
+                      className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white rounded-xl cursor-pointer"
+                    >
+                      Close
+                    </button>
+                  </div>
+                </div>
+              );
+            })()}
+
+          </div>
+        </div>
+      )}
+
+      {/* ── 6. LEAVE & WFH MANAGEMENT PANEL ─────────────────────────────── */}
+      <div className="bg-slate-900/60 rounded-3xl border border-slate-800 shadow-xl overflow-hidden">
+        <button
+          onClick={() => setShowLeaveManagement(prev => !prev)}
+          className="w-full flex items-center justify-between px-6 py-4 hover:bg-slate-800/40 transition-colors group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-emerald-600 to-teal-600 flex items-center justify-center shadow-lg">
+              <Users className="w-4 h-4 text-white" />
+            </div>
+            <div className="text-left">
+              <div className="text-sm font-black text-white">Leave & WFH Management</div>
+              <div className="text-[10px] text-slate-400">Edit EL · SL · Monthly WFH Allowances per employee</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20">
+              PM ONLY
+            </span>
+            {showLeaveManagement
+              ? <ChevronUp className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
+              : <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />}
+          </div>
+        </button>
+        {showLeaveManagement && (
+          <div className="px-6 pb-6 border-t border-slate-800/60">
+            <div className="pt-4">
+              <PMLeaveManagement />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── 7. WORK SCHEDULE & BREAK MANAGEMENT PANEL ───────────────────── */}
+      <div className="bg-slate-900/60 rounded-3xl border border-slate-800 shadow-xl overflow-hidden">
+        <button
+          onClick={() => setShowWorkSchedule(prev => !prev)}
+          className="w-full flex items-center justify-between px-6 py-4 hover:bg-slate-800/40 transition-colors group"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-xl bg-gradient-to-br from-sky-600 to-indigo-600 flex items-center justify-center shadow-lg">
+              <Clock className="w-4 h-4 text-white" />
+            </div>
+            <div className="text-left">
+              <div className="text-sm font-black text-white">Work Schedule & Break Management</div>
+              <div className="text-[10px] text-slate-400">Configure shift times · Meal breaks · Snacks breaks · Weekly working days</div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/20">
+              PM ONLY
+            </span>
+            {showWorkSchedule
+              ? <ChevronUp className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />
+              : <ChevronDown className="w-4 h-4 text-slate-400 group-hover:text-white transition-colors" />}
+          </div>
+        </button>
+        {showWorkSchedule && (
+          <div className="px-6 pb-6 border-t border-slate-800/60">
+            <div className="pt-4">
+              <PMWorkSchedule />
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* ── 8. MONTHLY ATTENDANCE MODAL (With PM/Admin Day Editor) ── */}
+      {monthlyAttendanceEmp && (
+        <EmployeeMonthlyAttendanceModal
+          employee={monthlyAttendanceEmp}
+          onClose={() => setMonthlyAttendanceEmp(null)}
+        />
+      )}
+
+      {/* ── 7. PM SPRINT CONFLICT / REJECT REASON MODAL ── */}
+      {rejectModalReq && (
+        <div className="fixed inset-0 z-[160] bg-slate-950/80 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-6 shadow-2xl max-w-md w-full space-y-4">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <h3 className="text-sm font-black text-white flex items-center gap-2">
+                <AlertTriangle className="w-4 h-4 text-amber-400" />
+                Flag Sprint Delivery Conflict
+              </h3>
+              <button onClick={() => setRejectModalReq(null)} className="p-1.5 text-slate-400 hover:text-white rounded-lg">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-400">
+              Provide feedback to the employee ({rejectModalReq.employeeName}) and Executive Management regarding sprint deliverable conflicts.
+            </p>
+
+            <textarea
+              rows={3}
+              value={customRejectReason}
+              onChange={e => setCustomRejectReason(e.target.value)}
+              className="w-full p-3 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-hidden focus:border-amber-500"
+            />
+
+            <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setRejectModalReq(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  handleRecommend(rejectModalReq.id, 'Flagged', customRejectReason);
+                  setRejectModalReq(null);
+                }}
+                className="px-4 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl shadow-md"
+              >
+                Confirm Conflict Flag
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 8. BULK CHECKOUT ALL PERSONNEL MODAL ── */}
+      {isBulkCheckoutModalOpen && (
+        <div className="fixed inset-0 z-[170] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <div className="p-2.5 bg-rose-500/10 border border-rose-500/20 rounded-2xl">
+                  <LogOut className="w-5 h-5 text-rose-400" />
+                </div>
+                <div>
+                  <h3 className="text-base font-black text-white">Bulk Check-Out All Personnel</h3>
+                  <p className="text-xs text-slate-400">Shift End Closure by Project Manager</p>
+                </div>
+              </div>
+              <button
+                onClick={() => !bulkCheckoutLoading && setIsBulkCheckoutModalOpen(false)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {activeCheckedInEmployees.length === 0 ? (
+              <div className="py-8 text-center space-y-2">
+                <CheckCheck className="w-10 h-10 text-emerald-400 mx-auto" />
+                <p className="text-sm font-bold text-white">All Employees Already Checked Out</p>
+                <p className="text-xs text-slate-400">There are 0 active personnel remaining in shift today.</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="p-3.5 bg-slate-950 rounded-2xl border border-slate-800 space-y-2">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-slate-400 font-medium">Active Personnel to Check Out:</span>
+                    <span className="font-mono font-bold text-rose-400">{activeCheckedInEmployees.length} Employees</span>
+                  </div>
+                  <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto pt-1">
+                    {activeCheckedInEmployees.map(e => (
+                      <span key={e.employee.id} className="text-[10px] font-bold px-2 py-0.5 bg-slate-900 text-slate-300 border border-slate-800 rounded-lg">
+                        {e.employee.fullName}
+                      </span>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1.5 flex items-center justify-between">
+                      <span>Check-Out Time (IST)</span>
+                      <span className="text-[10px] text-slate-500 font-mono">24h format</span>
+                    </label>
+                    <input
+                      type="time"
+                      value={bulkCheckoutTime}
+                      onChange={e => setBulkCheckoutTime(e.target.value)}
+                      disabled={bulkCheckoutLoading}
+                      className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white font-mono text-sm focus:outline-hidden focus:border-rose-500"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                      PM Closing Reason / Audit Notes
+                    </label>
+                    <input
+                      type="text"
+                      value={bulkCheckoutNotes}
+                      onChange={e => setBulkCheckoutNotes(e.target.value)}
+                      disabled={bulkCheckoutLoading}
+                      placeholder="e.g. End of Day Shift Closure"
+                      className="w-full px-3.5 py-2 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-hidden focus:border-rose-500"
+                    />
+                  </div>
+                </div>
+
+                {bulkCheckoutProgress && (
+                  <div className="space-y-1.5 pt-2">
+                    <div className="flex justify-between text-xs text-slate-400 font-mono">
+                      <span>Checking out personnel...</span>
+                      <span>{bulkCheckoutProgress.current} / {bulkCheckoutProgress.total}</span>
+                    </div>
+                    <div className="w-full h-2 bg-slate-950 rounded-full overflow-hidden border border-slate-800">
+                      <div
+                        className="h-full bg-gradient-to-r from-rose-500 to-amber-500 transition-all duration-200"
+                        style={{ width: `${(bulkCheckoutProgress.current / bulkCheckoutProgress.total) * 100}%` }}
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setIsBulkCheckoutModalOpen(false)}
+                disabled={bulkCheckoutLoading}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              {activeCheckedInEmployees.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleExecuteBulkCheckout}
+                  disabled={bulkCheckoutLoading}
+                  className="px-5 py-2.5 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white text-xs font-black rounded-xl shadow-lg shadow-rose-950/50 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+                >
+                  {bulkCheckoutLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+                  <span>Confirm Bulk Check-Out ({activeCheckedInEmployees.length})</span>
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── 9. PM CHECK-IN TIMING OVERRIDE MODAL ── */}
+      {overrideModalTarget && (
+        <div className="fixed inset-0 z-[170] bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto animate-in fade-in duration-200">
+          <div className="bg-slate-900 border border-slate-800 rounded-3xl shadow-2xl w-full max-w-md overflow-hidden p-6 space-y-5">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-3">
+                <img
+                  src={getEmployeeAvatar(overrideModalTarget.employee)}
+                  alt={overrideModalTarget.employee.fullName}
+                  className="w-11 h-11 rounded-2xl object-cover border-2 border-blue-500/40 shadow-md"
+                />
+                <div>
+                  <h3 className="text-sm font-black text-white">{overrideModalTarget.employee.fullName}</h3>
+                  <p className="text-xs text-slate-400 font-mono">
+                    {overrideModalTarget.employee.employeeId} • {overrideModalTarget.employee.department}
+                  </p>
+                </div>
+              </div>
+              <button
+                onClick={() => !overrideLoading && setOverrideModalTarget(null)}
+                className="p-1.5 text-slate-400 hover:text-white rounded-full hover:bg-slate-800 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-2xl p-3 flex items-start gap-2.5">
+              <ShieldCheck className="w-4 h-4 text-blue-400 shrink-0 mt-0.5" />
+              <p className="text-[11px] text-blue-300">
+                <strong>Project Manager Override:</strong> Correct the check-in time for this employee if impacted by software glitches, network lags, or biometric camera edge cases.
+              </p>
+            </div>
+
+            <div className="space-y-3.5 text-xs">
+              <div className="grid grid-cols-2 gap-3">
+                <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block">Work Date</span>
+                  <span className="font-mono font-bold text-slate-300">{todayStr}</span>
+                </div>
+                <div className="p-2.5 bg-slate-950 rounded-xl border border-slate-800">
+                  <span className="text-[10px] text-slate-500 block">Current Recorded Time</span>
+                  <span className="font-mono font-bold text-amber-400">
+                    {overrideModalTarget.record?.checkInAt ? toISTTimeString(overrideModalTarget.record.checkInAt) : 'Not Checked In'}
+                  </span>
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  Corrected Check-In Time (IST)
+                </label>
+                <input
+                  type="time"
+                  value={overrideCheckInTime}
+                  onChange={e => setOverrideCheckInTime(e.target.value)}
+                  disabled={overrideLoading}
+                  className="w-full px-3.5 py-2.5 bg-slate-950 border border-slate-800 rounded-xl text-white font-mono text-sm focus:outline-hidden focus:border-blue-500"
+                />
+                {/* Quick Presets */}
+                <div className="flex items-center gap-1.5 mt-2 overflow-x-auto pb-1">
+                  {['09:30', '09:45', '10:00', '10:15', '10:30'].map(t => (
+                    <button
+                      key={t}
+                      type="button"
+                      onClick={() => setOverrideCheckInTime(t)}
+                      className={`px-2.5 py-1 rounded-lg text-[10px] font-mono font-bold border transition-all cursor-pointer ${
+                        overrideCheckInTime === t
+                          ? 'bg-blue-600 text-white border-blue-500'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  Attendance Status
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'Present', label: 'Present (On-Time)' },
+                    { id: 'Late', label: 'Late Arrival' },
+                    { id: 'Work From Home', label: 'WFH' }
+                  ].map(st => (
+                    <button
+                      key={st.id}
+                      type="button"
+                      onClick={() => setOverrideStatus(st.id as any)}
+                      className={`py-2 px-1 text-center rounded-xl text-[11px] font-bold border transition-all cursor-pointer ${
+                        overrideStatus === st.id
+                          ? 'bg-emerald-600/20 text-emerald-300 border-emerald-500/50 shadow-md'
+                          : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-white'
+                      }`}
+                    >
+                      {st.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                  Reason for Override
+                </label>
+                <select
+                  value={overrideReasonPreset}
+                  onChange={e => setOverrideReasonPreset(e.target.value)}
+                  disabled={overrideLoading}
+                  className="w-full px-3 py-2 bg-slate-950 border border-slate-800 rounded-xl text-white focus:outline-hidden focus:border-blue-500 mb-2"
+                >
+                  <option value="Software / App Check-In Glitch">Software / App Check-In Glitch</option>
+                  <option value="Biometric / Face Scanner Timeout">Biometric / Face Scanner Timeout</option>
+                  <option value="GPS Location / Geofence Delay">GPS Location / Geofence Delay</option>
+                  <option value="Manager Approved On-Time Entry">Manager Approved On-Time Entry</option>
+                  <option value="Network / Device Battery Failure">Network / Device Battery Failure</option>
+                  <option value="Custom Reason">Custom Reason</option>
+                </select>
+
+                <textarea
+                  rows={2}
+                  value={overrideCustomReason}
+                  onChange={e => setOverrideCustomReason(e.target.value)}
+                  placeholder="Optional details or reference note..."
+                  disabled={overrideLoading}
+                  className="w-full p-2.5 text-xs bg-slate-950 border border-slate-800 rounded-xl text-white placeholder-slate-500 focus:outline-hidden focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-2.5 pt-3 border-t border-slate-800">
+              <button
+                type="button"
+                onClick={() => setOverrideModalTarget(null)}
+                disabled={overrideLoading}
+                className="px-4 py-2 text-xs font-bold text-slate-400 hover:text-white rounded-xl cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCheckInOverride}
+                disabled={overrideLoading}
+                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-black rounded-xl shadow-lg shadow-blue-900/40 flex items-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                {overrideLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
+                <span>Save Check-In Correction</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Biometric Face Verification Modal for PM Check-In */}
+      {activeEmployee && (
+        <FaceCaptureModal
+          isOpen={isPmFaceModalOpen}
+          onClose={() => setIsPmFaceModalOpen(false)}
+          onSuccess={() => {
+            setIsPmFaceModalOpen(false);
+            handlePmSelfCheckIn();
+          }}
+          onEnrollSuccess={(descriptorArray) => {
+            if (updateEmployee && activeEmployee) {
+              updateEmployee(activeEmployee.id, {
+                isFaceEnrolled: true,
+                faceEnrolledAt: new Date().toISOString(),
+                faceDescriptor: descriptorArray
+              });
+            }
+          }}
+          employeeName={activeEmployee.fullName}
+          employeeId={activeEmployee.id}
+          profilePhotoUrl={activeEmployee.profilePhotoUrl}
+          cloudDescriptor={activeEmployee.faceDescriptor}
+        />
+      )}
+
+    </div>
+  );
+};

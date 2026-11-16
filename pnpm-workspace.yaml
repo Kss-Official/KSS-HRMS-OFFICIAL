@@ -1,8 +1,0 @@
-packages:
-  - '.'
-onlyBuiltDependencies:
-  - '@firebase/util'
-  - '@google/genai'
-  - 'core-js'
-  - 'esbuild'
-  - 'protobufjs'
