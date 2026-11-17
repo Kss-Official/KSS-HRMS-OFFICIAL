@@ -295,7 +295,7 @@ export async function createAuditLogApi(payload: {
 
 export async function verifyFaceApi(
   faceDescriptor: number[], 
-  threshold = 0.62,
+  threshold = 0.45,
   employeeId?: string,
   employeeCode?: string
 ): Promise<any> {
@@ -319,4 +319,16 @@ export async function verifyFaceApi(
       body: JSON.stringify(body)
     });
   }
+}
+
+export async function resetAllFacesApi(): Promise<any> {
+  return apiRequest('/employees/reset-all-faces', {
+    method: 'POST'
+  });
+}
+
+export async function resetEmployeeFaceApi(employeeId: string): Promise<any> {
+  return apiRequest(`/employees/${employeeId}/reset-face`, {
+    method: 'POST'
+  });
 }

@@ -240,10 +240,59 @@ async def enroll_face(
     )
     await db.commit()
     await db.refresh(emp)
+    invalidate_employees_cache()
+    invalidate_user_cache(emp.id)
 
     return {
         "message": "Biometric face profile enrolled successfully",
         "employee_id": str(emp.id),
         "employee_code": emp.employee_code,
         "full_name": emp.full_name
+    }
+
+@router.post("/reset-all-faces")
+async def reset_all_faces(
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(require_roles([UserRole.HR_ADMIN, UserRole.SUPER_ADMIN]))
+):
+    await db.execute(text("UPDATE employees SET face_descriptor = NULL, face_embedding = NULL, is_face_enrolled = false"))
+    await db.commit()
+    invalidate_employees_cache()
+    invalidate_user_cache()
+    return {"message": "All face biometric registrations have been reset successfully"}
+
+@router.post("/{employee_id}/reset-face")
+async def reset_employee_face(
+    employee_id: str,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(require_roles([UserRole.HR_ADMIN, UserRole.SUPER_ADMIN]))
+):
+    clean_id = employee_id.strip()
+    query = select(Employee)
+    try:
+        val_uuid = uuid.UUID(clean_id)
+        query = query.where(or_(
+            Employee.id == val_uuid,
+            func.lower(Employee.employee_code) == clean_id.lower(),
+            func.lower(Employee.legacy_firebase_id) == clean_id.lower()
+        ))
+    except ValueError:
+        query = query.where(or_(
+            func.lower(Employee.employee_code) == clean_id.lower(),
+            func.lower(Employee.legacy_firebase_id) == clean_id.lower()
+        ))
+    emp = (await db.execute(query)).scalar_one_or_none()
+    if not emp:
+        raise HTTPException(status_code=404, detail=f"Employee '{employee_id}' not found")
+    
+    await db.execute(
+        text("UPDATE employees SET face_descriptor = NULL, face_embedding = NULL, is_face_enrolled = false WHERE id = :id"),
+        {"id": emp.id}
+    )
+    await db.commit()
+    invalidate_employees_cache()
+    invalidate_user_cache(emp.id)
+    return {
+        "message": f"Face biometric reset successfully for {emp.full_name}",
+        "employee_code": emp.employee_code
     }

@@ -3,7 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, and_, text, func
 from sqlalchemy.orm import selectinload
 from uuid import UUID
-from datetime import date, datetime, timezone, time
+from datetime import date, datetime, timezone, time as dt_time
 from typing import List, Optional
 import uuid
 import math
@@ -186,11 +186,40 @@ async def check_in(
     status = AttendanceStatus.PRESENT
     if payload.is_wfh:
         status = AttendanceStatus.WORK_FROM_HOME
-    elif now.time() > time(4, 45):
+    elif now.time() > dt_time(4, 45):
         status = AttendanceStatus.LATE
 
     method = AttendanceMethod.PORTAL_1CLICK
     if payload.face_descriptor:
+        if len(payload.face_descriptor) != 128:
+            raise HTTPException(status_code=400, detail="Face descriptor must contain exactly 128 float values")
+
+        # Query database directly for enrolled biometric template to guarantee freshest state
+        check_desc_res = await db.execute(
+            text("SELECT (face_embedding IS NOT NULL) FROM employees WHERE id = :emp_id"),
+            {"emp_id": target_emp.id}
+        )
+        has_embedding = check_desc_res.scalar()
+        if not has_embedding:
+            raise HTTPException(
+                status_code=400,
+                detail="No registered face biometric template found for this account. Please register your face first."
+            )
+
+        vector_str = "[" + ",".join(str(float(x)) for x in payload.face_descriptor) + "]"
+        dist_res = await db.execute(
+            text("SELECT (face_embedding <-> CAST(:vec AS vector)) FROM employees WHERE id = :emp_id"),
+            {"vec": vector_str, "emp_id": target_emp.id}
+        )
+        dist_val = dist_res.scalar()
+        dist = float(dist_val) if dist_val is not None else 1.0
+
+        # Strict Euclidean L2 matching threshold (0.45)
+        if dist > 0.45:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Biometric mismatch: Scanned face does not match registered employee profile (distance: {round(dist, 3)} > 0.45). One employee cannot check in using another's face."
+            )
         method = AttendanceMethod.BIOMETRIC_FACE
     elif location_ok:
         method = AttendanceMethod.GEO_ATTENDANCE

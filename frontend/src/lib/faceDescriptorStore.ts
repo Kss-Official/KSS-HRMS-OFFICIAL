@@ -10,8 +10,38 @@
 // faceRecognitionEngine re-exports everything here, so existing imports from
 // that module keep working unchanged.
 
-const STORAGE_PREFIX = 'kss_face_descriptor_v1_';
+const STORAGE_PREFIX = 'kss_face_descriptor_v2_';
 const inMemoryDescriptorCache = new Map<string, Float32Array>();
+
+// Enforce fresh biometric registration: automatically purge legacy v1 cached descriptors
+if (typeof window !== 'undefined') {
+  try {
+    const keysToRemove: string[] = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const k = localStorage.key(i);
+      if (k && k.startsWith('kss_face_descriptor_') && !k.startsWith(STORAGE_PREFIX)) {
+        keysToRemove.push(k);
+      }
+    }
+    keysToRemove.forEach(k => localStorage.removeItem(k));
+  } catch {}
+}
+
+export const resetAllLocalFaceDescriptors = (): void => {
+  inMemoryDescriptorCache.clear();
+  if (typeof window !== 'undefined') {
+    try {
+      const keysToRemove: string[] = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const k = localStorage.key(i);
+        if (k && k.startsWith('kss_face_descriptor_')) {
+          keysToRemove.push(k);
+        }
+      }
+      keysToRemove.forEach(k => localStorage.removeItem(k));
+    } catch {}
+  }
+};
 
 export const clearAllFaceEngineState = (): void => {
   inMemoryDescriptorCache.clear();

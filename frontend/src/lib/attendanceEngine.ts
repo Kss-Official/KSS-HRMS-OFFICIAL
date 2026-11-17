@@ -978,36 +978,10 @@ export function safeGetTimestampMillis(val: any): number | null {
     if (isNaN(val) || val <= 0) return null;
     return val < 1e11 ? val * 1000 : val;
   }
-  if (val && typeof val.toMillis === 'function') {
-    try {
-      const ms = val.toMillis();
-      return isNaN(ms) ? null : ms;
-    } catch {
-      return null;
-    }
-  }
-  if (val && typeof val.toDate === 'function') {
-    try {
-      const ms = val.toDate().getTime();
-      return isNaN(ms) ? null : ms;
-    } catch {
-      return null;
-    }
-  }
-  if (val && typeof val.seconds === 'number') {
-    return val.seconds * 1000 + Math.floor((val.nanoseconds || 0) / 1e6);
-  }
-  if (val instanceof Date) {
-    const ms = val.getTime();
-    return isNaN(ms) ? null : ms;
-  }
-  if (typeof val === 'string') {
-    const trimmed = val.trim();
-    if (trimmed === '' || trimmed === 'null' || trimmed === 'undefined') return null;
-    const ms = new Date(trimmed).getTime();
-    return isNaN(ms) ? null : ms;
-  }
-  return null;
+  const iso = formatTimestampToISO(val);
+  if (!iso) return null;
+  const ms = new Date(iso).getTime();
+  return isNaN(ms) ? null : ms;
 }
 
 /**

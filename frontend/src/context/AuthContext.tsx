@@ -346,9 +346,9 @@ interface AuthContextType {
   addEmployee: (emp: Omit<Employee, 'id' | 'createdAt' | 'updatedAt' | 'qrToken'> & { password?: string }) => Promise<{ success: boolean; message?: string } | Employee>;
   updateEmployee: (id: string, updates: Partial<Employee>) => Promise<void>;
   deleteEmployee: (id: string) => void;
-  recordCheckIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number | AttendanceMethod, method?: number | AttendanceMethod, customDate?: string, overrideWfh?: boolean) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
+  recordCheckIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number | AttendanceMethod, method?: number | AttendanceMethod, customDate?: string, overrideWfh?: boolean, faceDescriptor?: number[]) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   recordCheckOut: (employeeId: string, lat?: number, lon?: number, accuracy?: number, customDate?: string) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
-  checkIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number | AttendanceMethod, method?: number | AttendanceMethod, customDate?: string, overrideWfh?: boolean) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
+  checkIn: (employeeId: string, lat?: number, lon?: number, accuracy?: number | AttendanceMethod, method?: number | AttendanceMethod, customDate?: string, overrideWfh?: boolean, faceDescriptor?: number[]) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   checkOut: (employeeId: string, lat?: number, lon?: number, accuracy?: number, customDate?: string) => Promise<{ success: boolean; message: string; record?: AttendanceRecord }>;
   startBreak: (employeeId: string, breakType?: string, lat?: number, lon?: number) => Promise<{ success: boolean; message: string }>;
   endBreak: (employeeId: string, lat?: number, lon?: number) => Promise<{ success: boolean; message: string }>;
@@ -4394,10 +4394,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     arg4?: number | AttendanceMethod, 
     arg5?: number | AttendanceMethod,
     customDate?: string,
-    overrideWfh?: boolean
+    overrideWfh?: boolean,
+    faceDescriptor?: number[]
   ): Promise<{ success: boolean; message: string; record?: AttendanceRecord }> => {
     let accuracy = 8;
-    let method: AttendanceMethod = 'Self Portal';
+    let method: AttendanceMethod = (faceDescriptor && faceDescriptor.length === 128) ? 'Facial Recognition' : 'Self Portal';
 
     if (typeof arg4 === 'number') {
       accuracy = arg4;
@@ -4405,6 +4406,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } else if (typeof arg4 === 'string' && arg4) {
       method = arg4 as AttendanceMethod;
       if (typeof arg5 === 'number') accuracy = arg5;
+    }
+    if (faceDescriptor && faceDescriptor.length === 128) {
+      method = 'Facial Recognition';
     }
 
     if (!navigator.onLine) {
@@ -4593,7 +4597,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             employee_code: emp.employeeId,
             latitude: finalLat,
             longitude: finalLon,
-            is_wfh: isApprovedWfh
+            is_wfh: isApprovedWfh,
+            face_descriptor: faceDescriptor
           });
           if (apiRec && apiRec.id) {
             const mapped = {
@@ -4606,8 +4611,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               checkInAt: apiRec.check_in_at || new Date().toISOString(),
               checkOutAt: null,
               workingMinutes: 0,
-              status: (apiRec.status === 'WORK_FROM_HOME' ? 'Work From Home' : 'Present') as AttendanceStatus,
-              attendanceMethod: 'Biometric Face' as AttendanceMethod,
+              status: (apiRec.status === 'WORK_FROM_HOME' ? 'Work From Home' : (apiRec.status === 'LATE' ? 'Late' : 'Present')) as AttendanceStatus,
+              attendanceMethod: (faceDescriptor ? 'Facial Recognition' : 'Biometric Face') as AttendanceMethod,
               isWfh: !!apiRec.is_wfh,
               locationVerified: !!apiRec.location_verified,
               latitude: apiRec.check_in_lat ?? finalLat,

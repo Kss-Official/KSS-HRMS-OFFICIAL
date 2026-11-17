@@ -21,7 +21,7 @@ export const preloadBiometricModels = (): void => {
 export interface FaceCaptureModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSuccess: () => void;
+  onSuccess: (descriptorArray?: number[]) => void;
   onEnrollSuccess?: (descriptorArray: number[]) => void;
   employeeName?: string;
   employeeId?: string;
@@ -165,15 +165,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   }, [stream, isOpen]);
 
   // Handle Enrollment Action
-  const handlePerformEnrollment = (scannedDescriptor: Float32Array) => {
+  const handlePerformEnrollment = async (scannedDescriptor: Float32Array) => {
     const descriptorArray = Array.from(scannedDescriptor);
     saveEmployeeDescriptor(employeeId, scannedDescriptor);
-    onEnrollSuccess?.(descriptorArray);
-    if (getAuthToken() && employeeId) {
-      enrollFaceApi(employeeId, descriptorArray).catch(err =>
-        console.warn('[Biometrics] Backend face enrollment note:', err)
-      );
-    }
     setIsEnrolled(true);
     setCurrentModeIsEnroll(false);
     setConfidencePercent(98);
@@ -181,9 +175,18 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
     setFeedbackText('✓ Face Biometrics Successfully Registered & Verified!');
     triggerHaptic('success');
 
+    if (getAuthToken() && employeeId) {
+      try {
+        await enrollFaceApi(employeeId, descriptorArray);
+      } catch (err) {
+        console.warn('[Biometrics] Backend face enrollment note:', err);
+      }
+    }
+    onEnrollSuccess?.(descriptorArray);
+
     if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
     actionTimerRef.current = setTimeout(() => {
-      onSuccess();
+      onSuccess(descriptorArray);
       onClose();
     }, 450);
   };
@@ -239,6 +242,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
           if (match.isMatch) {
             const conf = match.confidencePercent;
+            const descArr = Array.from(scan.descriptor);
             setConfidencePercent(conf);
             setStatusStep('VERIFIED');
             setFeedbackText(`✓ Biometric Match Verified (${conf}% Confidence)`);
@@ -247,7 +251,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
             if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
             actionTimerRef.current = setTimeout(() => {
-              onSuccess();
+              onSuccess(descArr);
               onClose();
             }, 350);
             return;
@@ -260,7 +264,8 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
               // Sub-2ms Neon Vector Database targeted search
               if (scanAttemptCount === 1 || scanAttemptCount === 2 || scanAttemptCount === 4) {
-                verifyFaceApi(Array.from(scan.descriptor), 0.45, employeeId)
+                const descArr = Array.from(scan.descriptor);
+                verifyFaceApi(descArr, 0.45, employeeId)
                   .then((backendRes) => {
                     if (backendRes && backendRes.matched && active) {
                       const matchedCode = backendRes.employee_code;
@@ -277,7 +282,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                       active = false;
                       if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
                       actionTimerRef.current = setTimeout(() => {
-                        onSuccess();
+                        onSuccess(descArr);
                         onClose();
                       }, 250);
                     }

@@ -803,7 +803,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
   const checkInSubmissionGuardRef = useRef(false);
 
-  const executeCheckInProcess = async () => {
+  const executeCheckInProcess = async (descriptorArray?: number[]) => {
     if (checkInSubmissionGuardRef.current) return;
     checkInSubmissionGuardRef.current = true;
     setIsCheckingIn(true);
@@ -816,9 +816,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         gpsLocation?.lat,
         gpsLocation?.lon,
         gpsLocation?.accuracy,
-        'Self Portal',
+        descriptorArray ? 'Facial Recognition' : 'Self Portal',
         undefined,
-        isWfhActive
+        isWfhActive,
+        descriptorArray
       );
       
       if (res.success) {
@@ -2930,8 +2931,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       <FaceCaptureModal
         isOpen={isFaceModalOpen}
         onClose={() => setIsFaceModalOpen(false)}
-        onSuccess={() => {
-          executeCheckInProcess();
+        onSuccess={(descArr) => {
+          executeCheckInProcess(descArr);
         }}
         onEnrollSuccess={(descriptorArray) => {
           triggerHaptic('success');
@@ -2942,7 +2943,6 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
             faceEnrolledAt: new Date().toISOString(),
             faceDescriptor: descriptorArray
           });
-          enrollFaceApi(activeEmployee.employeeId || activeEmployee.id, descriptorArray).catch(() => {});
         }}
         employeeName={activeEmployee.fullName}
         employeeId={activeEmployee.employeeId || activeEmployee.id}
@@ -2969,8 +2969,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       <FaceCaptureModal
         isOpen={isEnrollFaceModalOpen}
         onClose={() => setIsEnrollFaceModalOpen(false)}
-        onSuccess={() => {
-          executeCheckInProcess();
+        onSuccess={(descArr) => {
+          executeCheckInProcess(descArr);
         }}
         onEnrollSuccess={(descriptorArray) => {
           triggerHaptic('success');
@@ -2981,7 +2981,6 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
             faceEnrolledAt: new Date().toISOString(),
             faceDescriptor: descriptorArray
           });
-          enrollFaceApi(activeEmployee.employeeId || activeEmployee.id, descriptorArray).catch(() => {});
           setActionFeedback({ success: true, message: '✓ Face Biometric Template Successfully Enrolled & Synced to Cloud DB!' });
           setTimeout(() => setActionFeedback(null), 3500);
         }}
