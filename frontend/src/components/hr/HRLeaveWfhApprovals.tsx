@@ -55,7 +55,11 @@ export const HRLeaveWfhApprovals: React.FC = () => {
   };
 
   const filteredRequests = leaveRequests.filter(req => {
-    const matchesType = filterType === 'All' || req.type === filterType;
+    const isWfh = req.type === 'WFH' || (req.type || '').toLowerCase().includes('home') || ((req as any).leaveCategory || '').toLowerCase().includes('home');
+    const matchesType = 
+      filterType === 'All' ? true :
+      filterType === 'WFH' ? isWfh :
+      !isWfh;
     const matchesStatus = filterStatus === 'All' || req.status === filterStatus;
     const matchesSearch = (req.employeeName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                           (req.reason || '').toLowerCase().includes(searchTerm.toLowerCase()) ||

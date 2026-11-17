@@ -9,6 +9,7 @@ class LeaveRequestCreate(BaseModel):
     start_date: date
     end_date: date
     reason: str
+    request_code: Optional[str] = None
 
 class ExecutiveLeaveReview(BaseModel):
     action: ApprovalStatus # APPROVED, REJECTED

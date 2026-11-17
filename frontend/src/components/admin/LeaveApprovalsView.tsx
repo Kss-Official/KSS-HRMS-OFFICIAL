@@ -161,28 +161,31 @@ export const LeaveApprovalsView: React.FC = () => {
       req.ctoStatus === 'Rejected';
   };
 
+  const isWfhType = (type?: string, category?: string) => {
+    const t = (type || '').toLowerCase();
+    const c = (category || '').toLowerCase();
+    return t === 'wfh' || t.includes('home') || c === 'wfh' || c.includes('home');
+  };
+
+  const matchesTypeFilter = (req: LeaveRequest) => {
+    if (filterType === 'All') return true;
+    if (filterType === 'WFH') return isWfhType(req.type, req.leaveCategory);
+    if (filterType === 'Leave') return !isWfhType(req.type, req.leaveCategory);
+    return req.type === filterType;
+  };
+
   const pendingRequests = leaveRequests.filter(req => {
     const fullyApproved = isRequestFullyApproved(req);
     const rejected = isRequestRejected(req);
     if (fullyApproved || rejected) return false;
-
-    if (filterType !== 'All' && req.type !== filterType) {
-      return false;
-    }
-
-    return true;
+    return matchesTypeFilter(req);
   });
 
   const pastRequests = leaveRequests.filter(req => {
     const fullyApproved = isRequestFullyApproved(req);
     const rejected = isRequestRejected(req);
     if (!fullyApproved && !rejected) return false;
-
-    if (filterType !== 'All' && req.type !== filterType) {
-      return false;
-    }
-
-    return true;
+    return matchesTypeFilter(req);
   });
 
   const rejectedRequests = pastRequests.filter(req => isRequestRejected(req));

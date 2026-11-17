@@ -69,6 +69,7 @@ import {
   getLeavesApi,
   applyLeaveApi,
   reviewLeaveApi,
+  cancelLeaveApi,
   createEmployeeApi,
   updateEmployeeApi,
   deleteEmployeeApi,
@@ -6126,14 +6127,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     if (getAuthToken()) {
-      const apiType = (data.type === 'WFH' || (data.type as string).toLowerCase().includes('wfh') || (data.type as string).toLowerCase().includes('home')) 
-        ? 'WFH' 
-        : (data.type === 'Casual Leave' ? 'CASUAL_LEAVE' : (data.type === 'Sick Leave' ? 'SICK_LEAVE' : 'EARN_LEAVE'));
+      const typeStr = String(data.type || '').toLowerCase();
+      let apiType = 'EARN_LEAVE';
+      if (typeStr.includes('wfh') || typeStr.includes('home')) {
+        apiType = 'WFH';
+      } else if (typeStr.includes('sick')) {
+        apiType = 'SICK_LEAVE';
+      } else if (typeStr.includes('casual')) {
+        apiType = 'CASUAL_LEAVE';
+      } else if (typeStr.includes('loss') || typeStr.includes('lop')) {
+        apiType = 'LOSS_OF_PAY';
+      } else {
+        apiType = 'EARN_LEAVE';
+      }
       applyLeaveApi({
         type: apiType,
         start_date: data.startDate,
         end_date: data.endDate,
-        reason: data.reason
+        reason: data.reason,
+        request_code: result.id
       }).catch(e => console.warn('[FastAPI] applyLeaveApi sync note:', e));
     }
 
@@ -6353,6 +6365,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const revUid = user?.uid || activeEmployee?.uid || 'uid-user';
 
     await LeaveService.cancelRequest(id, empDocId, sDate, eDate, revName, revUid);
+
+    // If cancelled request was WFH, remove from approvedWfhDates
+    const isWfhReq = isWfhType(targetReq?.type) || isWfhType(targetReq?.leaveCategory);
+    if (isWfhReq && targetEmp && sDate && eDate) {
+      const datesToRemove = new Set<string>();
+      let curr = new Date(sDate);
+      const end = new Date(eDate);
+      while (curr <= end) {
+        datesToRemove.add(curr.toISOString().split('T')[0]);
+        curr.setDate(curr.getDate() + 1);
+      }
+      const updatedDates = (targetEmp.approvedWfhDates || []).filter(d => !datesToRemove.has(d));
+      updateEmployee(targetEmp.id, { approvedWfhDates: updatedDates });
+    }
+
+    // FastAPI backend sync
+    if (getAuthToken()) {
+      cancelLeaveApi(id).catch(e => console.warn('[FastAPI] cancelLeaveApi sync note:', e));
+    }
+
+    // Real-time notification for cancellation
+    sendKssNotification(
+      'LEAVE_REQUEST_CANCELLED',
+      `🚫 ${targetReq?.type || 'Leave/WFH'} Request Cancelled`,
+      `${targetReq?.employeeName || revName} cancelled their ${targetReq?.type || 'leave'} request (${sDate} to ${eDate}).`,
+      {
+        actorId: empDocId,
+        actorName: revName,
+        targetEmployeeId: empDocId,
+        targetEmployeeName: targetReq?.employeeName || revName,
+        overrideAudience: ['SUPER_ADMIN', 'EMPLOYEE'],
+        metadata: {
+          requestId: id,
+          startDate: sDate,
+          endDate: eDate
+        }
+      }
+    );
+
     addAuditLog('LEAVE_CANCELLED', revName, `Cancelled leave/WFH request ${id}`);
   };
 

@@ -13,6 +13,7 @@ export type NotificationEventType =
   | 'LEAVE_REQUEST_SUBMITTED'
   | 'LEAVE_REQUEST_APPROVED'
   | 'LEAVE_REQUEST_REJECTED'
+  | 'LEAVE_REQUEST_CANCELLED'
   | 'WFH_REQUEST_SUBMITTED'
   | 'EMPLOYEE_CREATED'
   | 'EMPLOYEE_DELETED'
@@ -51,6 +52,7 @@ export const notificationIcon = (type: NotificationEventType): string => {
     case 'LEAVE_REQUEST_SUBMITTED': return '📋';
     case 'LEAVE_REQUEST_APPROVED':  return '✅';
     case 'LEAVE_REQUEST_REJECTED':  return '❌';
+    case 'LEAVE_REQUEST_CANCELLED': return '🚫';
     case 'WFH_REQUEST_SUBMITTED':   return '🏠';
     case 'EMPLOYEE_CREATED':        return '👤';
     case 'EMPLOYEE_DELETED':        return '🗑️';
@@ -72,6 +74,7 @@ export const notificationColor = (type: NotificationEventType): string => {
     case 'EMPLOYEE_CREATED':        return 'emerald';
     case 'ATTENDANCE_CHECKOUT':
     case 'LEAVE_REQUEST_REJECTED':
+    case 'LEAVE_REQUEST_CANCELLED':
     case 'EMPLOYEE_DELETED':
     case 'SECURITY_ALERT':          return 'rose';
     case 'ATTENDANCE_BREAK_START':
@@ -93,6 +96,7 @@ const AUDIENCE_MAP: Partial<Record<NotificationEventType, NotificationAudience[]
   LEAVE_REQUEST_SUBMITTED:  ['SUPER_ADMIN'],
   LEAVE_REQUEST_APPROVED:   ['EMPLOYEE'],
   LEAVE_REQUEST_REJECTED:   ['EMPLOYEE'],
+  LEAVE_REQUEST_CANCELLED:  ['SUPER_ADMIN', 'EMPLOYEE'],
   WFH_REQUEST_SUBMITTED:    ['SUPER_ADMIN'],
   EMPLOYEE_CREATED:         ['SUPER_ADMIN', 'HR_ADMIN'],
   EMPLOYEE_DELETED:         ['SUPER_ADMIN', 'HR_ADMIN'],

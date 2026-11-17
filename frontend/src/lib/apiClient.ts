@@ -367,6 +367,7 @@ export async function applyLeaveApi(payload: {
   start_date: string;
   end_date: string;
   reason: string;
+  request_code?: string;
 }): Promise<any> {
   return apiRequest('/leaves/', {
     method: 'POST',
@@ -382,6 +383,12 @@ export async function reviewLeaveApi(
   return apiRequest(`/leaves/${leaveId}/review`, {
     method: 'PATCH',
     body: JSON.stringify({ action, notes })
+  });
+}
+
+export async function cancelLeaveApi(leaveId: string): Promise<any> {
+  return apiRequest(`/leaves/${leaveId}/cancel`, {
+    method: 'PATCH'
   });
 }
 
