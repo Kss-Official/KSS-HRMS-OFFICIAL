@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_
+from sqlalchemy import select, and_, or_
 from uuid import UUID
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Tuple
@@ -60,7 +60,7 @@ async def list_leaves(
         leave_dict.department = dept
         out_leaves.append(leave_dict)
 
-    _LEAVES_CACHE[cache_key] = (now_ts + 15.0, out_leaves)
+    _LEAVES_CACHE[cache_key] = (now_ts + 60.0, out_leaves)
     return out_leaves
 
 @router.post("/", response_model=LeaveRequestOut)
@@ -72,6 +72,41 @@ async def submit_leave(
     if payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="End date cannot be earlier than start date")
 
+    req_type = LeaveType.WFH if payload.type in [LeaveType.WFH, LeaveType.WORK_FROM_HOME] else payload.type
+    num_days = (payload.end_date - payload.start_date).days + 1
+
+    # Balance validation for paid categories
+    if req_type == LeaveType.EARN_LEAVE:
+        avail = float(current_user.earn_leave_balance or 0.0)
+        if avail < num_days:
+            raise HTTPException(status_code=400, detail=f"Insufficient Earn Leave balance: Requested {num_days} day(s), available: {avail}")
+    elif req_type == LeaveType.SICK_LEAVE:
+        avail = float(current_user.sick_leave_balance or 0.0)
+        if avail < num_days:
+            raise HTTPException(status_code=400, detail=f"Insufficient Sick Leave balance: Requested {num_days} day(s), available: {avail}")
+    elif req_type == LeaveType.CASUAL_LEAVE:
+        avail = float(current_user.casual_leave_balance or 0.0)
+        if avail < num_days:
+            raise HTTPException(status_code=400, detail=f"Insufficient Casual Leave balance: Requested {num_days} day(s), available: {avail}")
+
+    # Check for existing duplicate or overlapping pending/approved leave requests
+    overlap_res = await db.execute(
+        select(LeaveRequest).where(
+            and_(
+                LeaveRequest.employee_id == current_user.id,
+                LeaveRequest.status.in_([LeaveStatus.PENDING, LeaveStatus.APPROVED]),
+                LeaveRequest.start_date <= payload.end_date,
+                LeaveRequest.end_date >= payload.start_date
+            )
+        )
+    )
+    existing_overlap = overlap_res.first()
+    if existing_overlap:
+        raise HTTPException(
+            status_code=400,
+            detail=f"An active or pending {existing_overlap[0].type.value} request already exists for dates overlapping with {payload.start_date} to {payload.end_date}."
+        )
+
     # Generate sequential/unique request code
     code = f"LV-{payload.start_date.year}-{uuid.uuid4().hex[:6].upper()}"
 
@@ -79,7 +114,7 @@ async def submit_leave(
         id=uuid.uuid4(),
         request_code=code,
         employee_id=current_user.id,
-        type=payload.type,
+        type=req_type,
         start_date=payload.start_date,
         end_date=payload.end_date,
         reason=payload.reason,
@@ -103,13 +138,19 @@ async def submit_leave(
 
 @router.patch("/{leave_id}/review", response_model=LeaveRequestOut)
 async def review_leave(
-    leave_id: UUID,
+    leave_id: str,
     payload: ExecutiveLeaveReview,
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(require_executive())
 ):
     now = datetime.now(timezone.utc)
-    res = await db.execute(select(LeaveRequest).where(LeaveRequest.id == leave_id))
+    clean_id = leave_id.strip()
+    try:
+        val_uuid = uuid.UUID(clean_id)
+        stmt = select(LeaveRequest).where(or_(LeaveRequest.id == val_uuid, LeaveRequest.request_code == clean_id))
+    except ValueError:
+        stmt = select(LeaveRequest).where(LeaveRequest.request_code == clean_id)
+    res = await db.execute(stmt)
     leave = res.scalar_one_or_none()
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
@@ -165,13 +206,13 @@ async def review_leave(
             if emp:
                 new_bal = 0.0
                 if leave.type.value == "EARN_LEAVE":
-                    emp.earn_leave_balance = max(0.0, float(emp.earn_leave_balance) - num_days)
+                    emp.earn_leave_balance = max(0.0, float(emp.earn_leave_balance or 0.0) - num_days)
                     new_bal = float(emp.earn_leave_balance)
                 elif leave.type.value == "SICK_LEAVE":
-                    emp.sick_leave_balance = max(0.0, float(emp.sick_leave_balance) - num_days)
+                    emp.sick_leave_balance = max(0.0, float(emp.sick_leave_balance or 0.0) - num_days)
                     new_bal = float(emp.sick_leave_balance)
                 elif leave.type.value == "CASUAL_LEAVE":
-                    emp.casual_leave_balance = max(0.0, float(emp.casual_leave_balance) - num_days)
+                    emp.casual_leave_balance = max(0.0, float(emp.casual_leave_balance or 0.0) - num_days)
                     new_bal = float(emp.casual_leave_balance)
 
                 # Append to LeaveLedger

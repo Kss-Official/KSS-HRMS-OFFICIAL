@@ -123,7 +123,7 @@ const DEFAULT_PROJECTS: Project[] = [
 ];
 
 export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
-  const { employees, leaveRequests, attendance, activeEmployee, startBreak, endBreak, isAuthenticated, settings, companyWideWfhDates, applyAttendanceCorrection, checkIn, checkOut, updateEmployee, updateLeaveRequestStage } = useAuth();
+  const { employees, leaveRequests, attendance, activeEmployee, startBreak, endBreak, isAuthenticated, settings, companyWideWfhDates, applyAttendanceCorrection, checkIn, checkOut, updateEmployee, updateLeaveRequestStage, enrollEmployeeBiometrics } = useAuth();
   const { triggerHaptic } = useHaptic();
 
   const todayStr = getWorkDate(new Date());
@@ -2157,13 +2157,10 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
             setIsPmFaceModalOpen(false);
             handlePmSelfCheckIn();
           }}
-          onEnrollSuccess={(descriptorArray) => {
-            if (updateEmployee && activeEmployee) {
-              updateEmployee(activeEmployee.id, {
-                isFaceEnrolled: true,
-                faceEnrolledAt: new Date().toISOString(),
-                faceDescriptor: descriptorArray
-              });
+          onEnrollSuccess={async (descriptorArray) => {
+            if (activeEmployee) {
+              const res = await enrollEmployeeBiometrics(activeEmployee.id, descriptorArray);
+              if (!res.success) throw new Error(res.message);
             }
           }}
           employeeName={activeEmployee.fullName}

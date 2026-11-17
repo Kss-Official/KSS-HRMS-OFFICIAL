@@ -83,7 +83,8 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
     endBreak, 
     submitLeaveRequest,
     settings,
-    updateEmployee
+    updateEmployee,
+    enrollEmployeeBiometrics
   } = useAuth();
 
   // Active PM fallback
@@ -1529,13 +1530,10 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
             setIsFaceModalOpen(false);
             executePmCheckInProcess();
           }}
-          onEnrollSuccess={(descriptorArray) => {
-            if (updateEmployee && targetEmployee) {
-              updateEmployee(targetEmployee.id, {
-                isFaceEnrolled: true,
-                faceEnrolledAt: new Date().toISOString(),
-                faceDescriptor: descriptorArray
-              });
+          onEnrollSuccess={async (descriptorArray) => {
+            if (targetEmployee) {
+              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray);
+              if (!res.success) throw new Error(res.message);
             }
           }}
           employeeName={targetEmployee.fullName}
@@ -1554,14 +1552,14 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
             setIsEnrollFaceModalOpen(false);
             toast.success('Face biometric template verified!');
           }}
-          onEnrollSuccess={(descriptorArray) => {
+          onEnrollSuccess={async (descriptorArray) => {
             triggerHaptic('success');
-            if (updateEmployee && targetEmployee) {
-              updateEmployee(targetEmployee.id, {
-                isFaceEnrolled: true,
-                faceEnrolledAt: new Date().toISOString(),
-                faceDescriptor: descriptorArray
-              });
+            if (targetEmployee) {
+              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray);
+              if (!res.success) {
+                toast.error(res.message);
+                throw new Error(res.message);
+              }
               toast.success('✓ Face biometric template successfully registered & enrolled!');
             }
             setIsEnrollFaceModalOpen(false);

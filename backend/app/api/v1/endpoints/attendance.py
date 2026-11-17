@@ -14,7 +14,7 @@ from app.core.database import get_db
 from app.core.config import settings
 from app.models.employee import Employee
 from app.models.attendance import AttendanceRecord, AttendanceBreak
-from app.models.enums import AttendanceStatus, AttendanceMethod, BreakType
+from app.models.enums import AttendanceStatus, AttendanceMethod, BreakType, UserRole
 from app.schemas.attendance import (
     CheckInRequest, CheckOutRequest, AttendanceRecordOut,
     BreakActionRequest, AttendanceBreakOut,
@@ -26,6 +26,13 @@ router = APIRouter()
 
 # High-speed in-memory records cache with 15-second TTL
 _RECORDS_CACHE: Dict[str, Tuple[float, List[AttendanceRecordOut]]] = {}
+
+def normalize_vector(vec: List[float]) -> List[float]:
+    """Strict L2 unit normalization for illumination-invariant vector comparisons"""
+    norm = math.sqrt(sum(float(x) ** 2 for x in vec))
+    if norm > 0:
+        return [float(x) / norm for x in vec]
+    return [float(x) for x in vec]
 
 def invalidate_records_cache() -> None:
     _RECORDS_CACHE.clear()
@@ -51,7 +58,8 @@ async def verify_biometric_face(
     if len(payload.face_descriptor) != 128:
         raise HTTPException(status_code=400, detail="Face descriptor must have exactly 128 dimensions")
 
-    vector_str = "[" + ",".join(str(float(x)) for x in payload.face_descriptor) + "]"
+    norm_vec = normalize_vector(payload.face_descriptor)
+    vector_str = "[" + ",".join(str(float(x)) for x in norm_vec) + "]"
 
     # If employee_id or employee_code is provided, perform strict targeted verification ONLY
     if payload.employee_id or payload.employee_code:
@@ -102,9 +110,35 @@ async def verify_biometric_face(
         dist_val = dist_res.scalar()
         dist = float(dist_val) if dist_val is not None else 1.0
 
-        # Strict biometric verification threshold (0.45 = standard Euclidean boundary for genuine face match)
-        matched = (dist <= payload.threshold)
-        confidence = max(0.0, min(1.0, 1.0 - (dist / payload.threshold))) if matched else max(0.0, round(1.0 - min(dist, 1.0), 4))
+        effective_threshold = float(payload.threshold or 0.48)
+        # Strict biometric verification threshold (0.48 Euclidean boundary for genuine face match)
+        matched = (dist <= effective_threshold)
+        confidence = max(0.0, min(1.0, 1.0 - (dist / effective_threshold))) if matched else max(0.0, round(1.0 - min(dist, 1.0), 4))
+
+        if not matched:
+            # Anti-Impersonation Check: Did this face match a different employee?
+            other_sql = text("""
+                SELECT id, employee_code, full_name, (face_embedding <-> CAST(:vec AS vector)) AS distance
+                FROM employees
+                WHERE is_active = true AND face_embedding IS NOT NULL AND id != :emp_id
+                ORDER BY face_embedding <-> CAST(:vec AS vector)
+                LIMIT 1;
+            """)
+            other_res = await db.execute(other_sql, {"vec": vector_str, "emp_id": emp_id})
+            other_match = other_res.fetchone()
+            if other_match and float(other_match[3]) <= effective_threshold:
+                return {
+                    "matched": False,
+                    "impersonation_detected": True,
+                    "matched_other_name": other_match[2],
+                    "matched_other_code": other_match[1],
+                    "employee_id": emp_id,
+                    "employee_code": target_code,
+                    "full_name": full_name,
+                    "distance": round(dist, 4),
+                    "confidence": 0.0,
+                    "message": f"CRITICAL SECURITY REJECTION: Biometric identity mismatch. Scanned face belongs to {other_match[2]} ({other_match[1]}), not {full_name}. Cross-employee check-in is forbidden."
+                }
 
         return {
             "matched": matched,
@@ -113,7 +147,7 @@ async def verify_biometric_face(
             "full_name": full_name,
             "distance": round(dist, 4),
             "confidence": round(confidence, 4),
-            "message": "Biometric match verified" if matched else f"Biometric mismatch (L2 distance: {round(dist, 3)} > {payload.threshold}). Face does not match registered profile."
+            "message": "Biometric match verified" if matched else f"Biometric mismatch (L2 distance: {round(dist, 3)} > {effective_threshold}). Face does not match registered profile."
         }
 
     # Kiosk Mode: Global vector nearest neighbor search (ONLY when no specific employee is provided)
@@ -153,14 +187,20 @@ async def check_in(
     today = date.today()
     now = datetime.now(timezone.utc)
 
-    # Determine target employee
+    # Determine target employee with strict authorization enforcement
     target_emp = current_user
-    if payload.employee_code and payload.employee_code != current_user.employee_code:
-        # Check if HR / Super Admin is checking in another employee
+    if payload.employee_code and payload.employee_code.strip().lower() != current_user.employee_code.strip().lower():
+        # ONLY Super Admin or HR Admin can perform proxy check-in for another employee
+        if current_user.role not in [UserRole.HR_ADMIN, UserRole.SUPER_ADMIN]:
+            raise HTTPException(
+                status_code=403,
+                detail=f"Security Violation: Regular employees cannot check in on behalf of another employee ({payload.employee_code})."
+            )
         res = await db.execute(select(Employee).where(func.lower(Employee.employee_code) == payload.employee_code.strip().lower()))
         target = res.scalar_one_or_none()
-        if target:
-            target_emp = target
+        if not target:
+            raise HTTPException(status_code=404, detail=f"Employee with code '{payload.employee_code}' not found")
+        target_emp = target
 
     # Check if existing record for today
     res = await db.execute(
@@ -175,11 +215,11 @@ async def check_in(
     # Geofence Validation
     location_ok = False
     if payload.latitude is not None and payload.longitude is not None:
-        dist = calculate_distance_meters(
+        dist_m = calculate_distance_meters(
             payload.latitude, payload.longitude,
             settings.GEOFENCE_LAT, settings.GEOFENCE_LON
         )
-        location_ok = (dist <= settings.GEOFENCE_RADIUS_METERS)
+        location_ok = (dist_m <= settings.GEOFENCE_RADIUS_METERS)
 
     # Determine status (e.g. LATE if past 10:15 AM IST, 15m grace period)
     # 10:15 AM IST = 04:45 AM UTC
@@ -203,10 +243,11 @@ async def check_in(
         if not has_embedding:
             raise HTTPException(
                 status_code=400,
-                detail="No registered face biometric template found for this account. Please register your face first."
+                detail=f"No registered face biometric template found for {target_emp.full_name}. Please register your face first."
             )
 
-        vector_str = "[" + ",".join(str(float(x)) for x in payload.face_descriptor) + "]"
+        norm_vec = normalize_vector(payload.face_descriptor)
+        vector_str = "[" + ",".join(str(float(x)) for x in norm_vec) + "]"
         dist_res = await db.execute(
             text("SELECT (face_embedding <-> CAST(:vec AS vector)) FROM employees WHERE id = :emp_id"),
             {"vec": vector_str, "emp_id": target_emp.id}
@@ -214,15 +255,45 @@ async def check_in(
         dist_val = dist_res.scalar()
         dist = float(dist_val) if dist_val is not None else 1.0
 
-        # Strict Euclidean L2 matching threshold (0.45)
-        if dist > 0.45:
+        # Strict Euclidean L2 matching threshold (0.48)
+        if dist > 0.48:
+            # Check if this face matches another employee (impersonation / proxy attack detection)
+            other_query = text("""
+                SELECT id, employee_code, full_name, (face_embedding <-> CAST(:vec AS vector)) as dist
+                FROM employees
+                WHERE is_active = true 
+                  AND face_embedding IS NOT NULL 
+                  AND id != :target_id
+                ORDER BY dist ASC
+                LIMIT 1
+            """)
+            other_res = await db.execute(other_query, {"vec": vector_str, "target_id": target_emp.id})
+            other_match = other_res.fetchone()
+            if other_match and float(other_match[3]) <= 0.48:
+                raise HTTPException(
+                    status_code=403,
+                    detail=f"CRITICAL SECURITY REJECTION: Biometric identity mismatch. The scanned face belongs to {other_match[2]} ({other_match[1]}), not {target_emp.full_name}. Cross-employee check-in is strictly forbidden."
+                )
+
             raise HTTPException(
-                status_code=400,
-                detail=f"Biometric mismatch: Scanned face does not match registered employee profile (distance: {round(dist, 3)} > 0.45). One employee cannot check in using another's face."
+                status_code=403,
+                detail=f"Biometric mismatch: Scanned face does not match registered profile for {target_emp.full_name} (distance: {round(dist, 3)} > 0.48). One employee cannot check in using another's face."
             )
         method = AttendanceMethod.BIOMETRIC_FACE
-    elif location_ok:
-        method = AttendanceMethod.GEO_ATTENDANCE
+    else:
+        # Mandatory Biometrics Rule: Every employee MUST register and scan face to check in
+        if not payload.is_wfh and current_user.role not in [UserRole.HR_ADMIN, UserRole.SUPER_ADMIN]:
+            if not target_emp.is_face_enrolled:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Biometric registration required: No face template registered for {target_emp.full_name}. Please register your facial biometrics first before checking in."
+                )
+            raise HTTPException(
+                status_code=400,
+                detail=f"Biometric verification required: Face scan is mandatory for {target_emp.full_name} to check in."
+            )
+        if location_ok:
+            method = AttendanceMethod.GEO_ATTENDANCE
 
     if existing:
         existing.status = status
@@ -278,6 +349,13 @@ async def check_out(
         select(AttendanceBreak).where(AttendanceBreak.attendance_id == record.id)
     )
     breaks = b_res.scalars().all()
+    # Auto-close any ongoing open break upon checkout
+    for b in breaks:
+        if b.end_time is None:
+            b.end_time = now
+            b.duration_minutes = max(1, int((now - b.start_time).total_seconds() / 60.0))
+            db.add(b)
+
     total_break_mins = sum(b.duration_minutes or 0 for b in breaks)
     total_shift_mins = max(0, int((now - record.check_in_at).total_seconds() / 60.0))
     record.working_minutes = max(0, total_shift_mins - total_break_mins)
@@ -317,9 +395,10 @@ async def start_break(
     if active_b:
         if active_b.type == payload.break_type:
             return active_b
-        # Auto-close previous break and start new break
-        active_b.end_time = now
-        active_b.duration_minutes = max(1, int((now - active_b.start_time).total_seconds() / 60.0))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot start {payload.break_type.value}: An active {active_b.type.value} is already in progress. Please end it first."
+        )
 
     new_break = AttendanceBreak(
         id=uuid.uuid4(),
@@ -426,5 +505,5 @@ async def get_records(
         record_dict.department = dept
         out_records.append(record_dict)
 
-    _RECORDS_CACHE[cache_key] = (now_ts + 15.0, out_records)
+    _RECORDS_CACHE[cache_key] = (now_ts + 60.0, out_records)
     return out_records

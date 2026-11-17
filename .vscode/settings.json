@@ -1,0 +1,31 @@
+{
+  "explorer.compactFolders": false,
+  "files.exclude": {
+    "**/.git": true,
+    "**/.svn": true,
+    "**/.hg": true,
+    "**/CVS": true,
+    "**/.DS_Store": true,
+    "**/Thumbs.db": true,
+    "**/__pycache__": true,
+    "**/.pytest_cache": true,
+    "**/*.pyc": true
+  },
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/dist": true,
+    "**/.pytest_cache": true,
+    "**/__pycache__": true
+  },
+  "explorer.fileNesting.enabled": true,
+  "explorer.fileNesting.expand": false,
+  "explorer.fileNesting.patterns": {
+    ".env": ".env.*, .env.example",
+    "package.json": "package-lock.json, tsconfig.json, vite.config.ts, postcss.config.js, vercel.json",
+    "requirements.txt": "requirements*.txt, setup.py, setup.cfg, pyproject.toml",
+    "firebase.json": ".firebaserc, firestore.rules, firestore.indexes.json, database.rules.json",
+    "README.md": "CONTRIBUTING.md, LICENSE*",
+    "*.ts": "${capture}.js, ${capture}.d.ts.map, ${capture}.*.d.ts",
+    "*.tsx": "${capture}.ts, ${capture}.css, ${capture}.module.css"
+  }
+}

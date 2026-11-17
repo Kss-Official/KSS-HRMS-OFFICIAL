@@ -2,6 +2,7 @@ import React, { useState, useEffect, Suspense } from 'react';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { AuthView } from './components/auth/AuthView';
 import { PWAInstallPrompt } from './components/common/PWAInstallPrompt';
+import { BreakReminderManager } from './components/common/BreakReminderManager';
 import { Employee } from './types';
 import { ShieldCheck, CreditCard, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
 import { ErrorBoundary } from 'react-error-boundary';
@@ -358,6 +359,7 @@ const MainLayout: React.FC = () => {
   return (
     <div className="w-full h-screen overflow-hidden overscroll-none bg-slate-950 font-sans text-slate-100 antialiased flex flex-col selection:bg-blue-600 selection:text-white">
       {renderView()}
+      <BreakReminderManager />
       <PWAInstallPrompt />
       <Toaster
         position="top-right"

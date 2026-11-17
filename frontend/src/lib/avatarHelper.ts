@@ -26,13 +26,22 @@ export const LOCAL_AVATARS: Record<string, string> = {
 export const getEmployeeAvatar = (emp?: any): string => {
   if (!emp) return '/avatars/gaurav.jpeg';
 
+  // 1. Direct explicit profile photo (custom upload, webcam snapshot, preset avatar, or remote URL)
+  const explicitUrl = emp.profilePhotoUrl || emp.profile_photo_url || emp.avatar || emp.photoURL;
+  if (explicitUrl && typeof explicitUrl === 'string') {
+    const trimmed = explicitUrl.trim();
+    if (trimmed.length > 0) {
+      return trimmed;
+    }
+  }
+
   const code = (emp.employeeId || emp.employee_code || emp.id || '').toUpperCase().trim();
   const name = (emp.fullName || emp.full_name || emp.name || '').toLowerCase().trim();
 
-  // 1. Direct code lookup
+  // 2. Direct code lookup from official high-resolution local portraits
   if (LOCAL_AVATARS[code]) return LOCAL_AVATARS[code];
 
-  // 2. Strict name-based resolution
+  // 3. Strict name-based resolution from official local portraits
   if (name.includes('gaurav')) return '/avatars/gaurav.jpeg';
   if (name.includes('akshit')) return '/avatars/akshit.png';
   if (name.includes('koushik')) return '/avatars/koushik.png';
@@ -49,12 +58,6 @@ export const getEmployeeAvatar = (emp?: any): string => {
   if (name.includes('jigyansha') || name.includes('jingyasha') || name.includes('rout')) return '/avatars/jingyasha.jpg';
   if (name.includes('shruti') || name.includes('sahoo')) return '/avatars/shruti.jpg';
   if (name.includes('hr department') || name.includes('hr lead') || code.includes('HR')) return '/avatars/hr.jpg';
-
-  // 3. Custom profilePhotoUrl if not an external unsplash link
-  const explicitUrl = emp.profilePhotoUrl || emp.profile_photo_url;
-  if (explicitUrl && typeof explicitUrl === 'string' && !explicitUrl.includes('unsplash.com')) {
-    return explicitUrl;
-  }
 
   // 4. Fallback avatar initials
   const displayName = emp.fullName || emp.full_name || 'User';

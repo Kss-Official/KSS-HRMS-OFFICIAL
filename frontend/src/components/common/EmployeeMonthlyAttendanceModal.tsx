@@ -1006,7 +1006,7 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
         }
       }
 
-      duration = Math.min(60, Math.max(1, duration));
+      duration = Math.max(1, duration);
       const type = b.type || 'Break';
 
       if (type === 'Tea Break') teaBreakMins += duration;

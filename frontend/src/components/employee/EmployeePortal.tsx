@@ -121,7 +121,7 @@ const AVATAR_PRESETS = [
 ];
 
 export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setActiveTab }) => {
-  const { activeEmployee, user, attendance, attendanceSyncStatus, leaveRequests, recordCheckIn, recordCheckOut, startBreak, endBreak, settings, updateEmployee, companyWorkZone, updateAttendanceRecord, addAuditLog, logout, updateCurrentEmployeePassword, companyWideWfhDates, notifications } = useAuth();
+  const { activeEmployee, user, attendance, attendanceSyncStatus, leaveRequests, recordCheckIn, recordCheckOut, startBreak, endBreak, settings, updateEmployee, companyWorkZone, updateAttendanceRecord, addAuditLog, logout, updateCurrentEmployeePassword, companyWideWfhDates, notifications, enrollEmployeeBiometrics } = useAuth();
   const { triggerHaptic } = useHaptic();
 
   // Time-aware greeting
@@ -181,6 +181,23 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       triggerHaptic('error');
     }
   };
+
+  // MANDATORY FIRST-TIME BIOMETRIC REGISTRATION GATE:
+  // When an employee enters the portal, if their face is not registered yet,
+  // automatically launch the Face Biometric Registration modal so they register their face first.
+  const hasPromptedEnrollmentRef = useRef(false);
+  useEffect(() => {
+    if (activeEmployee && !hasPromptedEnrollmentRef.current) {
+      const isEnrolled = isFaceBiometricEnrolled(activeEmployee);
+      if (!isEnrolled) {
+        hasPromptedEnrollmentRef.current = true;
+        const timer = setTimeout(() => {
+          setIsEnrollFaceModalOpen(true);
+        }, 800);
+        return () => clearTimeout(timer);
+      }
+    }
+  }, [activeEmployee]);
 
   // Profile Edit State
   const [profilePhoto, setProfilePhoto] = useState(getEmployeeAvatar(activeEmployee));
@@ -458,6 +475,19 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           btnBg: 'bg-amber-500 hover:bg-amber-400 text-amber-950',
           dotBg: 'bg-amber-400',
           progressBg: 'bg-amber-500'
+        };
+      case 'Snack Break':
+        return {
+          label: 'Snack Break',
+          icon: Coffee,
+          iconEmoji: '🍿',
+          themeColor: '#f97316',
+          ringClass: 'border-orange-500 bg-orange-500/10 text-orange-300 shadow-[0_0_25px_rgba(249,115,22,0.25)]',
+          badgeBg: 'bg-orange-950/90 text-orange-300 border-orange-500/50',
+          iconClass: 'text-orange-400',
+          btnBg: 'bg-orange-500 hover:bg-orange-400 text-orange-950',
+          dotBg: 'bg-orange-400',
+          progressBg: 'bg-orange-500'
         };
       case 'Meal Break':
       case 'Lunch Break':
@@ -889,15 +919,22 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
     const emojiMap: Record<string, string> = {
       'Tea Break': '🍵',
+      'Snack Break': '🍿',
       'Meal Break': '🍱',
       'Lunch Break': '🍽️',
       'Team Huddle': '👥',
       'Team Meeting': '📅',
       'Attainment / Training': '🎓',
+      'Training': '🎓',
       'Activity': '⚡'
     };
     const emoji = emojiMap[type] || '⚡';
-    setActionFeedback({ success: true, message: `${type} started. Remember to end it when you return! ${emoji}` });
+    setActionFeedback({ success: true, message: `${type} started. 15-minute system reminder is active! ${emoji}` });
+
+    // Proactively request browser system notification permission if needed
+    if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch(() => {});
+    }
 
     try {
       if (!activeEmployee) return;
@@ -1186,6 +1223,41 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       {/* 1. EMPLOYEE DASHBOARD TAB */}
       {activeTab === 'emp_dashboard' && (
         <div className={`space-y-6 ${animations.stagger.container}`}>
+
+          {/* 📸 MANDATORY BIOMETRIC FACE RE-REGISTRATION BANNER */}
+          {!isFaceBiometricEnrolled(activeEmployee) && (
+            <div className="bg-gradient-to-r from-amber-950/90 via-slate-900 to-rose-950/90 border-2 border-amber-500/50 rounded-3xl p-5 sm:p-6 shadow-2xl relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
+              <div className="absolute -top-10 -right-10 w-48 h-48 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
+              <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
+                <div className="flex items-center gap-3.5">
+                  <div className="p-3 rounded-2xl bg-amber-500/20 text-amber-300 border border-amber-500/40 text-xl shadow-inner shrink-0 animate-bounce">
+                    📸
+                  </div>
+                  <div className="space-y-1">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-black tracking-widest text-amber-400 uppercase bg-amber-500/15 px-2.5 py-0.5 rounded-full border border-amber-500/30">
+                        ACTION REQUIRED • RE-REGISTRATION MANDATORY
+                      </span>
+                    </div>
+                    <h3 className="text-base font-black text-white">
+                      Register Your Official Face Biometric Template
+                    </h3>
+                    <p className="text-xs text-slate-300 max-w-xl font-medium leading-relaxed">
+                      All employees must re-register their face template. Registration takes only 5 seconds using your camera and ensures accurate, secure zero-touch check-ins.
+                    </p>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIsEnrollFaceModalOpen(true)}
+                  className="px-5 py-3 bg-gradient-to-r from-amber-500 to-orange-600 hover:from-amber-400 hover:to-orange-500 text-slate-950 font-black text-xs rounded-2xl shadow-lg shadow-amber-950/60 flex items-center gap-2 shrink-0 cursor-pointer transition-all active:scale-95"
+                >
+                  <Sparkles className="w-4 h-4 text-slate-950" />
+                  <span>Register My Face Now</span>
+                </button>
+              </div>
+            </div>
+          )}
           
           {/* 📢 High-Visibility Official Company Broadcast Announcement Banner */}
           {(() => {
@@ -1249,20 +1321,25 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                         <Home className="w-3.5 h-3.5 text-cyan-400" />
                         <span>{isOfficeWfh ? '🏢 Office-Wide WFH Day — GPS Radius Bypassed' : '🏠 Work From Home Approved — GPS Radius Bypassed'}</span>
                       </div>
+                    ) : !isFaceBiometricEnrolled(activeEmployee) ? (
+                      <div className="mb-3 px-3.5 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] font-black flex items-center gap-1.5 shadow-sm animate-pulse">
+                        <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
+                        <span>Biometric Face Template Pending — Re-Registration Required</span>
+                      </div>
                     ) : (
-                      <div className="mb-3 px-3.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/30 text-blue-400 text-[11px] font-extrabold flex items-center gap-1.5 shadow-sm">
-                        <ScanFace className="w-3.5 h-3.5 text-blue-400 animate-pulse" />
-                        <span>AI Face Biometric Camera Verification Active</span>
+                      <div className="mb-3 px-3.5 py-1 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-400 text-[11px] font-extrabold flex items-center gap-1.5 shadow-sm">
+                        <ScanFace className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>AI Face Biometrics Enrolled & Verified</span>
                       </div>
                     );
                   })()}
 
-                  {/* Loading Guard: Never flash 'Tap to Check In' until Firestore emits initial snapshot */}
-                  {attendanceSyncStatus === 'loading' ? (
+                  {/* Loading Guard: Instant 0ms render when cached shift or record is available */}
+                  {(attendanceSyncStatus === 'loading' && !todayRecord && (!attendance || attendance.length === 0)) ? (
                     <div className="relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] border-slate-700 bg-slate-900 text-slate-400 text-center p-4">
                       <Loader2 className="w-10 h-10 mb-2 animate-spin text-blue-400" />
                       <span className="font-bold text-xs tracking-wide text-white">Syncing Shift...</span>
-                      <span className="text-[10px] text-slate-500 mt-1">Live Firestore</span>
+                      <span className="text-[10px] text-slate-500 mt-1">Live Sync</span>
                     </div>
                   ) : isCeoOrCto ? (
                     <div className="relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] border-purple-500/50 bg-gradient-to-b from-purple-950/40 to-slate-900 text-purple-300 shadow-xl shadow-purple-950/50 text-center p-4">
@@ -1319,30 +1396,43 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                         </div>
                       </div>
                     ) : (
-                      <button 
-                        onClick={handleSelfCheckIn} 
-                        disabled={isCheckingIn || isCheckingOut}
-                        className={`relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] transition-all cursor-pointer outline-none ${
-                          isCheckingIn 
-                            ? 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] text-[var(--accent-blue)] animate-pulse'
-                            : 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-glow-blue)]'
-                        } ${!isCheckingIn && animations.tap}`}
-                      >
-                        <div className="absolute inset-1 rounded-full border border-[var(--border-subtle)] opacity-50 pointer-events-none" />
-                        
-                        {isCheckingIn ? (
-                          <>
-                            <Loader2 className="w-10 h-10 mb-2 animate-spin text-[var(--accent-blue)]" />
-                            <span className="font-semibold text-sm">Verifying...</span>
-                          </>
-                        ) : (
-                          <>
-                            <Fingerprint className="w-12 h-12 mb-3 text-[var(--accent-blue)]" strokeWidth={1.5} />
-                            <span className="font-bold text-sm tracking-wide">Tap to Check In</span>
-                            <span className="text-[10px] text-[var(--text-tertiary)] mt-1">Ready</span>
-                          </>
+                      <div className="flex flex-col items-center">
+                        <button 
+                          onClick={handleSelfCheckIn} 
+                          disabled={isCheckingIn || isCheckingOut}
+                          className={`relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] transition-all cursor-pointer outline-none ${
+                            isCheckingIn 
+                              ? 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] text-[var(--accent-blue)] animate-pulse'
+                              : 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-glow-blue)]'
+                          } ${!isCheckingIn && animations.tap}`}
+                        >
+                          <div className="absolute inset-1 rounded-full border border-[var(--border-subtle)] opacity-50 pointer-events-none" />
+                          
+                          {isCheckingIn ? (
+                            <>
+                              <Loader2 className="w-10 h-10 mb-2 animate-spin text-[var(--accent-blue)]" />
+                              <span className="font-semibold text-sm">Verifying...</span>
+                            </>
+                          ) : (
+                            <>
+                              <Fingerprint className="w-12 h-12 mb-3 text-[var(--accent-blue)]" strokeWidth={1.5} />
+                              <span className="font-bold text-sm tracking-wide">Tap to Check In</span>
+                              <span className="text-[10px] text-[var(--text-tertiary)] mt-1">Ready</span>
+                            </>
+                          )}
+                        </button>
+
+                        {!isFaceBiometricEnrolled(activeEmployee) && (
+                          <button
+                            type="button"
+                            onClick={() => setIsEnrollFaceModalOpen(true)}
+                            className="mt-3.5 px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer animate-pulse transition-all active:scale-95"
+                          >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>📸 Register Face Template First</span>
+                          </button>
                         )}
-                      </button>
+                      </div>
                     )
                   ) : !shiftComplete ? (
                     <div className="flex flex-col items-center justify-center gap-4 w-full">
@@ -1377,8 +1467,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                         })()}
                       </div>
 
-                      {/* Separate, Clearly-Labeled Check Out Button (Requires Confirmation) */}
-                      <div className="pt-2 flex justify-center">
+                      {/* Separate, Clearly-Labeled Check Out Button & Biometrics Action */}
+                      <div className="pt-2 flex flex-wrap items-center justify-center gap-3">
                         <button
                           onClick={handleSelfCheckOut}
                           disabled={isCheckingOut || isCheckingIn}
@@ -1390,6 +1480,16 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                             <LogOut className="w-4 h-4" />
                           )}
                           <span>{isCheckingOut ? 'Checking Out...' : 'Check Out (End Shift)'}</span>
+                        </button>
+
+                        <button
+                          type="button"
+                          onClick={() => setIsEnrollFaceModalOpen(true)}
+                          className="px-4 py-2.5 rounded-xl bg-blue-600/20 hover:bg-blue-600/40 text-blue-300 hover:text-white border border-blue-500/40 font-bold text-xs flex items-center gap-2 transition-all cursor-pointer shadow-lg shadow-blue-950/40"
+                          title="Register or update your biometric face template"
+                        >
+                          <Sparkles className="w-4 h-4 text-blue-400" />
+                          <span>📸 {isFaceBiometricEnrolled(activeEmployee) ? 'Re-Register Face' : 'Register Face Now'}</span>
                         </button>
                       </div>
                     </div>
@@ -2919,7 +3019,12 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         onConsent={() => {
           localStorage.setItem('kss_biometric_consent', 'true');
           setIsConsentModalOpen(false);
-          setIsFaceModalOpen(true);
+          const isEnrolled = isFaceBiometricEnrolled(activeEmployee);
+          if (!isEnrolled) {
+            setIsEnrollFaceModalOpen(true);
+          } else {
+            setIsFaceModalOpen(true);
+          }
         }}
         onDecline={() => {
           setIsConsentModalOpen(false);
@@ -2934,18 +3039,14 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         onSuccess={(descArr) => {
           executeCheckInProcess(descArr);
         }}
-        onEnrollSuccess={(descriptorArray) => {
+        onEnrollSuccess={async (descriptorArray) => {
           triggerHaptic('success');
-          const candidateIds = [activeEmployee.id, activeEmployee.employeeId, activeEmployee.uid].filter(Boolean) as string[];
-          saveEmployeeDescriptor(candidateIds, descriptorArray);
-          updateEmployee(activeEmployee.id, {
-            isFaceEnrolled: true,
-            faceEnrolledAt: new Date().toISOString(),
-            faceDescriptor: descriptorArray
-          });
+          const res = await enrollEmployeeBiometrics(activeEmployee.id, descriptorArray);
+          if (!res.success) throw new Error(res.message);
         }}
         employeeName={activeEmployee.fullName}
-        employeeId={activeEmployee.employeeId || activeEmployee.id}
+        employeeId={activeEmployee.id}
+        employeeCode={activeEmployee.employeeId}
         profilePhotoUrl={activeEmployee.profilePhotoUrl}
         cloudDescriptor={activeEmployee.faceDescriptor}
       />
@@ -2960,7 +3061,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           setTimeout(() => setActionFeedback(null), 3000);
         }}
         employeeName={activeEmployee.fullName}
-        employeeId={activeEmployee.employeeId || activeEmployee.id}
+        employeeId={activeEmployee.id}
+        employeeCode={activeEmployee.employeeId}
         cloudDescriptor={activeEmployee.faceDescriptor}
         isTestMode={true}
       />
@@ -2970,22 +3072,24 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         isOpen={isEnrollFaceModalOpen}
         onClose={() => setIsEnrollFaceModalOpen(false)}
         onSuccess={(descArr) => {
-          executeCheckInProcess(descArr);
+          if (!todayRecord?.checkInAt) {
+            executeCheckInProcess(descArr);
+          } else {
+            setActionFeedback({ success: true, message: '✓ Face Biometrics Successfully Registered & Verified!' });
+            setTimeout(() => setActionFeedback(null), 3500);
+          }
         }}
-        onEnrollSuccess={(descriptorArray) => {
+        onEnrollSuccess={async (descriptorArray) => {
           triggerHaptic('success');
-          const candidateIds = [activeEmployee.id, activeEmployee.employeeId, activeEmployee.uid].filter(Boolean) as string[];
-          saveEmployeeDescriptor(candidateIds, descriptorArray);
-          updateEmployee(activeEmployee.id, {
-            isFaceEnrolled: true,
-            faceEnrolledAt: new Date().toISOString(),
-            faceDescriptor: descriptorArray
-          });
+          const res = await enrollEmployeeBiometrics(activeEmployee.id, descriptorArray);
+          if (!res.success) throw new Error(res.message);
           setActionFeedback({ success: true, message: '✓ Face Biometric Template Successfully Enrolled & Synced to Cloud DB!' });
           setTimeout(() => setActionFeedback(null), 3500);
+          return res;
         }}
         employeeName={activeEmployee.fullName}
-        employeeId={activeEmployee.employeeId || activeEmployee.id}
+        employeeId={activeEmployee.id}
+        employeeCode={activeEmployee.employeeId}
         profilePhotoUrl={activeEmployee.profilePhotoUrl}
         cloudDescriptor={activeEmployee.faceDescriptor}
         isEnrollmentMode={true}

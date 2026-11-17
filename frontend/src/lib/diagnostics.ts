@@ -140,7 +140,8 @@ export function logErrorToFirestore(entry: ErrorLogEntry): void {
       import('./firebase'),
       import('firebase/firestore')
     ])
-      .then(async ([{ db }, fsMod]) => {
+      .then(async ([{ db, auth }, fsMod]) => {
+        if (!auth?.currentUser) return;
         await fsMod.addDoc(fsMod.collection(db, 'error_logs'), payload);
       })
       .catch(() => { /* observability must stay silent */ });

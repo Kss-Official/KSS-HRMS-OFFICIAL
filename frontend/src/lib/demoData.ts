@@ -425,6 +425,7 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     createdAt: '2024-05-01T10:00:00Z',
     updatedAt: new Date().toISOString(),
     profilePhotoUrl: '/avatars/akash.jpg',
+    isFaceEnrolled: true,
     approvedWfhDates: [],
     earnLeaveBalance: 1,
     sickLeaveBalance: 0

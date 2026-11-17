@@ -79,5 +79,8 @@ class EmployeeOut(EmployeeBase):
     class Config:
         from_attributes = True
 
+class PhotoUploadRequest(BaseModel):
+    photo_data: str
+
 class FaceEnrollRequest(BaseModel):
     face_descriptor: List[float] # 128 float array

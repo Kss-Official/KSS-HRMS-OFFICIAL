@@ -5,11 +5,13 @@ import { useHaptic } from '../../hooks/useHaptic';
 import {
   loadFaceModels,
   detectSingleFaceDescriptor,
-  verifyFaceAgainstEnrolled,
   saveEmployeeDescriptor,
   extractDescriptorFromImageUrl,
   getEmployeeDescriptor,
-  drawFaceMeshOverVideo
+  drawFaceMeshOverVideo,
+  ImageQualityMetrics,
+  LivenessTracker,
+  LivenessMetrics
 } from '../../lib/faceRecognitionEngine';
 import { verifyFaceApi, enrollFaceApi, getAuthToken } from '../../lib/apiClient';
 
@@ -22,9 +24,10 @@ export interface FaceCaptureModalProps {
   isOpen: boolean;
   onClose: () => void;
   onSuccess: (descriptorArray?: number[]) => void;
-  onEnrollSuccess?: (descriptorArray: number[]) => void;
+  onEnrollSuccess?: (descriptorArray: number[]) => Promise<any> | void;
   employeeName?: string;
   employeeId?: string;
+  employeeCode?: string;
   profilePhotoUrl?: string;
   cloudDescriptor?: number[];
   isTestMode?: boolean;
@@ -38,6 +41,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   onEnrollSuccess,
   employeeName = 'Employee',
   employeeId = 'emp-001',
+  employeeCode,
   profilePhotoUrl,
   cloudDescriptor,
   isTestMode = false,
@@ -57,6 +61,26 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   const [isEnrolled, setIsEnrolled] = useState<boolean>(false);
   const [profileDescriptor, setProfileDescriptor] = useState<Float32Array | null>(null);
   const [currentModeIsEnroll, setCurrentModeIsEnroll] = useState<boolean>(isEnrollmentMode);
+
+  // Progressive Smartphone FaceID Multi-Sample State
+  const [enrollmentProgress, setEnrollmentProgress] = useState<number>(0);
+  const [alignmentFeedback, setAlignmentFeedback] = useState<string | null>(null);
+  const [qualityMetrics, setQualityMetrics] = useState<ImageQualityMetrics | null>(null);
+  const enrollmentSamplesRef = useRef<Float32Array[]>([]);
+  const lastEnrollmentSampleTimeRef = useRef<number>(0);
+  const livenessTrackerRef = useRef<LivenessTracker>(new LivenessTracker());
+  const REQUIRED_ENROLLMENT_SAMPLES = 8;
+
+  // Reset sampling session state whenever modal opens or mode changes
+  useEffect(() => {
+    if (isOpen) {
+      enrollmentSamplesRef.current = [];
+      lastEnrollmentSampleTimeRef.current = 0;
+      setEnrollmentProgress(0);
+      setAlignmentFeedback(null);
+      livenessTrackerRef.current.reset();
+    }
+  }, [isOpen, currentModeIsEnroll]);
 
   // Sync mode state when prop changes
   useEffect(() => {
@@ -97,22 +121,35 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         setStatusStep('LOADING_MODELS');
         setFeedbackText('Loading neural network face models...');
 
-        // Start camera stream acquisition in parallel with model loading
+        // Start camera stream acquisition with adaptive HD resolution and smooth fallback
         let mediaStream: MediaStream | null = null;
         try {
           mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+            video: {
+              facingMode: 'user',
+              width: { ideal: 1280, min: 640 },
+              height: { ideal: 720, min: 480 },
+              frameRate: { ideal: 30, min: 15 }
+            },
             audio: false
           });
         } catch {
-          // Fallback to generic video
+          // Fallback to standard 640x480 video
           try {
             mediaStream = await navigator.mediaDevices.getUserMedia({
-              video: true,
+              video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
               audio: false
             });
           } catch {
-            throw new Error('Camera access denied. Please allow camera permission in browser settings and try again.');
+            // Fallback to generic video
+            try {
+              mediaStream = await navigator.mediaDevices.getUserMedia({
+                video: true,
+                audio: false
+              });
+            } catch {
+              throw new Error('Camera access denied. Please allow camera permission in browser settings and try again.');
+            }
           }
         }
 
@@ -167,28 +204,51 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   // Handle Enrollment Action
   const handlePerformEnrollment = async (scannedDescriptor: Float32Array) => {
     const descriptorArray = Array.from(scannedDescriptor);
+    setStatusStep('SCANNING');
+    setFeedbackText('Persisting biometric template to cloud database...');
+
+    let enrollmentError: string | null = null;
+    try {
+      if (onEnrollSuccess) {
+        const res: any = await onEnrollSuccess(descriptorArray);
+        if (res && res.success === false) {
+          enrollmentError = res.message || 'Face registration failed.';
+        }
+      } else {
+        saveEmployeeDescriptor(employeeId, scannedDescriptor);
+        const res = await enrollFaceApi(employeeId, descriptorArray);
+        if (res && res.is_face_enrolled === false) {
+          enrollmentError = res.message || 'Face registration failed.';
+        }
+      }
+    } catch (err: any) {
+      console.warn('[FaceCaptureModal] Enrollment error:', err);
+      enrollmentError = err?.message || 'Biometric registration failed. Please try again.';
+    }
+
+    if (enrollmentError) {
+      setStatusStep('FAILED');
+      setFeedbackText(enrollmentError);
+      setErrorMsg(enrollmentError);
+      triggerHaptic('error');
+      enrollmentSamplesRef.current = [];
+      setEnrollmentProgress(0);
+      return;
+    }
+
     saveEmployeeDescriptor(employeeId, scannedDescriptor);
     setIsEnrolled(true);
     setCurrentModeIsEnroll(false);
-    setConfidencePercent(98);
+    setConfidencePercent(99);
     setStatusStep('VERIFIED');
     setFeedbackText('✓ Face Biometrics Successfully Registered & Verified!');
     triggerHaptic('success');
-
-    if (getAuthToken() && employeeId) {
-      try {
-        await enrollFaceApi(employeeId, descriptorArray);
-      } catch (err) {
-        console.warn('[Biometrics] Backend face enrollment note:', err);
-      }
-    }
-    onEnrollSuccess?.(descriptorArray);
 
     if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
     actionTimerRef.current = setTimeout(() => {
       onSuccess(descriptorArray);
       onClose();
-    }, 450);
+    }, 700);
   };
 
   // Ultra-Fast Non-Overlapping Live Detection Loop
@@ -209,8 +269,19 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
       isScanning = true;
       try {
-        const scan = await detectSingleFaceDescriptor(videoRef.current);
+        const scan = await detectSingleFaceDescriptor(videoRef.current, livenessTrackerRef.current);
         if (!active) return;
+
+        if (scan.quality) {
+          setQualityMetrics(scan.quality);
+        }
+
+        // Anti-Spoofing & Liveness Guard: reject static photos or phone screens
+        if (scan.liveness?.isStaticSpoof) {
+          setAlignmentFeedback('Static image detected • Natural movement required');
+          setFeedbackText('Static photo or screen detected. Live movement or natural blink required...');
+          return;
+        }
 
         // Render live 68-point facial landmarks mesh on canvas overlay
         if (canvasRef.current && videoRef.current) {
@@ -218,15 +289,108 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         }
 
         if (scan.detected && scan.descriptor) {
-          setStatusStep('SCANNING');
-          setFeedbackText('Face detected! Verifying biometrics...');
-
-          // Mode A: Explicit Enrollment Mode
+          // Mode A: Explicit Enrollment Mode (Smartphone FaceID progressive multi-stage biometric extraction)
           if (currentModeIsEnroll) {
-            active = false;
-            handlePerformEnrollment(scan.descriptor);
+            setStatusStep('SCANNING');
+            const vw = videoRef.current.videoWidth || 640;
+            const vh = videoRef.current.videoHeight || 480;
+            const box = scan.detectionBox || { x: 0, y: 0, width: 0, height: 0 };
+            const centerX = box.x + box.width / 2;
+            const centerY = box.y + box.height / 2;
+            const offsetX = Math.abs(centerX - vw / 2) / vw;
+            const offsetY = Math.abs(centerY - vh / 2) / vh;
+            const faceRatio = box.height / vh;
+
+            // Smartphone FaceID Alignment & Environmental Checks
+            if (faceRatio < 0.22) {
+              setAlignmentFeedback('Move closer to the camera');
+              setFeedbackText('Position face closer inside frame...');
+              return;
+            }
+            if (faceRatio > 0.80) {
+              setAlignmentFeedback('Move slightly further away');
+              setFeedbackText('Move slightly back from camera...');
+              return;
+            }
+            if (offsetX > 0.24 || offsetY > 0.26) {
+              setAlignmentFeedback('Center your face in the oval');
+              setFeedbackText('Align your face inside the center oval...');
+              return;
+            }
+            if (scan.quality) {
+              if (scan.quality.brightness < 18) {
+                setAlignmentFeedback('Too dark • Face towards a light source');
+                setFeedbackText('Increase room lighting or turn screen brightness up...');
+                return;
+              }
+              if (scan.quality.brightness > 242) {
+                setAlignmentFeedback('Too bright • Avoid direct glare');
+                setFeedbackText('Avoid direct sunlight or harsh backlight...');
+                return;
+              }
+            }
+
+            setAlignmentFeedback(null);
+            const now = Date.now();
+            // Temporal sampling throttle: 220ms between distinct high-res frames
+            if (now - lastEnrollmentSampleTimeRef.current >= 220) {
+              enrollmentSamplesRef.current.push(new Float32Array(scan.descriptor));
+              lastEnrollmentSampleTimeRef.current = now;
+
+              const sampleCount = enrollmentSamplesRef.current.length;
+              const progressPct = Math.min(100, Math.round((sampleCount / REQUIRED_ENROLLMENT_SAMPLES) * 100));
+              setEnrollmentProgress(progressPct);
+
+              // Dynamic progressive smartphone feedback across biometric stages
+              if (sampleCount <= 2) {
+                setFeedbackText(`Analyzing facial geometry & structure... (${progressPct}%)`);
+              } else if (sampleCount <= 4) {
+                setFeedbackText(`Mapping 68-point neural biometric landmarks... (${progressPct}%)`);
+              } else if (sampleCount <= 6) {
+                setFeedbackText(`Synthesizing 128D neural facial vector... (${progressPct}%)`);
+              } else if (sampleCount < REQUIRED_ENROLLMENT_SAMPLES) {
+                setFeedbackText(`Validating biometric template stability... (${progressPct}%)`);
+              } else {
+                setFeedbackText(`Biometric template synthesized! Finalizing...`);
+              }
+
+              // When all 8 required samples are thoroughly analyzed and verified:
+              if (sampleCount >= REQUIRED_ENROLLMENT_SAMPLES) {
+                const liveState = livenessTrackerRef.current.processFrame(scan.landmarks);
+                if (liveState.isStaticSpoof) {
+                  setFeedbackText('Static photo or screen detected. Registration requires a live person.');
+                  return;
+                }
+                active = false;
+                // Compute normalized centroid vector across sample frames
+                const samples = enrollmentSamplesRef.current;
+                const centroid = new Float32Array(128);
+                for (let i = 0; i < samples.length; i++) {
+                  for (let j = 0; j < 128; j++) {
+                    centroid[j] += samples[i][j];
+                  }
+                }
+                let norm = 0;
+                for (let j = 0; j < 128; j++) {
+                  centroid[j] /= samples.length;
+                  norm += centroid[j] * centroid[j];
+                }
+                norm = Math.sqrt(norm);
+                if (norm > 0) {
+                  for (let j = 0; j < 128; j++) {
+                    centroid[j] /= norm;
+                  }
+                }
+
+                await handlePerformEnrollment(centroid);
+                return;
+              }
+            }
             return;
           }
+
+          setStatusStep('SCANNING');
+          setFeedbackText('Face detected! Verifying biometrics...');
 
           // Mode B: Not enrolled + NOT in enrollment mode
           if (!isEnrolled) {
@@ -237,72 +401,98 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             return;
           }
 
-          // Mode C: Verification — Strict 1:1 match against employee's enrolled biometric template
-          const match = verifyFaceAgainstEnrolled(scan.descriptor, employeeId, null, cloudDescriptor);
-
-          if (match.isMatch) {
-            const conf = match.confidencePercent;
-            const descArr = Array.from(scan.descriptor);
-            setConfidencePercent(conf);
-            setStatusStep('VERIFIED');
-            setFeedbackText(`✓ Biometric Match Verified (${conf}% Confidence)`);
-            triggerHaptic('success');
-            active = false;
-
-            if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
-            actionTimerRef.current = setTimeout(() => {
-              onSuccess(descArr);
-              onClose();
-            }, 350);
+          // Mode C: Verification — Backend-Mandatory 1:1 biometric check
+          // LOCAL check is ONLY a pre-filter to avoid unnecessary API calls on clearly wrong faces.
+          // onSuccess is NEVER called based on local match alone — backend MUST confirm.
+          const isLive = scan.liveness?.isLive ?? true;
+          if (!isLive) {
+            setFeedbackText('Static image detected. Please blink naturally to confirm you are live...');
             return;
-          } else {
-            // Check Neon Vector Database on frames 1, 2, and 4 with strict 0.45 threshold
-            scanAttemptCount++;
-            if (scanAttemptCount <= 8) {
-              setStatusStep('SCANNING');
-              setFeedbackText(`Verifying biometric landmarks... (${Math.round((scanAttemptCount / 8) * 100)}%)`);
+          }
 
-              // Sub-2ms Neon Vector Database targeted search
-              if (scanAttemptCount === 1 || scanAttemptCount === 2 || scanAttemptCount === 4) {
-                const descArr = Array.from(scan.descriptor);
-                verifyFaceApi(descArr, 0.45, employeeId)
-                  .then((backendRes) => {
-                    if (backendRes && backendRes.matched && active) {
-                      const matchedCode = backendRes.employee_code;
-                      const matchedId = backendRes.employee_id;
-                      // Strict validation: must match the target employee
-                      if (matchedCode && employeeId && matchedCode !== employeeId && matchedId !== employeeId) {
-                        console.warn('[Biometrics] Face matched a different employee:', matchedCode, 'expected:', employeeId);
-                        return;
-                      }
-                      setConfidencePercent(Math.round((backendRes.confidence || 0.95) * 100));
-                      setStatusStep('VERIFIED');
-                      setFeedbackText(`✓ Biometric Verified via Vector Engine (${Math.round((backendRes.confidence || 0.95) * 100)}% Confidence)`);
-                      triggerHaptic('success');
-                      active = false;
-                      if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
-                      actionTimerRef.current = setTimeout(() => {
-                        onSuccess(descArr);
-                        onClose();
-                      }, 250);
-                    }
-                  })
-                  .catch(() => {});
-              }
-            } else {
-              // Only fail after 8-frame window has elapsed without a match
-              setStatusStep('FAILED');
-              setConfidencePercent(match.confidencePercent);
-              setFeedbackText(`❌ Biometric Mismatch (${match.confidencePercent}% Confidence). Face did not match registered profile.`);
-              triggerHaptic('error');
-              active = false;
-              return;
-            }
+          scanAttemptCount++;
+          const progressPct = Math.round(Math.min(100, (scanAttemptCount / 20) * 100));
+
+          if (scan.quality && scan.quality.guidanceMessage) {
+            setFeedbackText(`Verifying identity... ${scan.quality.guidanceMessage}`);
+          } else {
+            setFeedbackText(`Verifying biometrics via secure vector engine... (${progressPct}%)`);
+          }
+
+          // Send to backend on frames 1, 3, 6, 10, 15, 18, 20
+          if ([1, 3, 6, 10, 15, 18, 20].includes(scanAttemptCount) && active) {
+            const descArr = Array.from(scan.descriptor);
+            verifyFaceApi(descArr, 0.48, employeeId, employeeCode)
+              .then((backendRes) => {
+                if (!active) return;
+
+                if (backendRes.impersonation_detected) {
+                  setStatusStep('FAILED');
+                  const impMsg = backendRes.message || `Security Violation: Face belongs to a different employee. Cross-employee check-in is blocked.`;
+                  setFeedbackText(`❌ ${impMsg}`);
+                  setErrorMsg(impMsg);
+                  triggerHaptic('error');
+                  active = false;
+                  return;
+                }
+
+                if (backendRes.matched) {
+                  const matchedCode = String(backendRes.employee_code || '').trim().toLowerCase();
+                  const matchedId   = String(backendRes.employee_id || '').trim().toLowerCase();
+                  const targetCode  = String(employeeCode || employeeId || '').trim().toLowerCase();
+                  const targetId    = String(employeeId || '').trim().toLowerCase();
+
+                  // Valid match if EITHER employee_code or employee_id corresponds to the target employee
+                  const isMatchForTarget = 
+                    (matchedCode && (matchedCode === targetCode || matchedCode === targetId)) ||
+                    (matchedId && (matchedId === targetId || matchedId === targetCode));
+
+                  if (!isMatchForTarget && (targetCode || targetId)) {
+                    console.warn('[Biometrics] MISMATCH — backend matched', backendRes.employee_code || backendRes.employee_id, 'but expected', targetCode);
+                    setStatusStep('FAILED');
+                    const mismatchMsg = `Security Violation: Scanned face matches ${backendRes.full_name || backendRes.employee_code}, not ${employeeName}. Cross-employee check-in is forbidden.`;
+                    setFeedbackText(mismatchMsg);
+                    setErrorMsg(mismatchMsg);
+                    triggerHaptic('error');
+                    active = false;
+                    return;
+                  }
+
+                  const conf = Math.round((backendRes.confidence || 0.95) * 100);
+                  setConfidencePercent(conf);
+                  setStatusStep('VERIFIED');
+                  setFeedbackText(`✓ Biometric Identity Confirmed (${conf}% Confidence)`);
+                  triggerHaptic('success');
+                  active = false;
+                  if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+                  actionTimerRef.current = setTimeout(() => {
+                    onSuccess(descArr);
+                    onClose();
+                  }, 250);
+                }
+                // If backendRes.matched === false, let the scan loop continue until frame 20
+              })
+              .catch((err) => {
+                console.warn('[Biometrics] Backend verify error on frame', scanAttemptCount, err);
+                // Don't block — let the loop retry on next scheduled frame
+              });
+          }
+
+          if (scanAttemptCount > 20 && active) {
+            // 20-frame window exhausted without backend confirmation → fail
+            setStatusStep('FAILED');
+            setFeedbackText(`❌ Biometric verification failed. Face did not match registered profile. Please try again in better lighting.`);
+            triggerHaptic('error');
+            active = false;
           }
         } else {
           if (statusStep === 'SCANNING') {
             setStatusStep('CENTER_FACE');
-            setFeedbackText('Position your face clearly inside the frame...');
+            if (scan.quality && scan.quality.guidanceMessage) {
+              setFeedbackText(scan.quality.guidanceMessage);
+            } else {
+              setFeedbackText('Position your face clearly inside the frame...');
+            }
             setConfidencePercent(null);
           }
         }
@@ -379,6 +569,44 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                   statusStep === 'SCANNING' ? 'border-blue-400 bg-blue-500/5 shadow-[0_0_30px_rgba(59,130,246,0.2)] animate-pulse' :
                     'border-emerald-400/80 border-dashed'
               }`}>
+              
+              {/* Smartphone FaceID Circular Progress Ring (when in enrollment mode) */}
+              {currentModeIsEnroll && (
+                <svg className="absolute -inset-5 w-[calc(100%+40px)] h-[calc(100%+40px)] pointer-events-none">
+                  <rect
+                    x="10"
+                    y="10"
+                    width="calc(100% - 20px)"
+                    height="calc(100% - 20px)"
+                    rx="40%"
+                    fill="none"
+                    stroke="rgba(16, 185, 129, 0.15)"
+                    strokeWidth="5"
+                  />
+                  <rect
+                    x="10"
+                    y="10"
+                    width="calc(100% - 20px)"
+                    height="calc(100% - 20px)"
+                    rx="40%"
+                    fill="none"
+                    stroke="url(#progress-gradient)"
+                    strokeWidth="5"
+                    strokeDasharray="800"
+                    strokeDashoffset={800 - (800 * enrollmentProgress) / 100}
+                    strokeLinecap="round"
+                    className="transition-all duration-300 ease-out"
+                  />
+                  <defs>
+                    <linearGradient id="progress-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
+                      <stop offset="0%" stopColor="#06b6d4" />
+                      <stop offset="50%" stopColor="#10b981" />
+                      <stop offset="100%" stopColor="#3b82f6" />
+                    </linearGradient>
+                  </defs>
+                </svg>
+              )}
+
               <div className="w-full h-full border border-emerald-400/30 rounded-[40%] absolute inset-2 opacity-60" />
               {statusStep === 'VERIFIED' && (
                 <CheckCircle2 className="w-16 h-16 text-emerald-400 animate-in zoom-in-50 duration-300" />
@@ -389,8 +617,20 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               {statusStep === 'NOT_ENROLLED' && (
                 <AlertTriangle className="w-16 h-16 text-amber-400 animate-in zoom-in-50 duration-300" />
               )}
+              {currentModeIsEnroll && statusStep === 'SCANNING' && enrollmentProgress > 0 && (
+                <div className="absolute bottom-4 px-3 py-1 bg-slate-950/80 backdrop-blur-md rounded-full border border-emerald-500/40 text-emerald-400 text-xs font-mono font-black animate-pulse">
+                  {enrollmentProgress}%
+                </div>
+              )}
             </div>
           </div>
+
+          {/* Actionable Guidance Banner (Alignment, Lighting & Camera Quality) */}
+          {(alignmentFeedback || (qualityMetrics?.guidanceMessage && statusStep === 'SCANNING')) && (
+            <div className="absolute top-16 left-1/2 transform -translate-x-1/2 z-30 px-3.5 py-1.5 bg-amber-500/90 text-slate-950 font-black text-xs rounded-full shadow-lg border border-amber-300/40 animate-bounce max-w-[85%] text-center">
+              ⚠️ {alignmentFeedback || qualityMetrics?.guidanceMessage}
+            </div>
+          )}
 
           {/* Overlay: Neural Network Loading State */}
           {statusStep === 'LOADING_MODELS' && (
@@ -435,7 +675,11 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               <UserCheck className="w-3 h-3 text-emerald-400" />
               {employeeName}
             </span>
-            {confidencePercent !== null && (
+            {currentModeIsEnroll ? (
+              <span className="text-[10px] font-mono font-bold px-3 py-1 rounded-full border backdrop-blur-md bg-blue-500/20 text-blue-300 border-blue-500/30">
+                Enrollment: {enrollmentProgress}%
+              </span>
+            ) : confidencePercent !== null && (
               <span className={`text-[10px] font-mono font-bold px-3 py-1 rounded-full border backdrop-blur-md ${statusStep === 'FAILED'
                 ? 'bg-rose-500/20 text-rose-300 border-rose-500/30'
                 : 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
@@ -444,6 +688,29 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
               </span>
             )}
           </div>
+
+          {/* Real-time Environmental Quality Status Indicators */}
+          {qualityMetrics && (
+            <div className="absolute top-11 left-4 right-4 flex items-center justify-between pointer-events-none z-20 text-[10px] font-mono">
+              <span className={`px-2.5 py-0.5 rounded-full backdrop-blur-md border flex items-center gap-1 ${
+                qualityMetrics.lightingCondition === 'OPTIMAL'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+              }`}>
+                {qualityMetrics.lightingCondition === 'OPTIMAL' ? '☀️ Optimal Light' :
+                 qualityMetrics.lightingCondition === 'TOO_DARK' ? '🌙 Low Light' :
+                 qualityMetrics.lightingCondition === 'TOO_BRIGHT' ? '☀️ High Glare' : '🌓 Side Shadows'}
+              </span>
+
+              <span className={`px-2.5 py-0.5 rounded-full backdrop-blur-md border flex items-center gap-1 ${
+                qualityMetrics.sharpnessCondition === 'SHARP'
+                  ? 'bg-emerald-500/20 text-emerald-300 border-emerald-500/30'
+                  : 'bg-amber-500/20 text-amber-300 border-amber-500/30'
+              }`}>
+                {qualityMetrics.sharpnessCondition === 'SHARP' ? '🎯 Sharp Focus' : '💨 Motion / Blur'}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Footer Status Bar */}

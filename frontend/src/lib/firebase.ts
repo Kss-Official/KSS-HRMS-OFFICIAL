@@ -221,10 +221,14 @@ export function subscribeWithRecovery(
   };
 }
 
-// Test Connection reliably
+// Test Connection reliably without blocking boot
 export async function testConnection() {
   if (typeof navigator !== 'undefined' && !navigator.onLine) {
     return false;
+  }
+  // When FastAPI is active or in local session, avoid blocking server call to Firestore
+  if (typeof window !== 'undefined' && (localStorage.getItem('kalpanaaa_jwt_token') || localStorage.getItem('kss_v1_session'))) {
+    return true;
   }
   try {
     await getDocFromServer(doc(db, 'settings', 'global'));

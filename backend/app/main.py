@@ -1,10 +1,15 @@
+import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from contextlib import asynccontextmanager
 
 from app.core.config import settings
 from app.core.database import engine, Base
 from app.api.v1.router import api_router
+
+# Ensure uploads directory for persistent employee photos and documents exists
+os.makedirs("uploads/avatars", exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -36,6 +41,9 @@ app.add_middleware(
 
 # Include API v1 Router
 app.include_router(api_router, prefix=settings.API_V1_STR)
+
+# Serve uploaded employee photos and static assets
+app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
 
 @app.get("/health", tags=["System"])
 async def health_check():

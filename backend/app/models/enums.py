@@ -48,6 +48,7 @@ class LeaveType(str, Enum):
     SICK_LEAVE = "SICK_LEAVE"
     CASUAL_LEAVE = "CASUAL_LEAVE"
     WFH = "WFH"
+    WORK_FROM_HOME = "WORK_FROM_HOME"
     LOSS_OF_PAY = "LOSS_OF_PAY"
 
 class LeaveStatus(str, Enum):

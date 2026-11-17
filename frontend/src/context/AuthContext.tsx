@@ -71,14 +71,20 @@ import {
   reviewLeaveApi,
   createEmployeeApi,
   updateEmployeeApi,
+  deleteEmployeeApi,
+  uploadPhotoApi,
   getSettingsApi,
   updateSettingsApi,
   getAuditLogsApi,
   createAuditLogApi,
+  resetAllFacesApi,
+  resetEmployeeFaceApi,
+  enrollFaceApi,
   getAuthToken,
   setAuthToken,
   removeAuthToken
 } from '../lib/apiClient';
+import { resetAllLocalFaceDescriptors, clearEmployeeDescriptor, saveEmployeeDescriptor, isFaceBiometricEnrolled } from '../lib/faceDescriptorStore';
 import { getEmployeeAvatar, LOCAL_AVATARS } from '../lib/avatarHelper';
 
 const mapBackendToFrontendEmployee = (data: any): Employee => {
@@ -366,6 +372,9 @@ interface AuthContextType {
   saveCompanyWorkZone: (zone: Partial<WorkZone>) => Promise<void>;
   addAuditLog: (action: string, target: string, details: string) => void;
   resetToDemoData: () => void;
+  enrollEmployeeBiometrics: (employeeId: string, faceDescriptor: number[]) => Promise<{ success: boolean; message: string }>;
+  resetEmployeeBiometrics: (employeeId: string) => Promise<{ success: boolean; message: string }>;
+  resetAllBiometrics: () => Promise<{ success: boolean; message: string }>;
   regenerateQrToken: (employeeId: string) => string;
   sendPasswordReset: (email: string) => Promise<{ success: boolean; message: string }>;
   setEmployeeInitialPassword: (email: string, pass: string) => Promise<{ success: boolean; message: string }>;
@@ -514,6 +523,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(cachedActive) as Employee;
         if (parsed && (parsed.id === savedSessionId || parsed.employeeId === savedSessionId || (savedEmail && parsed.email?.toLowerCase() === savedEmail.toLowerCase()))) {
+          if (isFaceBiometricEnrolled(parsed)) {
+            parsed.isFaceEnrolled = true;
+          }
           parsed.profilePhotoUrl = getEmployeeAvatar(parsed);
           return parsed;
         }
@@ -532,6 +544,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           (savedEmail && e.email?.toLowerCase() === savedEmail.toLowerCase())
         );
         if (found) {
+          if (isFaceBiometricEnrolled(found)) {
+            found.isFaceEnrolled = true;
+          }
           found.profilePhotoUrl = getEmployeeAvatar(found);
           return found;
         }
@@ -543,7 +558,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         e.employeeId === savedSessionId ||
         (savedEmail && e.email?.toLowerCase() === savedEmail.toLowerCase())
       );
-      if (foundInInitial) return foundInInitial;
+      if (foundInInitial) {
+        const copy = { ...foundInInitial };
+        if (isFaceBiometricEnrolled(copy)) {
+          copy.isFaceEnrolled = true;
+        }
+        return copy;
+      }
     }
     return null;
   });
@@ -593,7 +614,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   
   // Ready immediately if session is valid on boot; otherwise waits for onAuthStateChanged
   const [isSessionReady, setIsSessionReady] = useState<boolean>(() => isSessionValidOnBoot());
-  const [attendanceSyncStatus, setAttendanceSyncStatus] = useState<'loading' | 'synced'>('loading');
+  const [attendanceSyncStatus, setAttendanceSyncStatus] = useState<'loading' | 'synced'>(() => {
+    if (typeof window !== 'undefined') {
+      if (localStorage.getItem('kalpanaaa_jwt_token') || localStorage.getItem('kss_v1_session')) {
+        return 'synced';
+      }
+      const cached = localStorage.getItem('kss_v1_attendance');
+      if (cached) {
+        try {
+          const parsed = JSON.parse(cached);
+          if (Array.isArray(parsed) && parsed.length > 0) return 'synced';
+        } catch {}
+      }
+    }
+    return 'synced';
+  });
 
   // P0 INCIDENT FIX: verified Firebase Auth identity driving the Firestore listener
   // lifecycle. Listeners may only attach AFTER onAuthStateChanged has resolved a
@@ -1187,8 +1222,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (updatedSelf.role === 'SUPER_ADMIN') nextRole = 'SUPER_ADMIN';
       }
 
-      if (updatedSelf.role !== activeEmployee.role || role !== nextRole || JSON.stringify(updatedSelf) !== JSON.stringify(activeEmployee)) {
-        setActiveEmployee(updatedSelf);
+      const isEnrolled = updatedSelf.isFaceEnrolled || activeEmployee.isFaceEnrolled || isFaceBiometricEnrolled(activeEmployee) || isFaceBiometricEnrolled(updatedSelf);
+      const mergedSelf: Employee = {
+        ...activeEmployee,
+        ...updatedSelf,
+        isFaceEnrolled: isEnrolled,
+        faceDescriptor: updatedSelf.faceDescriptor || activeEmployee.faceDescriptor
+      };
+
+      if (updatedSelf.role !== activeEmployee.role || role !== nextRole || JSON.stringify(mergedSelf) !== JSON.stringify(activeEmployee)) {
+        setActiveEmployee(mergedSelf);
         setRole(nextRole);
       }
     }
@@ -1335,38 +1378,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ...(isOwnRecord && (auth.currentUser?.uid || user?.uid) ? { authUid: auth.currentUser?.uid || user?.uid } : {})
           });
 
-          updateDoc(doc(db, 'attendance', record.id), autoCheckoutPayload)
-            .then(() => {
-              // Audit only on confirmed success (fix 3).
-              addAuditLogRef.current(
-                'AUTO_CHECKOUT',
-                `Att ID: ${record.id}`,
-                `Auto-checked out at 11:00 PM IST for ${record.date}`
-              );
-            })
-            .catch((err) => {
-              // Bounded retry, and never retry a permanent authorization failure (fix 2).
-              const code = String(err?.code || '');
-              const errMsg = String(err?.message || '').toLowerCase();
-              const permanent = code === 'permission-denied' || code === 'unauthenticated' || code === 'invalid-argument' || code === '403' ||
-                errMsg.includes('permission') || errMsg.includes('insufficient permissions') || errMsg.includes('permission-denied');
-              const attempts = (attemptCounts.get(record.id) || 0) + 1;
-              attemptCounts.set(record.id, attempts);
-              handleFirestoreError(err, OperationType.UPDATE, `attendance/${record.id}`);
-              if (!permanent && attempts < MAX_ATTEMPTS) {
-                processedIds.delete(record.id);
-              }
-              if (permanent) {
-                console.warn(
-                  `[AuthContext] Auto-checkout permanently denied or unauthorized for ${record.id} — stopping retries.`
+          if (auth.currentUser) {
+            updateDoc(doc(db, 'attendance', record.id), autoCheckoutPayload)
+              .then(() => {
+                // Audit only on confirmed success (fix 3).
+                addAuditLogRef.current(
+                  'AUTO_CHECKOUT',
+                  `Att ID: ${record.id}`,
+                  `Auto-checked out at 11:00 PM IST for ${record.date}`
                 );
-              } else {
-                console.warn(
-                  `[AuthContext] Auto-checkout write failed for ${record.id} (attempt ${attempts}/${MAX_ATTEMPTS}, retryable):`,
-                  err
-                );
-              }
-            });
+              })
+              .catch((err) => {
+                // Bounded retry, and never retry a permanent authorization failure (fix 2).
+                const code = String(err?.code || '');
+                const errMsg = String(err?.message || '').toLowerCase();
+                const permanent = code === 'permission-denied' || code === 'unauthenticated' || code === 'invalid-argument' || code === '403' ||
+                  errMsg.includes('permission') || errMsg.includes('insufficient permissions') || errMsg.includes('permission-denied');
+                const attempts = (attemptCounts.get(record.id) || 0) + 1;
+                attemptCounts.set(record.id, attempts);
+                if (!permanent) {
+                  handleFirestoreError(err, OperationType.UPDATE, `attendance/${record.id}`);
+                }
+                if (!permanent && attempts < MAX_ATTEMPTS) {
+                  processedIds.delete(record.id);
+                }
+                if (permanent) {
+                  console.warn(
+                    `[AuthContext] Auto-checkout permanently denied or unauthorized for ${record.id} — stopping retries.`
+                  );
+                } else {
+                  console.warn(
+                    `[AuthContext] Auto-checkout write failed for ${record.id} (attempt ${attempts}/${MAX_ATTEMPTS}, retryable):`,
+                    err
+                  );
+                }
+              });
+          } else {
+            // Unauthenticated session in Firebase: backend FastAPI owns the auto-checkout lifecycle.
+            processedIds.add(record.id);
+          }
         }
       });
     };
@@ -1976,10 +2026,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             if (deduplicated.length > 0) {
-              const resolvedWithAvatars = deduplicated.map(emp => ({
-                ...emp,
-                profilePhotoUrl: getEmployeeAvatar(emp)
-              }));
+              const resolvedWithAvatars = deduplicated.map(emp => {
+                const enrolled = emp.isFaceEnrolled || isFaceBiometricEnrolled(emp);
+                return {
+                  ...emp,
+                  isFaceEnrolled: enrolled,
+                  profilePhotoUrl: getEmployeeAvatar(emp)
+                };
+              });
               setEmployees(resolvedWithAvatars);
               setActiveEmployee(prev => {
                 if (!prev) return prev;
@@ -1990,7 +2044,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   setTimeout(() => logout(), 0);
                   return null;
                 }
-                return { ...prev, ...fresh, profilePhotoUrl: getEmployeeAvatar(fresh) };
+                const enrolled = fresh.isFaceEnrolled || prev.isFaceEnrolled || isFaceBiometricEnrolled(prev) || isFaceBiometricEnrolled(fresh);
+                return {
+                  ...prev,
+                  ...fresh,
+                  isFaceEnrolled: enrolled,
+                  faceDescriptor: fresh.faceDescriptor || prev.faceDescriptor,
+                  profilePhotoUrl: getEmployeeAvatar(fresh)
+                };
               });
             }
           } else {
@@ -2677,7 +2738,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (needsSl) e.sickLeaveBalance = 0;
           if (needsEl) e.earnLeaveBalance = 2;
           changed = true;
-          setDoc(doc(db, 'employees', e.id), { approvedWfhDates: cleanedDates, sickLeaveBalance: e.sickLeaveBalance, earnLeaveBalance: e.earnLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          if (auth.currentUser) {
+            setDoc(doc(db, 'employees', e.id), { approvedWfhDates: cleanedDates, sickLeaveBalance: e.sickLeaveBalance, earnLeaveBalance: e.earnLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          }
         }
       } else if (isAsbin) {
         // Asbin: EL=0, SL=1, WFH=0
@@ -2691,7 +2754,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (needsEl) e.earnLeaveBalance = 0;
           if (needsSl) e.sickLeaveBalance = 1;
           changed = true;
-          setDoc(doc(db, 'employees', e.id), { approvedWfhDates: updatedDates, earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          if (auth.currentUser) {
+            setDoc(doc(db, 'employees', e.id), { approvedWfhDates: updatedDates, earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          }
         }
       } else if (isMahesh) {
         // Mahesh: EL=1, SL=0, WFH=0
@@ -2705,7 +2770,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           if (needsEl) e.earnLeaveBalance = 1;
           if (needsSl) e.sickLeaveBalance = 0;
           changed = true;
-          setDoc(doc(db, 'employees', e.id), { approvedWfhDates: updatedDates, earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          if (auth.currentUser) {
+            setDoc(doc(db, 'employees', e.id), { approvedWfhDates: updatedDates, earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          }
         }
       } else if (isThabeethal) {
         // Thabeethal: EL=0, SL=1, WFH=1 (female monthly WFH)
@@ -2838,18 +2905,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (jasonPreJoiningRecords.length > 0) {
       nextAttendance = nextAttendance.filter(a => !jasonPreJoiningRecords.some(r => r.id === a.id));
       attendanceChanged = true;
-      jasonPreJoiningRecords.forEach(r => {
-        if (r.id) deleteDoc(doc(db, 'attendance', r.id)).catch(() => {});
-      });
+      if (auth.currentUser) {
+        jasonPreJoiningRecords.forEach(r => {
+          if (r.id) deleteDoc(doc(db, 'attendance', r.id)).catch(() => {});
+        });
+      }
     }
 
-    const preDates = ['2026-08-07', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14', '2026-08-15'];
-    const jasonIds = ['KfAB95lpbJOeylpKQaWX4GXOPGt2', 'KSS2407011'];
-    preDates.forEach(d => {
-      jasonIds.forEach(id => {
-        deleteDoc(doc(db, 'attendance', `${id}_${d}`)).catch(() => {});
+    if (auth.currentUser) {
+      const preDates = ['2026-08-07', '2026-08-10', '2026-08-11', '2026-08-12', '2026-08-13', '2026-08-14', '2026-08-15'];
+      const jasonIds = ['KfAB95lpbJOeylpKQaWX4GXOPGt2', 'KSS2407011'];
+      preDates.forEach(d => {
+        jasonIds.forEach(id => {
+          deleteDoc(doc(db, 'attendance', `${id}_${d}`)).catch(() => {});
+        });
       });
-    });
+    }
 
     // 3. Leave requests sync and dummy purge
     let leaveChanged = false;
@@ -2860,7 +2931,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       if (!exists && req.id) {
         nextLeaveRequests.push(req);
         leaveChanged = true;
-        setDoc(doc(db, 'leaveRequests', req.id), cleanFirestorePayload(req), { merge: true }).catch(() => {});
+        if (auth.currentUser) {
+          setDoc(doc(db, 'leaveRequests', req.id), cleanFirestorePayload(req), { merge: true }).catch(() => {});
+        }
       }
     });
 
@@ -2875,7 +2948,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         req.id.startsWith('dummy-') || req.id.startsWith('test-') || req.id === 'LR-UVLV1K5' || req.id === 'LR_KSS2407014_2026-08-19_WFH';
       if ((isAccidental || isDummy) && req.id) {
         toRemoveLeaveIds.add(req.id);
-        deleteDoc(doc(db, 'leaveRequests', req.id)).catch(() => { });
+        if (auth.currentUser) {
+          deleteDoc(doc(db, 'leaveRequests', req.id)).catch(() => { });
+        }
       }
     });
 
@@ -3090,181 +3165,252 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   // ── FastAPI Data Hydration Helper ─────────────────────────────────────────
   const fastApiFetchPromiseRef = useRef<Promise<void> | null>(null);
-  const fetchFastApiRecords = async (currentEmp?: Employee | null) => {
+  const lastFastApiFetchTimeRef = useRef<number>(0);
+
+  const fetchFastApiRecords = async (currentEmp?: Employee | null, force = false) => {
+    const now = Date.now();
+    if (!force && lastFastApiFetchTimeRef.current && (now - lastFastApiFetchTimeRef.current < 4000)) {
+      return;
+    }
     if (fastApiFetchPromiseRef.current) return fastApiFetchPromiseRef.current;
+    lastFastApiFetchTimeRef.current = now;
+
     fastApiFetchPromiseRef.current = (async () => {
       try {
         const isSuperOrHr = currentEmp ? (currentEmp.role === 'SUPER_ADMIN' || currentEmp.role === 'HR_ADMIN') : (role === 'SUPER_ADMIN' || role === 'HR_ADMIN');
-        const [attList, leaveList, empList, settingsData, auditList] = await Promise.all([
-          getAttendanceRecordsApi(1000).catch(() => []),
-          getLeavesApi(200).catch(() => []),
-          getEmployeesApi(100).catch(() => []),
-          getSettingsApi().catch(() => null),
-          isSuperOrHr ? getAuditLogsApi(200).catch(() => []) : Promise.resolve([])
-        ]);
 
-        if (Array.isArray(empList) && empList.length > 0) {
-          const mappedEmps: Employee[] = empList.map(mapBackendToFrontendEmployee);
-          setEmployees(mappedEmps);
-          employeesRef.current = mappedEmps;
-        }
+        // Fast O(1) employee lookup map for rapid mapping
+        const getEmpMap = () => {
+          const empMap = new Map<string, Employee>();
+          employeesRef.current.forEach(e => {
+            if (e.id) empMap.set(e.id, e);
+            if (e.employeeId) empMap.set(e.employeeId, e);
+            if (e.uid) empMap.set(e.uid, e);
+          });
+          if (currentEmp) {
+            if (currentEmp.id) empMap.set(currentEmp.id, currentEmp);
+            if (currentEmp.employeeId) empMap.set(currentEmp.employeeId, currentEmp);
+          }
+          return empMap;
+        };
 
-        if (Array.isArray(attList) && attList.length > 0) {
-          const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {
-            const matchedEmp = employeesRef.current.find(e => e.id === String(r.employee_id) || e.employeeId === String(r.employee_id) || (r.employee_code && e.employeeId === String(r.employee_code))) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
-            const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => {
-              const startIso = formatTimestampToISO(b.start_time || b.startAt) || b.start_time;
-              const endIso = formatTimestampToISO(b.end_time || b.endAt) || null;
-              let duration = b.duration_minutes || b.durationMinutes || 0;
-              if (duration <= 0 && startIso && endIso) {
-                duration = Math.max(1, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000));
+        // 1. Attendance Hydration (High priority for immediate Shift Active display)
+        const attPromise = getAttendanceRecordsApi(200).then((attList) => {
+          if (Array.isArray(attList) && attList.length > 0) {
+            const empMap = getEmpMap();
+            const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {
+              const matchedEmp = empMap.get(String(r.employee_id)) || (r.employee_code ? empMap.get(String(r.employee_code)) : null) || (currentEmp?.id === String(r.employee_id) ? currentEmp : null);
+              const mappedBreaks = Array.isArray(r.breaks) ? r.breaks.map((b: any) => {
+                const startIso = formatTimestampToISO(b.start_time || b.startAt) || b.start_time;
+                const endIso = formatTimestampToISO(b.end_time || b.endAt) || null;
+                let duration = b.duration_minutes || b.durationMinutes || 0;
+                if (duration <= 0 && startIso && endIso) {
+                  duration = Math.max(1, Math.round((new Date(endIso).getTime() - new Date(startIso).getTime()) / 60000));
+                }
+                const rawType = String(b.type || '').toUpperCase();
+                let cleanType: BreakType = 'Meal Break';
+                if (rawType.includes('SNACK')) cleanType = 'Snack Break';
+                else if (rawType.includes('TEA') || rawType.includes('COFFEE')) cleanType = 'Tea Break';
+                else if (rawType.includes('MEAL') || rawType.includes('LUNCH')) cleanType = 'Meal Break';
+                else if (rawType.includes('HUDDLE')) cleanType = 'Team Huddle';
+                else if (rawType.includes('MEETING')) cleanType = 'Team Meeting';
+                else if (rawType.includes('TRAIN') || rawType.includes('ATTAINMENT')) cleanType = 'Attainment / Training';
+                else if (rawType.includes('ACTIVITY')) cleanType = 'Activity';
+                else if (b.type) cleanType = (normalizeBreakType(b.type) || 'Meal Break') as BreakType;
+
+                return {
+                  id: String(b.id),
+                  type: cleanType,
+                  startTime: startIso,
+                  startAt: startIso,
+                  endTime: endIso,
+                  endAt: endIso,
+                  durationMinutes: duration
+                };
+              }).sort((a: any, b: any) => new Date(a.startAt || a.startTime).getTime() - new Date(b.startAt || b.startTime).getTime()) : [];
+
+              const empCode = r.employee_code || matchedEmp?.employeeId || String(r.employee_id);
+              const empUid = matchedEmp?.uid || matchedEmp?.id || String(r.employee_id);
+
+              const rawStatus = String(r.status || '').toUpperCase();
+              let cleanStatus: AttendanceStatus = 'Present';
+              if (rawStatus === 'WORK_FROM_HOME' || rawStatus === 'WFH') cleanStatus = 'Work From Home';
+              else if (rawStatus === 'ON_LEAVE') cleanStatus = 'On Leave';
+              else if (rawStatus === 'HALF_DAY') cleanStatus = 'Half Day';
+              else if (rawStatus === 'HOLIDAY') cleanStatus = 'Holiday';
+              else if (rawStatus === 'LATE') cleanStatus = 'Late';
+              else if (rawStatus === 'ABSENT') cleanStatus = 'Absent';
+              else if (rawStatus === 'PRESENT') cleanStatus = 'Present';
+              else if (r.status) cleanStatus = (r.status.charAt(0) + r.status.slice(1).toLowerCase()) as AttendanceStatus;
+
+              const rawMethod = String(r.attendance_method || '').toUpperCase();
+              let cleanMethod: AttendanceMethod = 'Self Portal';
+              if (rawMethod.includes('FACE') || rawMethod.includes('RECOGNITION')) cleanMethod = 'Facial Recognition';
+              else if (rawMethod.includes('BIOMETRIC')) cleanMethod = 'Biometric';
+              else if (rawMethod.includes('MANUAL') || rawMethod.includes('ADMIN')) cleanMethod = 'Manual Admin';
+              else if (rawMethod.includes('QR')) cleanMethod = 'QR Code';
+              else if (rawMethod.includes('PORTAL')) cleanMethod = 'Self Portal';
+
+              const dateStr = typeof r.date === 'string' ? r.date : (r.date ? new Date(r.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
+              const checkInIso = formatTimestampToISO(r.check_in_at);
+              const checkOutIso = formatTimestampToISO(r.check_out_at);
+              const totalBreakMins = mappedBreaks.reduce((sum: number, b: any) => sum + (b.durationMinutes || 0), 0);
+
+              let workingMins = Number(r.working_minutes) || 0;
+              if (workingMins <= 0 && checkInIso) {
+                const endMs = checkOutIso ? new Date(checkOutIso).getTime() : (dateStr === todayInIST() ? Date.now() : new Date(checkInIso).getTime() + (8.5 * 3600000));
+                const totalMs = Math.max(0, endMs - new Date(checkInIso).getTime());
+                workingMins = Math.max(0, Math.floor(totalMs / 60000) - totalBreakMins);
               }
-              const rawType = String(b.type || '').toUpperCase();
-              let cleanType: BreakType = 'Meal Break';
-              if (rawType.includes('SNACK')) cleanType = 'Snack Break';
-              else if (rawType.includes('TEA') || rawType.includes('COFFEE')) cleanType = 'Tea Break';
-              else if (rawType.includes('MEAL') || rawType.includes('LUNCH')) cleanType = 'Meal Break';
-              else if (rawType.includes('HUDDLE')) cleanType = 'Team Huddle';
-              else if (rawType.includes('MEETING')) cleanType = 'Team Meeting';
-              else if (rawType.includes('TRAIN') || rawType.includes('ATTAINMENT')) cleanType = 'Attainment / Training';
-              else if (rawType.includes('ACTIVITY')) cleanType = 'Activity';
-              else if (b.type) cleanType = (normalizeBreakType(b.type) || 'Meal Break') as BreakType;
 
               return {
-                id: String(b.id),
-                type: cleanType,
-                startTime: startIso,
-                startAt: startIso,
-                endTime: endIso,
-                endAt: endIso,
-                durationMinutes: duration
+                id: String(r.id),
+                uid: empUid,
+                employeeUid: empUid,
+                employeeId: empCode,
+                employeeCode: empCode,
+                employeeName: r.employee_name || matchedEmp?.fullName || '',
+                department: r.department || matchedEmp?.department || 'Engineering',
+                date: dateStr,
+                checkInAt: checkInIso,
+                checkOutAt: checkOutIso,
+                workingMinutes: workingMins,
+                status: cleanStatus,
+                attendanceMethod: cleanMethod,
+                isWfh: !!r.is_wfh,
+                locationVerified: !!r.location_verified,
+                latitude: r.check_in_lat ?? null,
+                longitude: r.check_in_lon ?? null,
+                totalBreakMinutes: totalBreakMins,
+                breaks: mappedBreaks,
+                notes: r.notes || '',
+                createdAt: r.created_at || new Date().toISOString(),
+                updatedAt: r.updated_at || new Date().toISOString()
               };
-            }).sort((a: any, b: any) => new Date(a.startAt || a.startTime).getTime() - new Date(b.startAt || b.startTime).getTime()) : [];
-
-          const empCode = r.employee_code || matchedEmp?.employeeId || currentEmp?.employeeId || String(r.employee_id);
-          const empUid = matchedEmp?.uid || matchedEmp?.id || String(r.employee_id);
-
-          const rawStatus = String(r.status || '').toUpperCase();
-          let cleanStatus: AttendanceStatus = 'Present';
-          if (rawStatus === 'WORK_FROM_HOME' || rawStatus === 'WFH') cleanStatus = 'Work From Home';
-          else if (rawStatus === 'ON_LEAVE') cleanStatus = 'On Leave';
-          else if (rawStatus === 'HALF_DAY') cleanStatus = 'Half Day';
-          else if (rawStatus === 'HOLIDAY') cleanStatus = 'Holiday';
-          else if (rawStatus === 'LATE') cleanStatus = 'Late';
-          else if (rawStatus === 'ABSENT') cleanStatus = 'Absent';
-          else if (rawStatus === 'PRESENT') cleanStatus = 'Present';
-          else if (r.status) cleanStatus = (r.status.charAt(0) + r.status.slice(1).toLowerCase()) as AttendanceStatus;
-
-          const rawMethod = String(r.attendance_method || '').toUpperCase();
-          let cleanMethod: AttendanceMethod = 'Self Portal';
-          if (rawMethod.includes('FACE') || rawMethod.includes('RECOGNITION')) cleanMethod = 'Facial Recognition';
-          else if (rawMethod.includes('BIOMETRIC')) cleanMethod = 'Biometric';
-          else if (rawMethod.includes('MANUAL') || rawMethod.includes('ADMIN')) cleanMethod = 'Manual Admin';
-          else if (rawMethod.includes('QR')) cleanMethod = 'QR Code';
-          else if (rawMethod.includes('PORTAL')) cleanMethod = 'Self Portal';
-
-          const dateStr = typeof r.date === 'string' ? r.date : (r.date ? new Date(r.date).toISOString().split('T')[0] : new Date().toISOString().split('T')[0]);
-          const checkInIso = formatTimestampToISO(r.check_in_at);
-          const checkOutIso = formatTimestampToISO(r.check_out_at);
-          const totalBreakMins = mappedBreaks.reduce((sum: number, b: any) => sum + (b.durationMinutes || 0), 0);
-
-          let workingMins = Number(r.working_minutes) || 0;
-          if (workingMins <= 0 && checkInIso) {
-            const endMs = checkOutIso ? new Date(checkOutIso).getTime() : (dateStr === todayInIST() ? Date.now() : new Date(checkInIso).getTime() + (8.5 * 3600000));
-            const totalMs = Math.max(0, endMs - new Date(checkInIso).getTime());
-            workingMins = Math.max(0, Math.floor(totalMs / 60000) - totalBreakMins);
+            });
+            setAttendance(mappedAtt);
+            setAttendanceSyncStatus('synced');
+            setTimeout(() => {
+              try {
+                localStorage.setItem('kss_v1_attendance', JSON.stringify(mappedAtt.slice(0, 500)));
+              } catch {}
+            }, 50);
           }
+        }).catch(() => {});
 
-          return {
-            id: String(r.id),
-            uid: empUid,
-            employeeUid: empUid,
-            employeeId: empCode,
-            employeeCode: empCode,
-            employeeName: r.employee_name || matchedEmp?.fullName || currentEmp?.fullName || '',
-            department: r.department || matchedEmp?.department || currentEmp?.department || 'Engineering',
-            date: dateStr,
-            checkInAt: checkInIso,
-            checkOutAt: checkOutIso,
-            workingMinutes: workingMins,
-            status: cleanStatus,
-            attendanceMethod: cleanMethod,
-            isWfh: !!r.is_wfh,
-            locationVerified: !!r.location_verified,
-            latitude: r.check_in_lat ?? null,
-            longitude: r.check_in_lon ?? null,
-            totalBreakMinutes: totalBreakMins,
-            breaks: mappedBreaks,
-            notes: r.notes || '',
-            createdAt: r.created_at || new Date().toISOString(),
-            updatedAt: r.updated_at || new Date().toISOString()
-          };
-        });
-        setAttendance(mappedAtt);
-        setAttendanceSyncStatus('synced');
-        try {
-          localStorage.setItem('kss_v1_attendance', JSON.stringify(mappedAtt.slice(0, 1000)));
-        } catch {}
+        // 2. Employees Hydration
+        const empPromise = getEmployeesApi(100).then((empList) => {
+          if (Array.isArray(empList) && empList.length > 0) {
+            const mappedEmps: Employee[] = empList.map(e => {
+              const mapped = mapBackendToFrontendEmployee(e);
+              if (isFaceBiometricEnrolled(mapped)) {
+                mapped.isFaceEnrolled = true;
+              }
+              if (mapped.isFaceEnrolled) {
+                try {
+                  localStorage.setItem(`kss_face_enrolled_${mapped.id}`, 'true');
+                  if (mapped.employeeId) localStorage.setItem(`kss_face_enrolled_${mapped.employeeId}`, 'true');
+                } catch {}
+              }
+              if (mapped.faceDescriptor && mapped.faceDescriptor.length === 128) {
+                saveEmployeeDescriptor([mapped.id, mapped.employeeId], mapped.faceDescriptor);
+              }
+              return mapped;
+            });
+            setEmployees(mappedEmps);
+            employeesRef.current = mappedEmps;
+            setActiveEmployee(prev => {
+              if (!prev) return prev;
+              const fresh = mappedEmps.find(e => e.id === prev.id || e.employeeId === prev.employeeId || (prev.email && e.email?.toLowerCase() === prev.email.toLowerCase()));
+              if (!fresh) return prev;
+              const enrolled = fresh.isFaceEnrolled || prev.isFaceEnrolled || isFaceBiometricEnrolled(prev) || isFaceBiometricEnrolled(fresh);
+              const updated = {
+                ...prev,
+                ...fresh,
+                isFaceEnrolled: enrolled,
+                faceDescriptor: fresh.faceDescriptor || prev.faceDescriptor,
+                profilePhotoUrl: fresh.profilePhotoUrl || prev.profilePhotoUrl
+              };
+              try {
+                localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updated));
+              } catch {}
+              return updated;
+            });
+          }
+        }).catch(() => {});
+
+        // 3. Leaves Hydration
+        const leavePromise = getLeavesApi(100).then((leaveList) => {
+          if (Array.isArray(leaveList) && leaveList.length > 0) {
+            const empMap = getEmpMap();
+            const mappedLeaves: LeaveRequest[] = leaveList.map((l: any) => {
+              const matchedEmp = empMap.get(String(l.employee_id)) || (l.employee_code ? empMap.get(String(l.employee_code)) : null) || (currentEmp?.id === String(l.employee_id) ? currentEmp : null);
+              const empCode = l.employee_code || matchedEmp?.employeeId || String(l.employee_id);
+              const empUid = matchedEmp?.uid || matchedEmp?.id || String(l.employee_id);
+
+              return {
+                id: String(l.id),
+                employeeId: empCode,
+                employeeUid: empUid,
+                authUid: empUid,
+                employeeName: l.employee_name || matchedEmp?.fullName || '',
+                department: l.department || matchedEmp?.department || 'Engineering',
+                type: l.type === 'WORK_FROM_HOME' ? 'WFH' : (l.type === 'CASUAL_LEAVE' ? 'Casual Leave' : (l.type === 'SICK_LEAVE' ? 'Sick Leave' : 'Earn Leave')),
+                startDate: l.start_date,
+                endDate: l.end_date,
+                reason: l.reason || '',
+                status: (l.status.charAt(0) + l.status.slice(1).toLowerCase()) as any,
+                ceoStatus: l.ceo_status === 'APPROVED' ? 'Approved' : (l.ceo_status === 'REJECTED' ? 'Rejected' : 'Pending'),
+                ctoStatus: l.cto_status === 'APPROVED' ? 'Approved' : (l.cto_status === 'REJECTED' ? 'Rejected' : 'Waiting CEO'),
+                requestDate: l.created_at || l.start_date
+              };
+            });
+            setLeaveRequests(mappedLeaves);
+            try {
+              localStorage.setItem('kss_v1_leave_requests', JSON.stringify(mappedLeaves));
+            } catch {}
+          }
+        }).catch(() => {});
+
+        // 4. Settings Hydration
+        const settingsPromise = getSettingsApi().then((settingsData) => {
+          if (settingsData && settingsData.office_name) {
+            setCompanyWorkZone(prev => ({
+              ...prev,
+              name: settingsData.office_name,
+              latitude: settingsData.geofence_lat,
+              longitude: settingsData.geofence_lon,
+              radiusMeters: settingsData.geofence_radius_meters,
+              active: settingsData.geofence_enforced
+            }));
+          }
+        }).catch(() => {});
+
+        const auditPromise = isSuperOrHr ? getAuditLogsApi(100).then((auditList) => {
+          if (Array.isArray(auditList) && auditList.length > 0) {
+            const mappedAudit: AuditLog[] = auditList.map((a: any) => ({
+              id: String(a.id),
+              actorId: a.actor_id ? String(a.actor_id) : 'system',
+              actorName: a.actor_name || 'System',
+              actorRole: (a.actor_role || 'SUPER_ADMIN') as any,
+              action: a.action,
+              target: a.target || '',
+              details: a.details || '',
+              timestamp: formatTimestampToISO(a.created_at) || new Date().toISOString()
+            }));
+            setAuditLogs(mappedAudit);
+          }
+        }).catch(() => {}) : Promise.resolve();
+
+        await Promise.all([attPromise, empPromise, leavePromise, settingsPromise, auditPromise]);
+      } catch (e) {
+        console.warn('Failed to fetch FastAPI records:', e);
+      } finally {
+        fastApiFetchPromiseRef.current = null;
       }
-
-      if (Array.isArray(leaveList) && leaveList.length > 0) {
-        const mappedLeaves: LeaveRequest[] = leaveList.map((l: any) => {
-          const matchedEmp = employeesRef.current.find(e => e.id === String(l.employee_id) || e.employeeId === String(l.employee_id));
-          const empCode = l.employee_code || matchedEmp?.employeeId || currentEmp?.employeeId || String(l.employee_id);
-          const empUid = matchedEmp?.uid || String(l.employee_id);
-
-          return {
-            id: String(l.id),
-            employeeId: empCode,
-            employeeUid: empUid,
-            authUid: empUid,
-            employeeName: l.employee_name || matchedEmp?.fullName || currentEmp?.fullName || '',
-            department: l.department || matchedEmp?.department || 'Engineering',
-            type: l.type === 'WORK_FROM_HOME' ? 'WFH' : (l.type === 'CASUAL_LEAVE' ? 'Casual Leave' : (l.type === 'SICK_LEAVE' ? 'Sick Leave' : 'Earn Leave')),
-            startDate: l.start_date,
-            endDate: l.end_date,
-            reason: l.reason || '',
-            status: (l.status.charAt(0) + l.status.slice(1).toLowerCase()) as any,
-            ceoStatus: l.ceo_status === 'APPROVED' ? 'Approved' : (l.ceo_status === 'REJECTED' ? 'Rejected' : 'Pending'),
-            ctoStatus: l.cto_status === 'APPROVED' ? 'Approved' : (l.cto_status === 'REJECTED' ? 'Rejected' : 'Waiting CEO'),
-            requestDate: l.created_at || l.start_date
-          };
-        });
-        setLeaveRequests(mappedLeaves);
-      }
-
-      if (settingsData && settingsData.office_name) {
-        setCompanyWorkZone(prev => ({
-          ...prev,
-          name: settingsData.office_name,
-          latitude: settingsData.geofence_lat,
-          longitude: settingsData.geofence_lon,
-          radiusMeters: settingsData.geofence_radius_meters,
-          active: settingsData.geofence_enforced
-        }));
-      }
-
-      if (Array.isArray(auditList) && auditList.length > 0) {
-        const mappedAudit: AuditLog[] = auditList.map((a: any) => ({
-          id: String(a.id),
-          actorId: a.actor_id ? String(a.actor_id) : 'system',
-          actorName: a.actor_name || 'System',
-          actorRole: (a.actor_role || 'SUPER_ADMIN') as any,
-          action: a.action,
-          target: a.target || '',
-          details: a.details || '',
-          timestamp: a.created_at || new Date().toISOString()
-        }));
-        setAuditLogs(mappedAudit);
-      }
-    } catch (e) {
-      console.warn('Failed to fetch FastAPI records:', e);
-    } finally {
-      fastApiFetchPromiseRef.current = null;
-    }
-  })();
-  return fastApiFetchPromiseRef.current;
-};
+    })();
+    return fastApiFetchPromiseRef.current;
+  };
 
   // ── High-Speed FastAPI Token Boot Validator (<100ms) ───────────────────────
   useEffect(() => {
@@ -3280,7 +3426,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setIsAuthenticated(true);
           setIsSessionReady(true);
           setIsDemoMode(false);
-          if (!activeEmployee || activeEmployee.id !== emp.id) {
+          if (!activeEmployee || (activeEmployee.id !== emp.id && activeEmployee.employeeId !== emp.employeeId)) {
             fetchFastApiRecords(emp);
           }
         }
@@ -3620,6 +3766,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updatedMatched));
 
           fetchFastApiRecords(updatedMatched);
+
+          if (!auth.currentUser && cleanEmail && cleanPass) {
+            signInWithEmailAndPassword(auth, cleanEmail, cleanPass).catch(() => {});
+          }
 
           try {
             if (localStorage.getItem('kss_remember_me') !== 'false') {
@@ -4056,22 +4206,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     if (getAuthToken()) {
-      createEmployeeApi({
-        employee_code: newEmp.employeeId,
-        email: cleanEmail,
-        password: empData.password || 'Kalpanaaa@2026',
-        full_name: newEmp.fullName,
-        role: newEmp.role || 'EMPLOYEE',
-        department: newEmp.department || 'Engineering',
-        designation: newEmp.designation || 'Software Engineer',
-        joining_date: newEmp.joiningDate || new Date().toISOString().split('T')[0],
-        work_location: newEmp.workLocation || 'Kalpanaaa Headquarters',
-        phone: newEmp.phone,
-        gender: newEmp.gender,
-        date_of_birth: newEmp.dateOfBirth,
-        address: newEmp.permanentAddress || newEmp.currentAddress,
-        profile_photo_url: newEmp.profilePhotoUrl
-      }).catch(e => console.warn('[FastAPI] createEmployeeApi sync note:', e));
+      try {
+        const createdEmpRes = await createEmployeeApi({
+          employee_code: newEmp.employeeId,
+          email: cleanEmail,
+          password: empData.password || 'Kalpanaaa@2026',
+          full_name: newEmp.fullName,
+          role: newEmp.role || 'EMPLOYEE',
+          department: newEmp.department || 'Engineering',
+          designation: newEmp.designation || 'Software Engineer',
+          joining_date: newEmp.joiningDate || new Date().toISOString().split('T')[0],
+          work_location: newEmp.workLocation || 'Kalpanaaa Headquarters',
+          phone: newEmp.phone,
+          gender: newEmp.gender,
+          date_of_birth: newEmp.dateOfBirth,
+          address: newEmp.permanentAddress || newEmp.currentAddress,
+          profile_photo_url: newEmp.profilePhotoUrl
+        });
+        if (createdEmpRes && createdEmpRes.profile_photo_url) {
+          newEmp.profilePhotoUrl = createdEmpRes.profile_photo_url;
+          setEmployees(prev => prev.map(e => (e.employeeId === newEmp.employeeId || e.id === newEmp.id) ? { ...e, profilePhotoUrl: createdEmpRes.profile_photo_url } : e));
+        }
+      } catch (e) {
+        console.warn('[FastAPI] createEmployeeApi sync note:', e);
+      }
     }
 
     addAuditLog('EMPLOYEE_CREATED', `${newEmp.employeeId} (${newEmp.fullName})`, `Added to ${newEmp.department} as ${newEmp.designation}`);
@@ -4151,19 +4309,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: new Date().toISOString()
     });
 
-    // 3. Persist update directly to Firestore Cloud Database
-    try {
-      await setDoc(doc(db, 'employees', targetDocId), cleanPayload, { merge: true });
-      if (cleanPayload.profilePhotoUrl && user?.uid) {
-        // Also mirror profile photo to users/{uid} for quick header retrieval
-        setDoc(doc(db, 'users', user.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
-      }
-    } catch (err) {
-      handleFirestoreError(err, OperationType.UPDATE, `employees/${targetDocId}`);
-      throw err;
-    }
-
-    // 4. Update in-memory employees state immediately
+    // 3. Update in-memory employees state immediately (optimistic responsiveness)
     setEmployees(prev => prev.map(e => {
       if (e.id === targetDocId || e.id === id || e.employeeId === id || (e.uid && e.uid === id)) {
         return { ...e, ...cleanPayload };
@@ -4171,7 +4317,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return e;
     }));
 
-    // 5. Update activeEmployee state immediately if this affects the active logged-in employee
+    // 4. Update activeEmployee state immediately if this affects the active logged-in employee
     setActiveEmployee(prev => {
       if (prev && (prev.id === targetDocId || prev.id === id || prev.employeeId === id || (prev.uid && prev.uid === id))) {
         const updated = { ...prev, ...cleanPayload };
@@ -4184,6 +4330,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return prev;
     });
 
+    // 5. Persist update directly to Firestore Cloud Database (fail-safe non-blocking)
+    try {
+      await setDoc(doc(db, 'employees', targetDocId), cleanPayload, { merge: true });
+      if (cleanPayload.profilePhotoUrl && user?.uid) {
+        // Also mirror profile photo to users/{uid} for quick header retrieval
+        setDoc(doc(db, 'users', user.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
+      }
+    } catch (err) {
+      console.warn('[Firestore] updateEmployee sync note:', err);
+    }
+
     // 6. Handle resume storage out-of-band if present
     if (incomingResume) {
       try {
@@ -4195,16 +4352,53 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    if (getAuthToken() && existingEmp?.id) {
-      updateEmployeeApi(existingEmp.id, {
-        full_name: fieldsToUpdate.fullName,
-        department: fieldsToUpdate.department,
-        designation: fieldsToUpdate.designation,
-        phone: fieldsToUpdate.phone,
-        address: fieldsToUpdate.permanentAddress || fieldsToUpdate.currentAddress,
-        profile_photo_url: fieldsToUpdate.profilePhotoUrl,
-        bio: fieldsToUpdate.bio
-      }).catch(e => console.warn('[FastAPI] updateEmployeeApi sync note:', e));
+    // 7. Persist to Python FastAPI & Neon PostgreSQL Database
+    const targetIdentifier = existingEmp?.employeeId || existingEmp?.id || id;
+    const apiPayload: any = {};
+    if (fieldsToUpdate.fullName !== undefined) apiPayload.full_name = fieldsToUpdate.fullName;
+    if (fieldsToUpdate.phone !== undefined) apiPayload.phone = fieldsToUpdate.phone;
+    if (fieldsToUpdate.gender !== undefined) apiPayload.gender = fieldsToUpdate.gender;
+    if (fieldsToUpdate.dateOfBirth !== undefined) apiPayload.date_of_birth = fieldsToUpdate.dateOfBirth || null;
+    if (fieldsToUpdate.permanentAddress !== undefined || fieldsToUpdate.currentAddress !== undefined) {
+      apiPayload.address = fieldsToUpdate.permanentAddress || fieldsToUpdate.currentAddress;
+    }
+    if (fieldsToUpdate.city !== undefined) apiPayload.city = fieldsToUpdate.city;
+    if (fieldsToUpdate.state !== undefined) apiPayload.state = fieldsToUpdate.state;
+    if (fieldsToUpdate.postalCode !== undefined) apiPayload.postal_code = fieldsToUpdate.postalCode;
+    if (fieldsToUpdate.emergencyContact !== undefined) apiPayload.emergency_contact = fieldsToUpdate.emergencyContact;
+    if (fieldsToUpdate.emergencyRelationship !== undefined) apiPayload.emergency_relationship = fieldsToUpdate.emergencyRelationship;
+    if (fieldsToUpdate.profilePhotoUrl !== undefined) apiPayload.profile_photo_url = fieldsToUpdate.profilePhotoUrl;
+    if (fieldsToUpdate.bio !== undefined) apiPayload.bio = fieldsToUpdate.bio;
+    if (fieldsToUpdate.linkedinUrl !== undefined) apiPayload.linkedin_url = fieldsToUpdate.linkedinUrl;
+    if (callerIsAdminOrPM && fieldsToUpdate.department !== undefined) apiPayload.department = fieldsToUpdate.department;
+    if (callerIsAdminOrPM && fieldsToUpdate.designation !== undefined) apiPayload.designation = fieldsToUpdate.designation;
+
+    // Dedicated image storage if base64 data URI was uploaded/captured
+    if (targetIdentifier && fieldsToUpdate.profilePhotoUrl && typeof fieldsToUpdate.profilePhotoUrl === 'string' && fieldsToUpdate.profilePhotoUrl.startsWith('data:image/')) {
+      try {
+        const photoRes = await uploadPhotoApi(targetIdentifier, fieldsToUpdate.profilePhotoUrl);
+        if (photoRes && photoRes.profile_photo_url) {
+          apiPayload.profile_photo_url = photoRes.profile_photo_url;
+          cleanPayload.profilePhotoUrl = photoRes.profile_photo_url;
+          setEmployees(prev => prev.map(e => (e.id === targetDocId || e.employeeId === targetIdentifier) ? { ...e, profilePhotoUrl: photoRes.profile_photo_url } : e));
+          setActiveEmployee(prev => (prev && (prev.id === targetDocId || prev.employeeId === targetIdentifier)) ? { ...prev, profilePhotoUrl: photoRes.profile_photo_url } : prev);
+        }
+      } catch (e) {
+        console.warn('[FastAPI] uploadPhotoApi sync note:', e);
+      }
+    }
+
+    if (targetIdentifier && Object.keys(apiPayload).length > 0) {
+      try {
+        const backendRes = await updateEmployeeApi(targetIdentifier, apiPayload);
+        if (backendRes && backendRes.profile_photo_url) {
+          const freshPhoto = backendRes.profile_photo_url;
+          setEmployees(prev => prev.map(e => (e.id === targetDocId || e.employeeId === targetIdentifier) ? { ...e, profilePhotoUrl: freshPhoto } : e));
+          setActiveEmployee(prev => (prev && (prev.id === targetDocId || prev.employeeId === targetIdentifier)) ? { ...prev, profilePhotoUrl: freshPhoto } : prev);
+        }
+      } catch (e) {
+        console.warn('[FastAPI] updateEmployeeApi sync note:', e);
+      }
     }
 
     addAuditLog('EMPLOYEE_UPDATED', `Employee ID: ${id}`, `Fields updated: ${Object.keys(updates).join(', ')}`);
@@ -4213,6 +4407,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const deleteEmployee = (id: string) => {
     const target = employees.find(e => e.id === id);
     setEmployees(prev => prev.filter(e => e.id !== id));
+
+    // Delete from FastAPI and trigger Cloudinary asset cleanup
+    const targetIdentifier = target?.employeeId || id;
+    if (getAuthToken() && targetIdentifier) {
+      deleteEmployeeApi(targetIdentifier).catch(e => console.warn('[FastAPI] deleteEmployeeApi note:', e));
+    }
 
     // Delete from Firestore
     deleteDoc(doc(db, 'employees', id)).catch(err => {
@@ -4227,6 +4427,230 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     updateEmployee(employeeId, { qrToken: newToken });
     addAuditLog('QR_REGENERATED', `Employee ${employeeId}`, 'Regenerated cryptographic attendance pass');
     return newToken;
+  };
+
+  const enrollEmployeeBiometrics = async (
+    employeeId: string,
+    faceDescriptor: number[]
+  ): Promise<{ success: boolean; message: string }> => {
+    try {
+      if (!Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
+        return { success: false, message: 'Invalid face descriptor format: must be 128 floating point values.' };
+      }
+
+      const targetEmp = employees.find(e =>
+        e.id === employeeId ||
+        e.employeeId === employeeId ||
+        (e.uid && e.uid === employeeId)
+      ) || (activeEmployee && (activeEmployee.id === employeeId || activeEmployee.employeeId === employeeId) ? activeEmployee : null);
+
+      const cleanId = targetEmp?.id || employeeId;
+      const empCode = targetEmp?.employeeId || employeeId;
+      const candidateIds = [targetEmp?.id, targetEmp?.employeeId, targetEmp?.uid, cleanId, empCode].filter(Boolean) as string[];
+
+      // 1. Call FastAPI backend FIRST to validate and persist pgvector embedding in PostgreSQL
+      try {
+        const backendRes = await enrollFaceApi(empCode || cleanId, faceDescriptor);
+        console.log('[FastAPI] enrollFaceApi response:', backendRes);
+      } catch (err: any) {
+        console.warn('[FastAPI] enrollFaceApi error:', err);
+        const msg = String(err?.message || 'Biometric enrollment failed on backend.');
+        return {
+          success: false,
+          message: msg
+        };
+      }
+
+      // 2. ONLY upon successful backend registration, cache 128-float biometric descriptor locally
+      const floatArr = new Float32Array(faceDescriptor);
+      saveEmployeeDescriptor(candidateIds, floatArr);
+      candidateIds.forEach(id => {
+        try {
+          localStorage.setItem(`kss_face_enrolled_${id}`, 'true');
+        } catch {}
+      });
+
+      // 3. Best-effort Cloud Firestore sync only when a valid Firebase Auth session exists
+      if (auth.currentUser) {
+        try {
+          const docId = targetEmp?.id || cleanId;
+          await setDoc(doc(db, 'employees', docId), {
+            isFaceEnrolled: true,
+            faceDescriptor: faceDescriptor,
+            faceEnrolledAt: new Date().toISOString()
+          }, { merge: true });
+        } catch (e) {
+          console.warn('[Firestore] Biometric sync note (non-blocking):', e);
+        }
+      }
+
+      const nowIso = new Date().toISOString();
+
+      // 4. Update in-memory employees state immediately
+      setEmployees(prev => prev.map(e => {
+        if (
+          e.id === cleanId ||
+          e.employeeId === cleanId ||
+          e.employeeId === empCode ||
+          candidateIds.includes(e.id) ||
+          (e.employeeId && candidateIds.includes(e.employeeId))
+        ) {
+          return {
+            ...e,
+            isFaceEnrolled: true,
+            faceDescriptor: faceDescriptor,
+            faceEnrolledAt: nowIso
+          };
+        }
+        return e;
+      }));
+
+      // 5. Update activeEmployee state and localStorage cache immediately
+      if (
+        activeEmployee &&
+        (candidateIds.includes(activeEmployee.id) ||
+         (activeEmployee.employeeId && candidateIds.includes(activeEmployee.employeeId)) ||
+         activeEmployee.id === cleanId ||
+         activeEmployee.employeeId === empCode)
+      ) {
+        setActiveEmployee(prev => {
+          if (!prev) return null;
+          const updated = {
+            ...prev,
+            isFaceEnrolled: true,
+            faceDescriptor: faceDescriptor,
+            faceEnrolledAt: nowIso
+          };
+          try {
+            localStorage.setItem('kss_v1_session', updated.id);
+            localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+      }
+
+      addAuditLog(
+        'BIOMETRIC_ENROLLED',
+        targetEmp ? `${targetEmp.employeeId} (${targetEmp.fullName})` : employeeId,
+        'Successfully captured and registered high-precision 128D facial biometric template'
+      );
+
+      return {
+        success: true,
+        message: `✓ Face biometrics successfully registered and verified for ${targetEmp?.fullName || employeeId}!`
+      };
+    } catch (err: any) {
+      console.error('[Biometrics] Error enrolling biometrics:', err);
+      return { success: false, message: `Failed to enroll face biometrics: ${err?.message || 'Unknown error'}` };
+    }
+  };
+
+  const resetEmployeeBiometrics = async (employeeId: string): Promise<{ success: boolean; message: string }> => {
+    try {
+      const targetEmp = employees.find(e => e.id === employeeId || e.employeeId === employeeId);
+      const cleanId = targetEmp?.id || employeeId;
+      const candidateIds = [targetEmp?.id, targetEmp?.employeeId, targetEmp?.uid, employeeId].filter(Boolean) as string[];
+
+      // 1. Purge local descriptors
+      clearEmployeeDescriptor(candidateIds);
+
+      // 2. Call FastAPI backend reset
+      if (getAuthToken()) {
+        try {
+          await resetEmployeeFaceApi(cleanId);
+        } catch (e) {
+          console.warn('[FastAPI] resetEmployeeFaceApi note:', e);
+        }
+      }
+
+      // 3. Clear Firestore fields if available
+      try {
+        const docId = targetEmp?.id || employeeId;
+        await setDoc(doc(db, 'employees', docId), {
+          isFaceEnrolled: false,
+          faceDescriptor: null
+        }, { merge: true });
+      } catch {}
+
+      // 4. Update in-memory state
+      setEmployees(prev => prev.map(e => {
+        if (e.id === cleanId || e.employeeId === cleanId) {
+          return {
+            ...e,
+            isFaceEnrolled: false,
+            faceDescriptor: undefined,
+            faceEnrolledAt: undefined
+          };
+        }
+        return e;
+      }));
+
+      if (activeEmployee && (activeEmployee.id === cleanId || activeEmployee.employeeId === cleanId)) {
+        setActiveEmployee(prev => {
+          if (!prev) return null;
+          const updated = {
+            ...prev,
+            isFaceEnrolled: false,
+            faceDescriptor: undefined,
+            faceEnrolledAt: undefined
+          };
+          try {
+            localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+      }
+
+      addAuditLog('BIOMETRIC_RESET', targetEmp ? `${targetEmp.employeeId} (${targetEmp.fullName})` : employeeId, 'Reset biometric face profile; employee must re-register face template');
+      return { success: true, message: `Face biometrics reset successfully for ${targetEmp?.fullName || employeeId}. Re-registration is now required.` };
+    } catch (err: any) {
+      return { success: false, message: `Failed to reset face biometrics: ${err?.message || 'Unknown error'}` };
+    }
+  };
+
+  const resetAllBiometrics = async (): Promise<{ success: boolean; message: string }> => {
+    try {
+      // 1. Purge all local descriptors across all storage keys
+      resetAllLocalFaceDescriptors();
+
+      // 2. Call FastAPI backend to reset all in PostgreSQL
+      if (getAuthToken()) {
+        try {
+          await resetAllFacesApi();
+        } catch (e) {
+          console.warn('[FastAPI] resetAllFacesApi note:', e);
+        }
+      }
+
+      // 3. Update in-memory state for all employees
+      setEmployees(prev => prev.map(e => ({
+        ...e,
+        isFaceEnrolled: false,
+        faceDescriptor: undefined,
+        faceEnrolledAt: undefined
+      })));
+
+      if (activeEmployee) {
+        setActiveEmployee(prev => {
+          if (!prev) return null;
+          const updated = {
+            ...prev,
+            isFaceEnrolled: false,
+            faceDescriptor: undefined,
+            faceEnrolledAt: undefined
+          };
+          try {
+            localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updated));
+          } catch {}
+          return updated;
+        });
+      }
+
+      addAuditLog('ALL_BIOMETRICS_RESET', 'All Personnel', 'Purged all face biometric registrations. Every employee must re-register face.');
+      return { success: true, message: 'All face biometric registrations reset successfully. Every employee must now re-register.' };
+    } catch (err: any) {
+      return { success: false, message: `Failed to reset all biometrics: ${err?.message || 'Unknown error'}` };
+    }
   };
 
   // ── Shared attendance-location policy ───────────────────────────────────────
@@ -4507,6 +4931,120 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? calculateGpsDistanceMeters(finalLat, finalLon, companyWorkZone.latitude, companyWorkZone.longitude)
       : 0;
 
+    // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call checkInApi directly!
+    if (getAuthToken()) {
+      try {
+        const apiRec = await checkInApi({
+          employee_code: emp.employeeId,
+          latitude: finalLat,
+          longitude: finalLon,
+          is_wfh: isApprovedWfh,
+          face_descriptor: faceDescriptor
+        });
+
+        addAuditLog('ATTENDANCE_CHECKIN', `${emp.employeeId} (${emp.fullName})`, `Status: ${evalResult.status}, GPS: ${evalResult.locationVerified ? 'Verified' : 'Unverified'} (${distMeters}m from office)`);
+
+        const checkInIsoStr = apiRec?.check_in_at ? formatTimestampToISO(apiRec.check_in_at) : new Date().toISOString();
+        const resolvedRec: AttendanceRecord = {
+          id: String(apiRec?.id || recordId),
+          uid: empUid,
+          employeeUid: empUid,
+          employeeId: emp.id,
+          employeeCode: emp.employeeId,
+          employeeName: emp.fullName,
+          department: emp.department || 'Engineering',
+          date: todayStr,
+          checkInAt: checkInIsoStr,
+          checkOutAt: null,
+          workingMinutes: 0,
+          status: (apiRec?.status === 'WORK_FROM_HOME' ? 'Work From Home' : (apiRec?.status === 'LATE' ? 'Late' : (isApprovedWfh && evalResult.status !== 'Late' ? 'Work From Home' : evalResult.status))) as AttendanceStatus,
+          attendanceMethod: (faceDescriptor ? 'Facial Recognition' : method) as AttendanceMethod,
+          officeLatitude: companyWorkZone.latitude,
+          officeLongitude: companyWorkZone.longitude,
+          officeRadiusMeters: companyWorkZone.radiusMeters,
+          distanceFromOffice: distMeters,
+          locationAccuracy: accuracy,
+          locationVerified: evalResult.locationVerified,
+          latitude: finalLat,
+          longitude: finalLon,
+          breaks: [],
+          totalBreakMinutes: 0,
+          isWfh: !!isApprovedWfh,
+          createdAt: checkInIsoStr,
+          updatedAt: checkInIsoStr
+        } as AttendanceRecord;
+
+        setAttendance(prev => {
+          const map = new Map<string, AttendanceRecord>();
+          prev.forEach(r => map.set(r.id, r));
+          map.set(resolvedRec.id, resolvedRec);
+          return Array.from(map.values());
+        });
+
+        if (auth.currentUser) {
+          const payload = {
+            id: resolvedRec.id,
+            uid: empUid,
+            employeeUid: empUid,
+            authUid: auth.currentUser.uid,
+            email: emp.email || user?.email || '',
+            employeeEmail: emp.email || user?.email || '',
+            employeeId: emp.id,
+            employeeCode: emp.employeeId,
+            employeeName: emp.fullName,
+            department: emp.department || 'Engineering',
+            pmUid: emp.pmUid || emp.reportingManagerUid || '',
+            date: todayStr,
+            checkInAt: serverTimestamp(),
+            checkOutAt: null,
+            workingMinutes: 0,
+            status: resolvedRec.status,
+            attendanceMethod: resolvedRec.attendanceMethod,
+            officeLatitude: companyWorkZone.latitude,
+            officeLongitude: companyWorkZone.longitude,
+            officeRadiusMeters: companyWorkZone.radiusMeters,
+            distanceFromOffice: distMeters,
+            locationAccuracy: accuracy,
+            locationVerified: evalResult.locationVerified,
+            latitude: finalLat ?? null,
+            longitude: finalLon ?? null,
+            breaks: [],
+            totalBreakMinutes: 0,
+            isWfh: !!isApprovedWfh,
+            createdAt: serverTimestamp(),
+            updatedAt: serverTimestamp()
+          };
+          setDoc(doc(db, 'attendance', resolvedRec.id), cleanFirestorePayload(payload), { merge: true }).catch(() => {});
+        }
+
+        return {
+          success: true,
+          message: evalResult.message,
+          record: resolvedRec
+        };
+      } catch (fastApiErr: any) {
+        console.warn('[FastAPI] checkInApi error:', fastApiErr);
+        // CRITICAL SECURITY ENFORCEMENT: Never bypass FastAPI validation errors.
+        // Biometric mismatches, duplicate check-ins, or authorization failures MUST NEVER fall through to Firestore.
+        const errMsg = (fastApiErr?.message || '').toLowerCase();
+        const isNetworkOffline = errMsg.includes('failed to fetch') || errMsg.includes('networkerror') || errMsg.includes('err_connection');
+
+        if (!isNetworkOffline || fastApiErr?.status || errMsg.includes('biometric') || errMsg.includes('mismatch') || errMsg.includes('face') || errMsg.includes('already checked in') || errMsg.includes('template')) {
+          return {
+            success: false,
+            message: fastApiErr?.message || 'Check-in verification failed.'
+          };
+        }
+        if (!auth.currentUser) {
+          return { success: false, message: fastApiErr?.message || 'Check-In failed. Please try again.' };
+        }
+      }
+    }
+
+    if (!auth.currentUser) {
+      return { success: false, message: 'Check-In requires an authenticated session. Please log in again.' };
+    }
+
     // ATOMIC IDEMPOTENT TRANSACTION
     const docRef = doc(db, 'attendance', recordId);
     try {
@@ -4634,6 +5172,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         record: resolvedRec
       };
     } catch (err: any) {
+      if (!auth.currentUser && (err?.code === 'permission-denied' || String(err?.message || '').includes('permission'))) {
+        console.warn(`[Firestore] Suppressed permission warning on unauthenticated session for attendance/${recordId}`);
+        return { success: false, message: 'Check-In failed: Session requires authentication.' };
+      }
       handleFirestoreError(err, OperationType.CREATE, `attendance/${recordId}`);
       return { success: false, message: err.message || 'Check-In failed.' };
     }
@@ -4705,6 +5247,76 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           message: `Check-Out Blocked: You are ${checkoutDistance}m away from the company office (Allowed limit: ${radius}m). On normal office days, check-out must strictly be performed at the company office.`
         };
       }
+    }
+
+    // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call checkOutApi directly!
+    if (getAuthToken()) {
+      try {
+        const backendRes = await checkOutApi({
+          latitude: finalLat,
+          longitude: finalLon,
+          notes: 'Self Portal Check-Out'
+        });
+
+        const checkOutIso = backendRes?.check_out_at ? formatTimestampToISO(backendRes.check_out_at) : new Date().toISOString();
+        const durationMins = typeof backendRes?.working_minutes === 'number' ? backendRes.working_minutes : 0;
+
+        addAuditLog('ATTENDANCE_CHECKOUT', `${emp.employeeId} (${emp.fullName})`, `Duration: ${Math.floor(durationMins / 60)}h ${durationMins % 60}m`);
+
+        const resolvedRecord: AttendanceRecord = {
+          ...existingRec,
+          id: backendRes?.id || recordId,
+          checkOutAt: checkOutIso,
+          workingMinutes: durationMins,
+          breaks: Array.isArray(backendRes?.breaks)
+            ? backendRes.breaks.map((b: any) => ({
+                type: b.break_type || b.type,
+                startAt: formatTimestampToISO(b.start_time || b.startAt) || '',
+                endAt: formatTimestampToISO(b.end_time || b.endAt),
+                durationMinutes: Number(b.duration_minutes || b.durationMinutes) || 0
+              }))
+            : (existingRec?.breaks || []),
+          totalBreakMinutes: Array.isArray(backendRes?.breaks)
+            ? backendRes.breaks.reduce((acc: number, b: any) => acc + (Number(b.duration_minutes) || 0), 0)
+            : (existingRec?.totalBreakMinutes || 0),
+          updatedAt: checkOutIso
+        } as AttendanceRecord;
+
+        setAttendance(prev => prev.map(a => {
+          if (a.id === recordId || a.id === backendRes?.id || (a.date === todayStr && (a.employeeId === employeeId || a.employeeId === emp.id))) {
+            return resolvedRecord;
+          }
+          return a;
+        }));
+
+        if (auth.currentUser) {
+          setDoc(doc(db, 'attendance', recordId), cleanFirestorePayload({
+            checkOutAt: serverTimestamp(),
+            workingMinutes: durationMins,
+            updatedAt: serverTimestamp()
+          }), { merge: true }).catch(() => {});
+        }
+
+        return {
+          success: true,
+          message: isApprovedWfh
+            ? 'Checked Out Successfully — Work From Home Completed'
+            : 'Checked Out Successfully — Shift Completed',
+          record: resolvedRecord
+        };
+      } catch (fastApiErr: any) {
+        console.warn('[FastAPI] checkOutApi error:', fastApiErr);
+        if (fastApiErr?.status === 400 || (fastApiErr?.message && (fastApiErr.message.includes('check out') || fastApiErr.message.includes('check in')))) {
+          return { success: false, message: fastApiErr.message };
+        }
+        if (!auth.currentUser) {
+          return { success: false, message: fastApiErr?.message || 'Check-Out failed. Please try again.' };
+        }
+      }
+    }
+
+    if (!auth.currentUser) {
+      return { success: false, message: 'Check-Out requires an authenticated session. Please log in again.' };
     }
 
     // ATOMIC IDEMPOTENT TRANSACTION
@@ -4836,6 +5448,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         record: txResult.data as AttendanceRecord
       };
     } catch (err: any) {
+      if (!auth.currentUser && (err?.code === 'permission-denied' || String(err?.message || '').includes('permission'))) {
+        console.warn(`[Firestore] Suppressed permission warning on unauthenticated session for attendance/${recordId}`);
+        return { success: false, message: 'Check-Out failed: Session requires authentication.' };
+      }
       handleFirestoreError(err, OperationType.UPDATE, `attendance/${recordId}`);
       return { success: false, message: err.message || 'Check-Out failed.' };
     }
@@ -4955,7 +5571,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: true, message: `${breakType} started!`, breaks: [confirmedBreak], totalBreakMinutes: 0 };
       } catch (fastApiErr: any) {
         console.warn('[FastAPI] breakActionApi fallback note:', fastApiErr);
+        if (!auth.currentUser) {
+          return { success: false, message: fastApiErr?.message || `Failed to start ${breakType}.` };
+        }
       }
+    }
+
+    if (!auth.currentUser) {
+      return { success: false, message: 'Starting a break requires an authenticated session.' };
     }
 
     try {
@@ -5139,6 +5762,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return { success: true, message: 'Break ended successfully!' };
     }
 
+    if (!auth.currentUser) {
+      return { success: false, message: 'Ending a break requires an authenticated session.' };
+    }
+
     try {
       const res = await runTransaction(db, async (transaction) => {
         const docSnap = await transaction.get(docRef);
@@ -5229,14 +5856,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   const updateAttendanceRecord = async (recordId: string, updates: Partial<AttendanceRecord>): Promise<void> => {
-    // Write directly to Firestore with serverTimestamp — real-time onSnapshot updates UI seamlessly
-    const cleanUpdates = cleanFirestorePayload({ ...updates, updatedAt: serverTimestamp() });
-    try {
-      await setDoc(doc(db, 'attendance', recordId), cleanUpdates, { merge: true });
-      addAuditLog('ATTENDANCE_CORRECTION', `Record ${recordId}`, `Updated fields: ${Object.keys(updates).join(', ')}`);
-    } catch (err: any) {
-      handleFirestoreError(err, OperationType.UPDATE, `attendance/${recordId}`);
-      throw err;
+    // Optimistically update in-memory attendance state immediately
+    setAttendance(prev => prev.map(a => (a.id === recordId ? { ...a, ...updates, updatedAt: new Date().toISOString() } : a)));
+    addAuditLog('ATTENDANCE_CORRECTION', `Record ${recordId}`, `Updated fields: ${Object.keys(updates).join(', ')}`);
+
+    // Best-effort Cloud Firestore sync when Firebase Auth session is active
+    if (auth.currentUser) {
+      const cleanUpdates = cleanFirestorePayload({ ...updates, updatedAt: serverTimestamp() });
+      try {
+        await setDoc(doc(db, 'attendance', recordId), cleanUpdates, { merge: true });
+      } catch (err: any) {
+        console.warn(`[Firestore] Attendance update note:`, err);
+      }
     }
   };
 
@@ -5304,18 +5935,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: serverTimestamp()
     });
 
-    try {
-      await setDoc(doc(db, 'attendance', targetId), payload, { merge: true });
-      addAuditLog(
-        'ATTENDANCE_CORRECTION',
-        record.employeeName || targetId,
-        `${record.isSynthetic ? 'Created' : 'Updated'} ${record.date}: ${Object.keys(updates).join(', ')}`
-      );
-      return { success: true, message: `Attendance for ${record.employeeName || 'employee'} updated.` };
-    } catch (err: any) {
-      handleFirestoreError(err, OperationType.UPDATE, `attendance/${targetId}`);
-      return { success: false, message: err?.message || 'Attendance correction failed.' };
+    const updatedRecord: AttendanceRecord = {
+      ...(record.isSynthetic ? (seed as any) : record),
+      ...updates,
+      id: targetId,
+      updatedAt: new Date().toISOString()
+    };
+
+    setAttendance(prev => {
+      const filtered = prev.filter(a => a.id !== targetId && !(a.date === record.date && (a.employeeId === record.employeeId || a.employeeCode === record.employeeCode)));
+      return [updatedRecord, ...filtered];
+    });
+
+    addAuditLog(
+      'ATTENDANCE_CORRECTION',
+      record.employeeName || targetId,
+      `${record.isSynthetic ? 'Created' : 'Updated'} ${record.date}: ${Object.keys(updates).join(', ')}`
+    );
+
+    if (auth.currentUser) {
+      try {
+        await setDoc(doc(db, 'attendance', targetId), payload, { merge: true });
+      } catch (err: any) {
+        console.warn(`[Firestore] Attendance correction note:`, err);
+      }
     }
+
+    return { success: true, message: `Attendance for ${record.employeeName || 'employee'} updated.` };
   };
 
   /**
@@ -5480,7 +6126,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     if (getAuthToken()) {
-      const apiType = data.type === 'WFH' ? 'WORK_FROM_HOME' : (data.type === 'Casual Leave' ? 'CASUAL_LEAVE' : (data.type === 'Sick Leave' ? 'SICK_LEAVE' : 'EARN_LEAVE'));
+      const apiType = (data.type === 'WFH' || (data.type as string).toLowerCase().includes('wfh') || (data.type as string).toLowerCase().includes('home')) 
+        ? 'WFH' 
+        : (data.type === 'Casual Leave' ? 'CASUAL_LEAVE' : (data.type === 'Sick Leave' ? 'SICK_LEAVE' : 'EARN_LEAVE'));
       applyLeaveApi({
         type: apiType,
         start_date: data.startDate,
@@ -6002,6 +6650,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       cancelLeaveRequest,
       addAuditLog,
       resetToDemoData,
+      enrollEmployeeBiometrics,
+      resetEmployeeBiometrics,
+      resetAllBiometrics,
       regenerateQrToken,
       sendPasswordReset,
       setEmployeeInitialPassword,

@@ -1,3 +1,8 @@
+import sys
+import os
+# Ensure backend directory is in sys.path when running directly from tests directory
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import asyncio
 import httpx
 import uuid

@@ -27,7 +27,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMobileSidebar, 
   isMobileSidebarOpen,
 }) => {
-  const { activeEmployee, attendance, checkIn, checkOut, role, logout, settings, updateEmployee } = useAuth();
+  const { activeEmployee, attendance, checkIn, checkOut, role, logout, settings, updateEmployee, enrollEmployeeBiometrics } = useAuth();
   const [timeStr, setTimeStr] = useState('');
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [, setHeaderActionLoading] = useState(false);
@@ -41,12 +41,12 @@ export const Header: React.FC<HeaderProps> = ({
 
   const [isHeaderFaceModalOpen, setIsHeaderFaceModalOpen] = useState(false);
 
-  const executeHeaderCheckInProcess = async () => {
+  const executeHeaderCheckInProcess = async (descArr?: number[]) => {
     if (!activeEmployee) return;
     setHeaderActionLoading(true);
 
     const submit = (lat?: number, lon?: number, accuracy: number = 10) =>
-      checkIn(activeEmployee.id, lat, lon, 'Facial Recognition', accuracy)
+      checkIn(activeEmployee.id, lat, lon, accuracy, 'Facial Recognition', undefined, undefined, descArr)
         .then(res => {
           // The result used to be discarded (.finally only), so a REJECTED
           // check-in looked identical to a successful one from the employee's
@@ -293,19 +293,17 @@ export const Header: React.FC<HeaderProps> = ({
         <FaceCaptureModal
           isOpen={isHeaderFaceModalOpen}
           onClose={() => setIsHeaderFaceModalOpen(false)}
-          onSuccess={() => {
+          onSuccess={(descArr) => {
             setIsHeaderFaceModalOpen(false);
-            executeHeaderCheckInProcess();
+            executeHeaderCheckInProcess(descArr);
           }}
-          onEnrollSuccess={(descriptorArray) => {
-            updateEmployee(activeEmployee.id, {
-              isFaceEnrolled: true,
-              faceEnrolledAt: new Date().toISOString(),
-              faceDescriptor: descriptorArray
-            });
+          onEnrollSuccess={async (descriptorArray) => {
+            const res = await enrollEmployeeBiometrics(activeEmployee.id, descriptorArray);
+            if (!res.success) throw new Error(res.message);
           }}
           employeeName={activeEmployee.fullName}
           employeeId={activeEmployee.id}
+          employeeCode={activeEmployee.employeeId}
           profilePhotoUrl={activeEmployee.profilePhotoUrl}
           cloudDescriptor={activeEmployee.faceDescriptor}
         />

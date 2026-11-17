@@ -47,7 +47,8 @@ export const HRProfileView: React.FC = () => {
     cancelLeaveRequest,
     companyWorkZone,
     settings,
-    updateEmployee
+    updateEmployee,
+    enrollEmployeeBiometrics
   } = useAuth();
 
   const targetEmployee = activeEmployee || employees.find(e => e.role === 'HR_ADMIN' || e.department === 'Human Resources' || (e.designation || '').toLowerCase().includes('hr')) || employees[0];
@@ -677,12 +678,9 @@ export const HRProfileView: React.FC = () => {
             setIsFaceModalOpen(false);
             executeHrCheckInProcess();
           }}
-          onEnrollSuccess={(descriptorArray) => {
-            updateEmployee(targetEmployee.id, {
-              isFaceEnrolled: true,
-              faceEnrolledAt: new Date().toISOString(),
-              faceDescriptor: descriptorArray
-            });
+          onEnrollSuccess={async (descriptorArray) => {
+            const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray);
+            if (!res.success) throw new Error(res.message);
           }}
           employeeName={targetEmployee.fullName}
           employeeId={targetEmployee.id}

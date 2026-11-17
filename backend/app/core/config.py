@@ -50,6 +50,12 @@ class Settings(BaseSettings):
     # Firebase Bridge (Optional during migration)
     FIREBASE_WEB_API_KEY: str | None = None
 
+    # Cloudinary Image Storage
+    CLOUDINARY_CLOUD_NAME: str | None = None
+    CLOUDINARY_API_KEY: str | None = None
+    CLOUDINARY_API_SECRET: str | None = None
+    CLOUDINARY_URL: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=(
             os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"),

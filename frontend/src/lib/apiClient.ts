@@ -4,7 +4,14 @@ export const getBaseUrl = (): string => {
   if (typeof window !== 'undefined' && (window as any).env?.VITE_API_BASE_URL) {
     return (window as any).env.VITE_API_BASE_URL;
   }
-  return import.meta.env.VITE_API_BASE_URL || 'http://127.0.0.1:8000/api/v1';
+  if (import.meta.env.VITE_API_BASE_URL) {
+    return import.meta.env.VITE_API_BASE_URL;
+  }
+  if (typeof window !== 'undefined') {
+    // Use same-origin proxy to eliminate CORS OPTIONS preflight round-trips
+    return '/api/v1';
+  }
+  return 'http://127.0.0.1:8000/api/v1';
 };
 
 export const API_BASE_URL = getBaseUrl();
@@ -21,30 +28,89 @@ export function removeAuthToken(): void {
   localStorage.removeItem('kalpanaaa_jwt_token');
 }
 
-// Lightweight in-memory cache for fast read operations
+// High-speed multi-tier cache and in-flight deduplication for instantaneous (0ms) data loading
 const apiCache = new Map<string, { data: any; expiresAt: number }>();
-const CACHE_TTL_MS = 5 * 1000;
+const inFlightRequests = new Map<string, Promise<any>>();
+const CACHE_TTL_MS = 180 * 1000; // 3 minutes TTL for ultra-fast instant page refresh
 
-// Wipe any stale sessionStorage caches left from previous sessions
-if (typeof window !== 'undefined' && window.sessionStorage) {
+const getSessionCachedData = (key: string): any | null => {
+  if (typeof window === 'undefined') return null;
   try {
-    const keysToRemove: string[] = [];
-    for (let i = 0; i < sessionStorage.length; i++) {
-      const k = sessionStorage.key(i);
-      if (k && k.startsWith('kss_api_cache_')) keysToRemove.push(k);
+    const raw = sessionStorage.getItem(`kss_api_cache_${key}`) || localStorage.getItem(`kss_api_cache_${key}`);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (parsed && typeof parsed.expiresAt === 'number' && parsed.expiresAt > Date.now()) {
+        return parsed.data;
+      }
     }
-    keysToRemove.forEach(k => sessionStorage.removeItem(k));
   } catch {}
-}
+  return null;
+};
+
+const setSessionCachedData = (key: string, data: any, ttlMs: number) => {
+  if (typeof window === 'undefined') return;
+  try {
+    const payload = JSON.stringify({
+      data,
+      expiresAt: Date.now() + ttlMs
+    });
+    sessionStorage.setItem(`kss_api_cache_${key}`, payload);
+    localStorage.setItem(`kss_api_cache_${key}`, payload);
+  } catch {}
+};
 
 export function clearApiCache(endpointPrefix?: string): void {
   if (!endpointPrefix) {
     apiCache.clear();
+    inFlightRequests.clear();
+    if (typeof window !== 'undefined') {
+      try {
+        const removeSessionKeys: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.startsWith('kss_api_cache_')) removeSessionKeys.push(k);
+        }
+        removeSessionKeys.forEach(k => sessionStorage.removeItem(k));
+
+        const removeLocalKeys: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('kss_api_cache_')) removeLocalKeys.push(k);
+        }
+        removeLocalKeys.forEach(k => localStorage.removeItem(k));
+      } catch {}
+    }
   } else {
     for (const key of apiCache.keys()) {
       if (key.includes(endpointPrefix)) {
         apiCache.delete(key);
       }
+    }
+    for (const key of inFlightRequests.keys()) {
+      if (key.includes(endpointPrefix)) {
+        inFlightRequests.delete(key);
+      }
+    }
+    if (typeof window !== 'undefined') {
+      try {
+        const removeSessionKeys: string[] = [];
+        for (let i = 0; i < sessionStorage.length; i++) {
+          const k = sessionStorage.key(i);
+          if (k && k.startsWith('kss_api_cache_') && k.includes(endpointPrefix)) {
+            removeSessionKeys.push(k);
+          }
+        }
+        removeSessionKeys.forEach(k => sessionStorage.removeItem(k));
+
+        const removeLocalKeys: string[] = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (k && k.startsWith('kss_api_cache_') && k.includes(endpointPrefix)) {
+            removeLocalKeys.push(k);
+          }
+        }
+        removeLocalKeys.forEach(k => localStorage.removeItem(k));
+      } catch {}
     }
   }
 }
@@ -55,6 +121,7 @@ export async function apiRequest<T>(
 ): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
   const token = getAuthToken();
+  const forceFresh = (options.headers as any)?.['X-Bypass-Cache'] === 'true';
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -68,59 +135,99 @@ export async function apiRequest<T>(
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const url = `${API_BASE_URL}${cleanEndpoint}`;
 
-  // Idempotent short cache for non-attendance GET queries
-  const isAttendanceQuery = cleanEndpoint.includes('/attendance');
-  if (method === 'GET' && !isAttendanceQuery) {
+  // 1. Surgical cache invalidation on mutations (never wipe unaffected caches)
+  if (method !== 'GET') {
+    if (cleanEndpoint.startsWith('/attendance')) {
+      clearApiCache('/attendance');
+    } else if (cleanEndpoint.startsWith('/leaves')) {
+      clearApiCache('/leaves');
+    } else if (cleanEndpoint.startsWith('/employees')) {
+      clearApiCache('/employees');
+    } else if (cleanEndpoint.startsWith('/settings')) {
+      clearApiCache('/settings');
+    } else {
+      clearApiCache();
+    }
+  } else if (!forceFresh) {
+    // 2. Return in-memory cached response if still fresh (< 180s)
     const cached = apiCache.get(url);
     if (cached && Date.now() < cached.expiresAt) {
       return cached.data as T;
     }
-  } else if (method !== 'GET') {
-    // Mutation: invalidate cache immediately
-    clearApiCache();
-  }
-
-  try {
-    const response = await fetch(url, {
-      ...options,
-      headers,
-    });
-
-    if (response.status === 401) {
-      removeAuthToken();
-      // Safe fallback redirect if unauthenticated
-      if (typeof window !== 'undefined' && window.location.pathname !== '/') {
-        window.location.href = '/';
-      }
-    }
-
-    if (!response.ok) {
-      const errorText = await response.text();
-      let errorMessage = `HTTP Error ${response.status}: ${response.statusText}`;
-      try {
-        const errJson = JSON.parse(errorText);
-        if (errJson.detail) {
-          errorMessage = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
-        } else if (errJson.message) {
-          errorMessage = errJson.message;
+    // 3. Return tab session / local cache on page refresh (0ms instantaneous boot)
+    const sessionCached = getSessionCachedData(url);
+    if (sessionCached) {
+      apiCache.set(url, { data: sessionCached, expiresAt: Date.now() + CACHE_TTL_MS });
+      // Background stale-while-revalidate update
+      setTimeout(() => {
+        if (!inFlightRequests.has(url)) {
+          apiRequest<T>(endpoint, {
+            ...options,
+            headers: { ...(options.headers || {}), 'X-Bypass-Cache': 'true' }
+          }).catch(() => {});
         }
-      } catch (e) {
-        if (errorText) errorMessage = errorText;
-      }
-      throw new Error(errorMessage);
+      }, 100);
+      return sessionCached as T;
     }
-
-    if (response.status === 204) return {} as T;
-
-    const data = await response.json();
-    if (method === 'GET' && !isAttendanceQuery) {
-      apiCache.set(url, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+    // 4. In-flight request deduplication: return the active pending promise
+    if (inFlightRequests.has(url)) {
+      return inFlightRequests.get(url) as Promise<T>;
     }
-    return data;
-  } catch (error) {
-    console.warn(`API Request Error [${endpoint}]:`, error);
-    throw error;
   }
+
+  const fetchPromise = (async () => {
+    try {
+      const response = await fetch(url, {
+        ...options,
+        headers,
+      });
+
+      if (response.status === 401) {
+        removeAuthToken();
+        if (typeof window !== 'undefined' && window.location.pathname !== '/') {
+          window.location.href = '/';
+        }
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `HTTP Error ${response.status}: ${response.statusText}`;
+        try {
+          const errJson = JSON.parse(errorText);
+          if (errJson.detail) {
+            errorMessage = typeof errJson.detail === 'string' ? errJson.detail : JSON.stringify(errJson.detail);
+          } else if (errJson.message) {
+            errorMessage = errJson.message;
+          }
+        } catch (e) {
+          if (errorText) errorMessage = errorText;
+        }
+        const err: any = new Error(errorMessage);
+        err.status = response.status;
+        err.statusCode = response.status;
+        throw err;
+      }
+
+      if (response.status === 204) return {} as T;
+
+      const data = await response.json();
+      if (method === 'GET') {
+        apiCache.set(url, { data, expiresAt: Date.now() + CACHE_TTL_MS });
+        setSessionCachedData(url, data, CACHE_TTL_MS);
+      }
+      return data as T;
+    } finally {
+      if (method === 'GET') {
+        inFlightRequests.delete(url);
+      }
+    }
+  })();
+
+  if (method === 'GET') {
+    inFlightRequests.set(url, fetchPromise);
+  }
+
+  return fetchPromise;
 }
 
 // ── Specific FastAPI Backend Helpers ─────────────────────────────────────
@@ -231,6 +338,19 @@ export async function updateEmployeeApi(id: string, payload: any): Promise<any> 
   });
 }
 
+export async function deleteEmployeeApi(id: string): Promise<any> {
+  return apiRequest(`/employees/${id}`, {
+    method: 'DELETE'
+  });
+}
+
+export async function uploadPhotoApi(employeeId: string, photoData: string): Promise<any> {
+  return apiRequest(`/employees/${employeeId}/photo`, {
+    method: 'POST',
+    body: JSON.stringify({ photo_data: photoData })
+  });
+}
+
 export async function enrollFaceApi(employeeId: string, faceDescriptor: number[]): Promise<any> {
   return apiRequest(`/employees/${employeeId}/enroll-face`, {
     method: 'POST',
@@ -295,16 +415,17 @@ export async function createAuditLogApi(payload: {
 
 export async function verifyFaceApi(
   faceDescriptor: number[], 
-  threshold = 0.45,
+  threshold = 0.48,
   employeeId?: string,
   employeeCode?: string
 ): Promise<any> {
   const body: Record<string, any> = { face_descriptor: faceDescriptor, threshold };
   if (employeeId && employeeId.includes('-') && employeeId.length === 36) {
     body.employee_id = employeeId;
-  } else if (employeeCode) {
+  }
+  if (employeeCode) {
     body.employee_code = employeeCode;
-  } else if (employeeId) {
+  } else if (employeeId && !(employeeId.includes('-') && employeeId.length === 36)) {
     body.employee_code = employeeId;
   }
 

@@ -3,13 +3,14 @@ from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, Asyn
 from sqlalchemy.orm import declarative_base
 from .config import settings
 
-# Neon PostgreSQL async connection engine
+# Neon PostgreSQL async connection engine optimized for low-latency WAN queries
 engine = create_async_engine(
     settings.DATABASE_URL,
     echo=False,
-    pool_pre_ping=True,
-    pool_size=10,
-    max_overflow=20
+    pool_pre_ping=False,
+    pool_recycle=300,
+    pool_size=15,
+    max_overflow=15
 )
 
 AsyncSessionLocal = async_sessionmaker(
