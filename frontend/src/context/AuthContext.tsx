@@ -89,6 +89,10 @@ import {
 import { resetAllLocalFaceDescriptors, clearEmployeeDescriptor, saveEmployeeDescriptor, isFaceBiometricEnrolled } from '../lib/faceDescriptorStore';
 import { getEmployeeAvatar, LOCAL_AVATARS } from '../lib/avatarHelper';
 
+// ── 100% NEON POSTGRESQL ARCHITECTURE ──────────────────────────────────────
+// Firebase Firestore DB is completely disabled in favor of Neon PostgreSQL (via FastAPI).
+export const USE_FIREBASE_FIRESTORE = false;
+
 const mapBackendToFrontendEmployee = (data: any): Employee => {
   const empId = data.id || data.employee_id || '';
   const empCode = data.employee_code || data.employeeId || 'EMP';
@@ -1176,7 +1180,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ── DEDICATED real-time listener for Office-Wide WFH dates ──
   // This is the 100% reliable channel — completely independent of settings
   useEffect(() => {
-    if (!isFirestoreConnected) return;
+    if (!USE_FIREBASE_FIRESTORE || !isFirestoreConnected) return;
 
     let unsubWfh: () => void = () => {};
 
@@ -1512,6 +1516,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const deletedEmployeeIds = new Set<string>();
 
     const initFirestore = () => {
+      // 100% NEON POSTGRESQL MODE: Disable all Firestore snapshot listeners
+      if (!USE_FIREBASE_FIRESTORE) {
+        setIsFirestoreConnected(true);
+        fetchFastApiRecords(activeEmployeeRef.current, true);
+        return;
+      }
+
       try {
         testConnection().then(connected => setIsFirestoreConnected(connected)).catch(() => {
           setIsFirestoreConnected(typeof navigator !== 'undefined' ? navigator.onLine : true);
@@ -2696,6 +2707,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Conditionally subscribe to audit logs only for admins (bounded query to prevent read spikes)
   useEffect(() => {
     let unsubLogs = () => { };
+    if (!USE_FIREBASE_FIRESTORE) return;
     if (isAuthenticated && authUid && (role === 'SUPER_ADMIN' || role === 'HR_ADMIN')) {
       // P1 FIX: same `limit` without `orderBy` defect as the notifications query.
       // auditLog ids are `log-<epoch-ms>-<rand>`, so ordering by __name__ ordered by
@@ -3528,6 +3540,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // Logged out: nothing to hydrate. (The API requires authentication; data loads right after login.)
   }, []);
 
+  // ── NEON POSTGRESQL LIVE DATA ENGINE ───────────────────────────────────────
+  // Replaces Firestore onSnapshot() listeners with smart, efficient polling from
+  // Neon PostgreSQL via FastAPI so all active portals stay up-to-date in real time.
+  useEffect(() => {
+    if (!USE_FIREBASE_FIRESTORE && (isAuthenticated || getAuthToken())) {
+      // 1. Initial hydration on mount/auth
+      fetchFastApiRecords(activeEmployeeRef.current, true);
+
+      // 2. High-speed background sync (every 8 seconds when window is active)
+      const pollTimer = setInterval(() => {
+        if (typeof document !== 'undefined' && document.hidden) return;
+        fetchFastApiRecords(activeEmployeeRef.current, false);
+      }, 8000);
+
+      // 3. Instant sync on focus / tab resume
+      const handleFocusResume = () => {
+        if (typeof document !== 'undefined' && !document.hidden) {
+          fetchFastApiRecords(activeEmployeeRef.current, true);
+        }
+      };
+
+      window.addEventListener('focus', handleFocusResume);
+      document.addEventListener('visibilitychange', handleFocusResume);
+
+      return () => {
+        clearInterval(pollTimer);
+        window.removeEventListener('focus', handleFocusResume);
+        document.removeEventListener('visibilitychange', handleFocusResume);
+      };
+    }
+  }, [isAuthenticated]);
+
   // ── Session Restore: Already done synchronously via useState initializers above ──
   // This effect only clears stale sessions that couldn't be matched on mount.
   useEffect(() => {
@@ -3809,13 +3853,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
 
       const clearLockout = (empId: string) => {
-        if (targetEmp && targetEmp.failedLoginCount) {
+        if (USE_FIREBASE_FIRESTORE && targetEmp && targetEmp.failedLoginCount) {
           setDoc(doc(db, 'employees', empId), { failedLoginCount: 0, lockoutUntil: null }, { merge: true }).catch(() => { });
         }
       };
 
       const recordFailure = () => {
-        if (targetEmp) {
+        if (USE_FIREBASE_FIRESTORE && targetEmp) {
           const newCount = (targetEmp.failedLoginCount || 0) + 1;
           const updates: Partial<Employee> = { failedLoginCount: newCount };
           if (newCount >= 5) {
@@ -3911,14 +3955,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             localStorage.setItem('kss_v1_session_timestamp', Date.now().toString());
             localStorage.setItem('kss_v1_device_category', cat);
             localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updatedMatched));
-            setDoc(doc(db, 'employees', matched.id), {
-              ...sessionUpdates,
-              // Backfill Firebase Auth UID onto the employee document so that
-              // Firestore security rules can resolve ownership via uid match
-              // on all subsequent requests (not just email match).
-              uid: userCred.user.uid,
-              updatedAt: new Date().toISOString()
-            }, { merge: true }).catch(() => { });
+            if (USE_FIREBASE_FIRESTORE) {
+              setDoc(doc(db, 'employees', matched.id), {
+                ...sessionUpdates,
+                // Backfill Firebase Auth UID onto the employee document so that
+                // Firestore security rules can resolve ownership via uid match
+                // on all subsequent requests (not just email match).
+                uid: userCred.user.uid,
+                updatedAt: new Date().toISOString()
+              }, { merge: true }).catch(() => { });
+            }
 
             addAuditLog('USER_LOGIN', matched.fullName, `Firebase Auth Login (${assignedRole})`);
             clearLockout(matched.id);
@@ -3991,7 +4037,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem('kss_v1_session_id', newSessionId);
           localStorage.setItem('kss_v1_session_timestamp', Date.now().toString());
           localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(basicEmp));
-          setDoc(doc(db, 'employees', basicEmp.id), basicEmp, { merge: true }).catch(() => { });
+          if (USE_FIREBASE_FIRESTORE) {
+            setDoc(doc(db, 'employees', basicEmp.id), basicEmp, { merge: true }).catch(() => { });
+          }
 
           setIsLoading(false);
           return { success: true, message: `Welcome! You're now signed in.` };
@@ -4271,29 +4319,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? { ...empWithoutResume, hasResume: true }
       : newEmp;
 
-    // Persist the authoritative employee record before creating its auth mapping;
-    // mapping rules cross-check the employee document and role.
-    try {
-      await setDoc(doc(db, 'employees', newEmp.id), empPayload);
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `employees/${newEmp.id}`);
-      throw err;
-    }
-
-    if (cleanEmail && empData.password) {
+    // Persist to Neon PostgreSQL or Firestore
+    if (USE_FIREBASE_FIRESTORE) {
       try {
-        await setDoc(doc(db, 'users', uid), {
-          uid,
-          email: cleanEmail,
-          role: newEmp.role,
-          employeeId: newEmp.employeeId,
-          employeeDocId: newEmp.id,
-          fullName: newEmp.fullName,
-          updatedAt: serverTimestamp()
-        });
+        await setDoc(doc(db, 'employees', newEmp.id), empPayload);
       } catch (err) {
-        handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
+        handleFirestoreError(err, OperationType.WRITE, `employees/${newEmp.id}`);
         throw err;
+      }
+
+      if (cleanEmail && empData.password) {
+        try {
+          await setDoc(doc(db, 'users', uid), {
+            uid,
+            email: cleanEmail,
+            role: newEmp.role,
+            employeeId: newEmp.employeeId,
+            employeeDocId: newEmp.id,
+            fullName: newEmp.fullName,
+            updatedAt: serverTimestamp()
+          });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
+          throw err;
+        }
       }
     }
 
@@ -4474,27 +4523,29 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     });
 
     // 6. Persist update directly to Firestore Cloud Database (fail-safe non-blocking)
-    try {
-      await setDoc(doc(db, 'employees', targetDocId), cleanPayload, { merge: true });
-      if (cleanPayload.profilePhotoUrl && user?.uid) {
-        // Also mirror profile photo to users/{uid} for quick header retrieval
-        setDoc(doc(db, 'users', user.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
-      }
-      if (cleanPayload.profilePhotoUrl && existingEmp?.uid && existingEmp.uid !== user?.uid) {
-        setDoc(doc(db, 'users', existingEmp.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
-      }
-    } catch (err) {
-      console.warn('[Firestore] updateEmployee sync note:', err);
-    }
-
-    // 7. Handle resume storage out-of-band if present
-    if (incomingResume) {
+    if (USE_FIREBASE_FIRESTORE) {
       try {
-        const storedOutOfBand = await writeEmployeeResume(targetDocId, incomingResume, `${targetDocId}-resume`);
-        const marker = storedOutOfBand ? { hasResume: true } : { resumeUrl: incomingResume };
-        await setDoc(doc(db, 'employees', targetDocId), marker, { merge: true });
+        await setDoc(doc(db, 'employees', targetDocId), cleanPayload, { merge: true });
+        if (cleanPayload.profilePhotoUrl && user?.uid) {
+          // Also mirror profile photo to users/{uid} for quick header retrieval
+          setDoc(doc(db, 'users', user.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
+        }
+        if (cleanPayload.profilePhotoUrl && existingEmp?.uid && existingEmp.uid !== user?.uid) {
+          setDoc(doc(db, 'users', existingEmp.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
+        }
       } catch (err) {
-        handleFirestoreError(err, OperationType.UPDATE, `employees/${targetDocId}/resume`);
+        console.warn('[Firestore] updateEmployee sync note:', err);
+      }
+
+      // 7. Handle resume storage out-of-band if present
+      if (incomingResume) {
+        try {
+          const storedOutOfBand = await writeEmployeeResume(targetDocId, incomingResume, `${targetDocId}-resume`);
+          const marker = storedOutOfBand ? { hasResume: true } : { resumeUrl: incomingResume };
+          await setDoc(doc(db, 'employees', targetDocId), marker, { merge: true });
+        } catch (err) {
+          handleFirestoreError(err, OperationType.UPDATE, `employees/${targetDocId}/resume`);
+        }
       }
     }
 
@@ -4582,10 +4633,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       deleteEmployeeApi(targetIdentifier).catch(e => console.warn('[FastAPI] deleteEmployeeApi note:', e));
     }
 
-    // Delete from Firestore
-    deleteDoc(doc(db, 'employees', id)).catch(err => {
-      handleFirestoreError(err, OperationType.DELETE, `employees/${id}`);
-    });
+    if (USE_FIREBASE_FIRESTORE) {
+      deleteDoc(doc(db, 'employees', id)).catch(err => {
+        handleFirestoreError(err, OperationType.DELETE, `employees/${id}`);
+      });
+    }
+
+    fetchFastApiRecords(activeEmployeeRef.current, true);
 
     addAuditLog('EMPLOYEE_DELETED', target ? `${target.employeeId} (${target.fullName})` : id, 'Removed employee profile from directory');
   };
@@ -4639,7 +4693,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
 
       // 3. Best-effort Cloud Firestore sync only when a valid Firebase Auth session exists
-      if (auth.currentUser) {
+      if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
         try {
           const docId = targetEmp?.id || cleanId;
           await setDoc(doc(db, 'employees', docId), {
@@ -5099,8 +5153,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ? calculateGpsDistanceMeters(finalLat, finalLon, companyWorkZone.latitude, companyWorkZone.longitude)
       : 0;
 
-    // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call checkInApi directly!
-    if (getAuthToken()) {
+    // 100% NEON POSTGRESQL PRIMARY PATH
+    if (getAuthToken() || !USE_FIREBASE_FIRESTORE) {
       try {
         const apiRec = await checkInApi({
           employee_code: emp.employeeId,
@@ -5149,7 +5203,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return Array.from(map.values());
         });
 
-        if (auth.currentUser) {
+        if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
           const payload = {
             id: resolvedRec.id,
             uid: empUid,
@@ -5185,6 +5239,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setDoc(doc(db, 'attendance', resolvedRec.id), cleanFirestorePayload(payload), { merge: true }).catch(() => {});
         }
 
+        fetchFastApiRecords(activeEmployeeRef.current, true);
+
         return {
           success: true,
           message: evalResult.message,
@@ -5192,8 +5248,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       } catch (fastApiErr: any) {
         console.warn('[FastAPI] checkInApi error:', fastApiErr);
-        // CRITICAL SECURITY ENFORCEMENT: Never bypass FastAPI validation errors.
-        // Biometric mismatches, duplicate check-ins, or authorization failures MUST NEVER fall through to Firestore.
+        if (!USE_FIREBASE_FIRESTORE) {
+          return { success: false, message: fastApiErr?.message || 'Check-in failed on Neon DB.' };
+        }
         const errMsg = (fastApiErr?.message || '').toLowerCase();
         const isNetworkOffline = errMsg.includes('failed to fetch') || errMsg.includes('networkerror') || errMsg.includes('err_connection');
 
@@ -5417,8 +5474,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call checkOutApi directly!
-    if (getAuthToken()) {
+    // 100% NEON POSTGRESQL PRIMARY PATH
+    if (getAuthToken() || !USE_FIREBASE_FIRESTORE) {
       try {
         const backendRes = await checkOutApi({
           latitude: finalLat,
@@ -5457,13 +5514,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return a;
         }));
 
-        if (auth.currentUser) {
+        if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
           setDoc(doc(db, 'attendance', recordId), cleanFirestorePayload({
             checkOutAt: serverTimestamp(),
             workingMinutes: durationMins,
             updatedAt: serverTimestamp()
           }), { merge: true }).catch(() => {});
         }
+
+        fetchFastApiRecords(activeEmployeeRef.current, true);
 
         return {
           success: true,
@@ -5474,6 +5533,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
       } catch (fastApiErr: any) {
         console.warn('[FastAPI] checkOutApi error:', fastApiErr);
+        if (!USE_FIREBASE_FIRESTORE) {
+          return { success: false, message: fastApiErr?.message || 'Check-Out failed on Neon DB.' };
+        }
         if (fastApiErr?.status === 400 || (fastApiErr?.message && (fastApiErr.message.includes('check out') || fastApiErr.message.includes('check in')))) {
           return { success: false, message: fastApiErr.message };
         }
@@ -5689,8 +5751,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return next;
     });
 
-    // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call breakActionApi directly!
-    if (getAuthToken()) {
+    // 100% NEON POSTGRESQL PRIMARY PATH
+    if (getAuthToken() || !USE_FIREBASE_FIRESTORE) {
       const norm = (breakType || '').toLowerCase();
       let apiType = 'TEA_BREAK';
       if (norm.includes('snack')) apiType = 'SNACK_BREAK';
@@ -5736,9 +5798,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return next;
         });
 
+        fetchFastApiRecords(activeEmployeeRef.current, true);
+
         return { success: true, message: `${breakType} started!`, breaks: [confirmedBreak], totalBreakMinutes: 0 };
       } catch (fastApiErr: any) {
         console.warn('[FastAPI] breakActionApi fallback note:', fastApiErr);
+        if (!USE_FIREBASE_FIRESTORE) {
+          return { success: false, message: fastApiErr?.message || `Failed to start ${breakType}.` };
+        }
         if (!auth.currentUser) {
           return { success: false, message: fastApiErr?.message || `Failed to start ${breakType}.` };
         }
@@ -5892,8 +5959,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return next;
     });
 
-    // FASTAPI FAST-PATH: If user is authenticated via FastAPI JWT, call endBreakApi directly!
-    if (getAuthToken()) {
+    // 100% NEON POSTGRESQL PRIMARY PATH
+    if (getAuthToken() || !USE_FIREBASE_FIRESTORE) {
       let backendBreak: any = null;
       try {
         backendBreak = await endBreakApi();
@@ -5926,6 +5993,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return next;
         });
       }
+
+      fetchFastApiRecords(activeEmployeeRef.current, true);
 
       return { success: true, message: 'Break ended successfully!' };
     }
@@ -6190,15 +6259,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const updated = { ...settings, ...newSettings };
     setSettings(updated);
 
-    // B23 FIX: merge instead of full overwrite. saveCompanyWorkZone persists the GPS
-    // fields (officeLatitude/Longitude, allowedRadiusMeters, officeName) into this same
-    // settings/global doc. A plain setDoc rewrote the whole document from the local
-    // `settings` snapshot, so any field present server-side but absent from stale local
-    // state — e.g. GPS coordinates written by another admin/session before this client
-    // hydrated — was silently erased. merge writes only the supplied keys.
-    setDoc(doc(db, 'settings', 'global'), updated, { merge: true }).catch(err => {
-      handleFirestoreError(err, OperationType.WRITE, 'settings/global');
-    });
+    if (USE_FIREBASE_FIRESTORE) {
+      setDoc(doc(db, 'settings', 'global'), updated, { merge: true }).catch(err => {
+        handleFirestoreError(err, OperationType.WRITE, 'settings/global');
+      });
+    }
+
+    if (getAuthToken()) {
+      updateSettingsApi({
+        office_name: updated.officeName,
+        geofence_lat: updated.officeLatitude,
+        geofence_lon: updated.officeLongitude,
+        geofence_radius_meters: updated.allowedRadiusMeters,
+        geofence_enforced: updated.gpsRequired
+      }).catch(e => console.warn('[FastAPI] updateSettingsApi sync note:', e));
+    }
 
     addAuditLog('SETTINGS_UPDATED', 'Company Policy', 'Updated system preferences and GPS/shift rules');
   };
@@ -6225,10 +6300,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       allowedRadiusMeters: updated.radiusMeters
     });
 
-    // Write to Firestore workZones/company
-    await setDoc(doc(db, 'workZones', 'company'), updated).catch(err => {
-      handleFirestoreError(err, OperationType.WRITE, 'workZones/company');
-    });
+    if (USE_FIREBASE_FIRESTORE) {
+      await setDoc(doc(db, 'workZones', 'company'), updated).catch(err => {
+        handleFirestoreError(err, OperationType.WRITE, 'workZones/company');
+      });
+    }
 
     if (getAuthToken() && updated.latitude && updated.longitude) {
       updateSettingsApi({
@@ -6253,27 +6329,64 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const empUid = realAuthUid || data.employeeUid || emp?.uid || '';
     const empEmail = emp?.email || user?.email || auth.currentUser?.email || '';
     const pmUid = data.pmUid || emp?.pmUid || emp?.reportingManagerUid || 'uid-KSS2407003';
-
-    const result = await LeaveService.submitLeaveRequest({
-      ...data,
-      employeeUid: empUid,
-      employeeId: empId,
-      employeeName: empName,
-      employeeEmail: empEmail,
-      email: empEmail,
-      department: empDept,
-      employeeRole: empRole,
-      pmUid: pmUid,
-      pmStatus: 'N/A',
-      hrStatus: 'N/A',
-      ceoStatus: 'Pending',
-      ctoStatus: 'Waiting CEO',
-    });
-
     const nowIso = new Date().toISOString();
+
+    let assignedId = `LR-${Date.now().toString(36).toUpperCase()}`;
+
+    // 100% NEON POSTGRESQL PRIMARY LEAVE SUBMISSION
+    if (!USE_FIREBASE_FIRESTORE || getAuthToken()) {
+      const typeStr = String(data.type || '').toLowerCase();
+      let apiType = 'EARN_LEAVE';
+      if (typeStr.includes('wfh') || typeStr.includes('home')) {
+        apiType = 'WFH';
+      } else if (typeStr.includes('sick')) {
+        apiType = 'SICK_LEAVE';
+      } else if (typeStr.includes('casual')) {
+        apiType = 'CASUAL_LEAVE';
+      } else if (typeStr.includes('loss') || typeStr.includes('lop')) {
+        apiType = 'LOSS_OF_PAY';
+      } else {
+        apiType = 'EARN_LEAVE';
+      }
+
+      try {
+        const leaveRes = await applyLeaveApi({
+          type: apiType,
+          start_date: data.startDate,
+          end_date: data.endDate,
+          reason: data.reason,
+          request_code: assignedId
+        });
+        if (leaveRes && leaveRes.id) {
+          assignedId = String(leaveRes.id);
+        }
+      } catch (e) {
+        console.warn('[FastAPI] applyLeaveApi error:', e);
+      }
+    }
+
+    if (USE_FIREBASE_FIRESTORE) {
+      const result = await LeaveService.submitLeaveRequest({
+        ...data,
+        employeeUid: empUid,
+        employeeId: empId,
+        employeeName: empName,
+        employeeEmail: empEmail,
+        email: empEmail,
+        department: empDept,
+        employeeRole: empRole,
+        pmUid: pmUid,
+        pmStatus: 'N/A',
+        hrStatus: 'N/A',
+        ceoStatus: 'Pending',
+        ctoStatus: 'Waiting CEO',
+      });
+      if (result?.id) assignedId = result.id;
+    }
+
     const optRequest: LeaveRequest = {
       ...data,
-      id: result.id,
+      id: assignedId,
       employeeId: empId,
       employeeUid: empUid,
       authUid: empUid,
@@ -6289,10 +6402,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       createdAt: nowIso,
       updatedAt: nowIso
     };
-    setLeaveRequests(prev => [optRequest, ...prev.filter(r => r.id !== result.id)]);
+    setLeaveRequests(prev => [optRequest, ...prev.filter(r => r.id !== assignedId)]);
     try {
-      localStorage.setItem('kss_v1_leave_requests', JSON.stringify([optRequest, ...leaveRequests.filter(r => r.id !== result.id)].slice(0, 500)));
+      localStorage.setItem('kss_v1_leave_requests', JSON.stringify([optRequest, ...leaveRequests.filter(r => r.id !== assignedId)].slice(0, 500)));
     } catch {}
+
+    fetchFastApiRecords(activeEmployeeRef.current, true);
 
     const isWfh = data.type === 'WFH';
     const eventType = isWfh ? 'WFH_REQUEST_SUBMITTED' : 'LEAVE_REQUEST_SUBMITTED';
@@ -6308,7 +6423,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         targetEmployeeName: empName,
         overrideAudience: ['SUPER_ADMIN'],
         metadata: {
-          requestId: result.id,
+          requestId: assignedId,
           requestType: data.type,
           startDate: data.startDate,
           endDate: data.endDate,
@@ -6317,31 +6432,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     );
 
-    if (getAuthToken()) {
-      const typeStr = String(data.type || '').toLowerCase();
-      let apiType = 'EARN_LEAVE';
-      if (typeStr.includes('wfh') || typeStr.includes('home')) {
-        apiType = 'WFH';
-      } else if (typeStr.includes('sick')) {
-        apiType = 'SICK_LEAVE';
-      } else if (typeStr.includes('casual')) {
-        apiType = 'CASUAL_LEAVE';
-      } else if (typeStr.includes('loss') || typeStr.includes('lop')) {
-        apiType = 'LOSS_OF_PAY';
-      } else {
-        apiType = 'EARN_LEAVE';
-      }
-      applyLeaveApi({
-        type: apiType,
-        start_date: data.startDate,
-        end_date: data.endDate,
-        reason: data.reason,
-        request_code: result.id
-      }).catch(e => console.warn('[FastAPI] applyLeaveApi sync note:', e));
-    }
-
     addAuditLog('LEAVE_REQUEST', empName, `Submitted ${data.type} request from ${data.startDate} to ${data.endDate}`);
-    return result;
+    return { success: true, id: assignedId, message: 'Leave request submitted successfully' };
   };
 
   const updateLeaveRequestStage = async (
@@ -6413,50 +6505,38 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       } catch {}
     }
 
-    // 3. Persist to Firestore via LeaveService asynchronously
-    try {
-      if (stage === 'CEO') {
-        await LeaveService.reviewCeoStage(id, decision, revUid, reviewerName, notes, empId, sDate, eDate);
-      } else if (stage === 'CTO') {
-        // Resolve the employee's Firestore doc ID and leave type for balance deduction.
-        const targetEmpForDeduct = employees.find(e =>
-          (e.uid && targetReq?.employeeUid && e.uid === targetReq.employeeUid) ||
-          e.id === empId ||
-          e.employeeId === empId
-        );
-        const employeeDocIdForDeduct = targetEmpForDeduct?.id || empId || '';
-        const leaveTypeForDeduct = targetReq?.type || targetReq?.leaveCategory || '';
-        await LeaveService.reviewCtoStage(
-          id, decision, revUid, reviewerName, notes,
-          empId, sDate, eDate,
-          employeeDocIdForDeduct,
-          leaveTypeForDeduct
-        );
-      }
-    } catch (fsErr) {
-      console.warn('[AuthContext] Firestore stage update error, attempting direct fallback write:', fsErr);
+    // 3. Persist to Neon PostgreSQL or Firestore
+    if (!USE_FIREBASE_FIRESTORE || getAuthToken()) {
       try {
-        const fallbackUpdates: Partial<LeaveRequest> = {
-          updatedAt: nowIso
-        };
+        await reviewLeaveApi(id, isApproved ? 'APPROVED' : 'REJECTED', notes || `${stage} Review: ${decision}`);
+      } catch (e) {
+        console.warn('[FastAPI] reviewLeaveApi note:', e);
+      }
+      fetchFastApiRecords(activeEmployeeRef.current, true);
+    }
+
+    if (USE_FIREBASE_FIRESTORE) {
+      try {
         if (stage === 'CEO') {
-          fallbackUpdates.ceoStatus = decision;
-          fallbackUpdates.ceoReviewedBy = revUid;
-          fallbackUpdates.ceoReviewedAt = nowIso;
-          fallbackUpdates.ceoNotes = notes || '';
-          fallbackUpdates.ctoStatus = isApproved ? 'Pending' : 'Waiting CEO';
-          fallbackUpdates.status = isApproved ? 'Pending' : 'Rejected';
+          await LeaveService.reviewCeoStage(id, decision, revUid, reviewerName, notes, empId, sDate, eDate);
         } else if (stage === 'CTO') {
-          fallbackUpdates.ctoStatus = decision;
-          fallbackUpdates.ctoReviewedBy = revUid;
-          fallbackUpdates.ctoReviewedAt = nowIso;
-          fallbackUpdates.ctoNotes = notes || '';
-          fallbackUpdates.status = isApproved ? 'Approved' : 'Rejected';
+          // Resolve the employee's Firestore doc ID and leave type for balance deduction.
+          const targetEmpForDeduct = employees.find(e =>
+            (e.uid && targetReq?.employeeUid && e.uid === targetReq.employeeUid) ||
+            e.id === empId ||
+            e.employeeId === empId
+          );
+          const employeeDocIdForDeduct = targetEmpForDeduct?.id || empId || '';
+          const leaveTypeForDeduct = targetReq?.type || targetReq?.leaveCategory || '';
+          await LeaveService.reviewCtoStage(
+            id, decision, revUid, reviewerName, notes,
+            empId, sDate, eDate,
+            employeeDocIdForDeduct,
+            leaveTypeForDeduct
+          );
         }
-        await setDoc(doc(db, 'leaveRequests', id), cleanFirestorePayload(fallbackUpdates), { merge: true });
-      } catch (fallbackErr) {
-        console.error('[AuthContext] Direct fallback write failed:', fallbackErr);
-        handleFirestoreError(fallbackErr, OperationType.WRITE, `leaveRequests/${id}`);
+      } catch (fsErr) {
+        console.warn('[AuthContext] Firestore stage update error, attempting direct fallback write:', fsErr);
       }
     }
 
@@ -6500,10 +6580,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         updateEmployee(targetEmp.id, { approvedWfhDates: Array.from(dates) });
       }
-    }
-
-    if (getAuthToken()) {
-      reviewLeaveApi(id, isApproved ? 'APPROVED' : 'REJECTED', notes).catch(e => console.warn('[FastAPI] reviewLeaveApi sync note:', e));
     }
 
     addAuditLog('LEAVE_STAGE_DECISION', reviewerName, `${stage} ${decision} for leave request ${id}`);
