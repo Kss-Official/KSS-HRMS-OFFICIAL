@@ -306,7 +306,7 @@ export interface ApiLoginResponse {
 
 export async function loginApi(email: string, pass: string): Promise<ApiLoginResponse> {
   const cleanEndpoint = '/auth/login';
-  const url = `${API_BASE_URL}${cleanEndpoint}`;
+  const url = `${getBaseUrl()}${cleanEndpoint}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },

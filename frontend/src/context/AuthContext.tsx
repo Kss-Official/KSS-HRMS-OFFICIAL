@@ -3873,11 +3873,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } catch (fastApiErr: any) {
         const errMsg = fastApiErr?.message || '';
-        if (errMsg.toLowerCase().includes('invalid email or password') || errMsg.toLowerCase().includes('inactive account')) {
+        if (errMsg.toLowerCase().includes('inactive account')) {
           setIsLoading(false);
-          return { success: false, message: errMsg };
+          return { success: false, message: 'Your account is marked inactive. Please contact HR.' };
         }
-        // Network or offline: fall through to Firebase / local login
+        // If FastAPI rejected with "invalid email or password" or network/CORS error,
+        // do NOT abort immediately: fall through to Firebase Auth so registered Firebase users can log in seamlessly.
+        console.warn('[FastAPI Auth] Login check returned error or unverified credentials, falling through to Firebase Auth:', errMsg);
       }
 
       // 4. Try Firebase Auth (for registered employees)
