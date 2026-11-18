@@ -379,7 +379,7 @@ export const PMProjectsView: React.FC = () => {
                           <div className="flex items-center justify-between text-[11px] text-slate-400">
                             <span className="flex items-center gap-1.5 font-medium text-slate-300">
                               <User className="w-3.5 h-3.5 text-slate-500" />
-                              <span>{task.assigneeName.split(' ')[0]}</span>
+                              <span>{(task.assigneeName || 'Unassigned').split(' ')[0]}</span>
                             </span>
                             <span className="font-mono text-[10px] text-slate-400 bg-slate-900 px-2 py-0.5 rounded border border-slate-800/80 flex items-center gap-1">
                               <Calendar className="w-3 h-3 text-slate-500" />

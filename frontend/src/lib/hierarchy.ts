@@ -219,21 +219,25 @@ export function deduplicateEmployeeList<T extends any>(list: T[]): T[] {
     // Reject test accounts
     if (isTestEmployee(emp)) continue;
 
-    // Reject deleted / ghost markers
+    // Reject deleted / ghost markers and permanently removed accounts
     const empId = String((emp as any).id || '');
+    const rawCode = String((emp as any).employeeId || (emp as any).employee_code || '').toUpperCase().trim();
+    const cleanCode = rawCode.replace(/^KS2/, 'KSS2');
+    const email = String((emp as any).email || '').toLowerCase().trim();
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
     if (
       empId === 'bf41B0ztyefb6OZzO9NykxA9MSz2' ||
+      empId === 'dQ7XANsF9eUL3JZyqCXIlAPHF382' ||
+      cleanCode === 'KSS2407018' ||
+      normalizedName.includes('avanish') ||
+      email.includes('na@kalpanaaa.in') ||
+      (emp as any).isDeleted ||
       name.includes('GHOST') ||
       name.includes('[DELETED]')
     ) {
       continue;
     }
-
-    // Canonical keys
-    const rawCode = String((emp as any).employeeId || (emp as any).employee_code || '').toUpperCase().trim();
-    const cleanCode = rawCode.replace(/^KS2/, 'KSS2');
-    const email = String((emp as any).email || '').toLowerCase().trim();
-    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
 
     // Check duplicate by Employee Code
     if (cleanCode && seenIds.has(cleanCode)) {

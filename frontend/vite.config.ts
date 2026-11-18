@@ -41,6 +41,7 @@ export default defineConfig(({ command }) => {
           skipWaiting: true,
           clientsClaim: true,
           cleanupOutdatedCaches: true,
+          navigateFallback: null,
           navigateFallbackDenylist: [/^\/assets\//, /^\/models\//, /\.[a-z0-9]+$/i]
         },
         manifest: {

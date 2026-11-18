@@ -8,9 +8,13 @@ from app.core.config import settings
 from app.core.database import engine, Base
 from app.api.v1.router import api_router
 
-# Ensure uploads directory for persistent employee photos and documents exists
-UPLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
-os.makedirs(os.path.join(UPLOADS_DIR, "avatars"), exist_ok=True)
+# Ensure uploads directory for employee photos and documents exists (Vercel-safe fallback to /tmp)
+is_vercel = bool(os.environ.get("VERCEL") or os.environ.get("AWS_LAMBDA_FUNCTION_NAME"))
+UPLOADS_DIR = "/tmp/uploads" if is_vercel else os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+try:
+    os.makedirs(os.path.join(UPLOADS_DIR, "avatars"), exist_ok=True)
+except OSError:
+    pass
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -43,8 +47,9 @@ app.add_middleware(
 # Include API v1 Router
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
-# Serve uploaded employee photos and static assets
-app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
+# Serve uploaded employee photos and static assets if directory exists
+if os.path.exists(UPLOADS_DIR):
+    app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 @app.get("/health", tags=["System"])
 async def health_check():

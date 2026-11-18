@@ -405,7 +405,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const n = (emp.fullName || '').toLowerCase();
             const c = (emp.employeeId || '').toLowerCase();
             const m = (emp.email || '').toLowerCase();
-            if (c === 'new6dfc34f4' || n.includes('admin created user') || c === 'alice001' || c === 'test001' || n.includes('test portal') || n.includes('alice test') || n === 'alice' || m.includes('alice')) return false;
+            if (
+              c === 'new6dfc34f4' || 
+              n.includes('admin created user') || 
+              c === 'alice001' || 
+              c === 'test001' || 
+              n.includes('test portal') || 
+              n.includes('alice test') || 
+              n === 'alice' || 
+              m.includes('alice') ||
+              emp.id === 'dQ7XANsF9eUL3JZyqCXIlAPHF382' ||
+              c === 'kss2407018' ||
+              n.includes('avanish') ||
+              m.includes('na@kalpanaaa.in')
+            ) return false;
             return true;
           })
           .map(emp => {
@@ -1526,9 +1539,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             snapshot.forEach(docSnap => {
               const data = { id: docSnap.id, ...docSnap.data() } as Employee;
 
-              // PURGE ABHINAYA V ACCOUNT PERMANENTLY (No longer with company)
+              // PURGE ABHINAYA V & AVANISH KUMAR TRIPATHI PERMANENTLY
               if (
                 data.id === '3ZHI3aTB37StHjR97WEBJQSWT9H3' ||
+                data.id === 'dQ7XANsF9eUL3JZyqCXIlAPHF382' ||
+                data.employeeId === 'KSS2407018' ||
+                (data.fullName && data.fullName.toLowerCase().includes('avanish')) ||
+                (data.email && data.email.toLowerCase().includes('na@kalpanaaa.in')) ||
                 (data as any).isDeleted ||
                 !data.fullName ||
                 data.fullName.trim() === '' ||
@@ -1539,6 +1556,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (canMigrate && !deletedEmployeeIds.has(data.id)) {
                   deletedEmployeeIds.add(data.id);
                   deleteDoc(doc(db, 'employees', data.id)).catch(() => { });
+                  deleteDoc(doc(db, 'users', data.id)).catch(() => { });
                 }
                 return;
               }

@@ -339,6 +339,12 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
     return dailyRoster.filter(r => r.isCheckedIn && !r.isShiftComplete);
   }, [dailyRoster]);
 
+  const shiftCompletedEmployees = useMemo(() => {
+    return dailyRoster.filter(r => r.isShiftComplete);
+  }, [dailyRoster]);
+
+  const shiftCompletedCount = shiftCompletedEmployees.length;
+
   // ── Bulk Checkout State & Handlers ──
   const [isBulkCheckoutModalOpen, setIsBulkCheckoutModalOpen] = useState(false);
   const [bulkCheckoutTime, setBulkCheckoutTime] = useState<string>(() => getCurrentIstTimeInput());
@@ -834,7 +840,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
               setIsBulkCheckoutModalOpen(true);
             }}
             className="px-4 py-2.5 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-lg shadow-rose-950/40 flex items-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
-            title="Bulk Check-Out all active employees at shift end"
+            title={`Bulk Check-Out all ${activeCheckedInEmployees.length} active on-duty employees${shiftCompletedCount > 0 ? ` (${shiftCompletedCount} already checked out)` : ''}`}
           >
             <LogOut className="w-4 h-4" />
             <span>Check Out All ({activeCheckedInEmployees.length})</span>
@@ -1082,9 +1088,21 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
           onClick={() => { triggerHaptic(); setRosterFilter('Present'); setIsRosterModalOpen(true); }}
           className="bg-slate-900/90 rounded-2xl p-4 border border-slate-800 shadow-md hover:border-emerald-500/50 transition-all cursor-pointer"
         >
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Present</span>
-          <span className="text-2xl font-black text-emerald-400 font-mono mt-1 block">{presentCount}</span>
-          <span className="text-[9px] text-slate-500 font-semibold block mt-0.5">On Duty</span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Present</span>
+            {shiftCompletedCount > 0 && (
+              <span className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/30">
+                {shiftCompletedCount} Done
+              </span>
+            )}
+          </div>
+          <div className="flex items-baseline gap-1 mt-1">
+            <span className="text-2xl font-black text-emerald-400 font-mono">{activeCheckedInEmployees.length}</span>
+            <span className="text-xs font-bold text-slate-500 font-mono">/ {presentCount}</span>
+          </div>
+          <span className="text-[9px] text-slate-400 font-medium block mt-0.5">
+            {activeCheckedInEmployees.length} On Duty {shiftCompletedCount > 0 ? `• ${shiftCompletedCount} Shift Done` : ''}
+          </span>
         </div>
 
         {/* On Break (Glowing Live Beacon) */}
@@ -1380,7 +1398,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
                     setIsBulkCheckoutModalOpen(true);
                   }}
                   className="px-3.5 py-2 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-all hover:scale-[1.02] cursor-pointer"
-                  title="Bulk Check-Out all active employees"
+                  title={`Bulk Check-Out all ${activeCheckedInEmployees.length} active on-duty employees${shiftCompletedCount > 0 ? ` (${shiftCompletedCount} already checked out)` : ''}`}
                 >
                   <LogOut className="w-3.5 h-3.5" />
                   <span>Check Out All ({activeCheckedInEmployees.length})</span>
@@ -1491,10 +1509,15 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
                                   <span className="w-1.5 h-1.5 rounded-full bg-amber-400" />
                                   <span>On Break</span>
                                 </span>
+                              ) : r.isShiftComplete ? (
+                                <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-blue-500/15 text-blue-300 border border-blue-500/30">
+                                  <CheckCircle2 className="w-3 h-3 text-blue-400" />
+                                  <span>Shift Done</span>
+                                </span>
                               ) : r.status === 'Present' ? (
                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
                                   <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-                                  <span>Present</span>
+                                  <span>On Duty</span>
                                 </span>
                               ) : r.status === 'Work From Home' ? (
                                 <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-black uppercase tracking-wider bg-sky-500/15 text-sky-300 border border-sky-500/30">
@@ -1929,6 +1952,25 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
                     ))}
                   </div>
                 </div>
+
+                {shiftCompletedEmployees.length > 0 && (
+                  <div className="p-3 bg-blue-950/20 rounded-2xl border border-blue-500/20 space-y-1.5">
+                    <div className="flex items-center justify-between text-xs">
+                      <span className="text-blue-300 font-medium flex items-center gap-1.5">
+                        <CheckCircle2 className="w-3.5 h-3.5 text-blue-400" />
+                        Already Checked Out Today:
+                      </span>
+                      <span className="font-mono font-bold text-blue-400">{shiftCompletedEmployees.length} Employees</span>
+                    </div>
+                    <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto pt-0.5">
+                      {shiftCompletedEmployees.map(e => (
+                        <span key={e.employee.id} className="text-[10px] font-medium px-2 py-0.5 bg-blue-900/30 text-blue-300 border border-blue-800/50 rounded-lg">
+                          {e.employee.fullName} {e.record?.checkOutAt ? `(${toISTTimeString(e.record.checkOutAt)})` : ''}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="space-y-3">
                   <div>
