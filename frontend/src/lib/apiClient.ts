@@ -347,7 +347,7 @@ export async function getEmployeesApi(limit = 200): Promise<any[]> {
   return apiRequest(`/employees/?limit=${limit}`);
 }
 
-export async function getAttendanceRecordsApi(limit = 2000, forceFresh = false): Promise<any[]> {
+export async function getAttendanceRecordsApi(limit = 200, forceFresh = false): Promise<any[]> {
   return apiRequest(`/attendance/records?limit=${limit}`, forceFresh ? { headers: { 'X-Bypass-Cache': 'true' } } : {});
 }
 

@@ -3294,7 +3294,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         // 1. Attendance Hydration (High priority for immediate Shift Active display)
-        const attPromise = getAttendanceRecordsApi(2000, force).then((attList) => {
+        const recordLimit = isSuperOrHr ? 500 : 100;
+        const attPromise = getAttendanceRecordsApi(recordLimit, force).then((attList) => {
           if (Array.isArray(attList) && attList.length > 0) {
             const empMap = getEmpMap();
             const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {

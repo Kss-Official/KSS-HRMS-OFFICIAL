@@ -449,11 +449,14 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                   const matchedId   = String(backendRes.employee_id || '').trim().toLowerCase();
                   const targetCode  = String(employeeCode || employeeId || '').trim().toLowerCase();
                   const targetId    = String(employeeId || '').trim().toLowerCase();
+                  const matchedName = String(backendRes.full_name || '').trim().toLowerCase();
+                  const targetName  = String(employeeName || '').trim().toLowerCase();
 
-                  // Valid match if EITHER employee_code or employee_id corresponds to the target employee
+                  // Valid match if employee_code, employee_id, or full_name corresponds to the target employee
                   const isMatchForTarget = 
                     (matchedCode && (matchedCode === targetCode || matchedCode === targetId)) ||
-                    (matchedId && (matchedId === targetId || matchedId === targetCode));
+                    (matchedId && (matchedId === targetId || matchedId === targetCode)) ||
+                    (matchedName && targetName && (matchedName === targetName || matchedName.includes(targetName) || targetName.includes(matchedName)));
 
                   if (!isMatchForTarget && (targetCode || targetId)) {
                     console.warn('[Biometrics] MISMATCH — backend matched', backendRes.employee_code || backendRes.employee_id, 'but expected', targetCode);

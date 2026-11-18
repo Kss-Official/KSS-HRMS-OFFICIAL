@@ -128,7 +128,7 @@ export const HRProfileView: React.FC = () => {
       );
     });
 
-  const executeHrCheckInProcess = async () => {
+  const executeHrCheckInProcess = async (descArr?: number[]) => {
     setLoading(true);
 
     // ── GEOFENCE FIX ───────────────────────────────────────────────────────────
@@ -157,7 +157,7 @@ export const HRProfileView: React.FC = () => {
     }
 
     try {
-      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy);
+      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Facial Recognition', undefined, undefined, descArr);
       if (res.success) {
         toast.success(res.message || 'Check-In recorded successfully via Face Biometrics!');
       } else {
@@ -674,9 +674,9 @@ export const HRProfileView: React.FC = () => {
         <FaceCaptureModal
           isOpen={isFaceModalOpen}
           onClose={() => setIsFaceModalOpen(false)}
-          onSuccess={() => {
+          onSuccess={(descArr) => {
             setIsFaceModalOpen(false);
-            executeHrCheckInProcess();
+            executeHrCheckInProcess(descArr);
           }}
           onEnrollSuccess={async (descriptorArray) => {
             const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray);
@@ -684,8 +684,10 @@ export const HRProfileView: React.FC = () => {
           }}
           employeeName={targetEmployee.fullName}
           employeeId={targetEmployee.id}
+          employeeCode={targetEmployee.employeeId}
           profilePhotoUrl={targetEmployee.profilePhotoUrl}
           cloudDescriptor={targetEmployee.faceDescriptor}
+          isFaceEnrolled={targetEmployee.isFaceEnrolled}
         />
       )}
     </div>

@@ -1,6 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, and_, text, func
+from sqlalchemy import select, and_, or_, text, func
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import selectinload
 from uuid import UUID
@@ -183,7 +183,9 @@ async def verify_biometric_face(
         """), {"vec": vector_str, "emp_id": emp_id})).scalar()
         dist = float(dist_val) if dist_val is not None else 1.0
         matched = dist <= effective_threshold
-        confidence = max(0.0, min(1.0, 1.0 - (dist / effective_threshold))) if matched else max(0.0, round(1.0 - min(dist, 1.0), 4))
+        # Exact cosine similarity on unit vectors: 1.0 - (dist^2) / 2.0
+        cos_sim = 1.0 - (dist * dist) / 2.0
+        confidence = max(0.0, min(1.0, cos_sim)) if matched else max(0.0, round(1.0 - min(dist, 1.0), 4))
 
         if not matched:
             other = (await db.execute(text("""
@@ -218,7 +220,8 @@ async def verify_biometric_face(
 
     emp_id, emp_code, full_name, dist = match[0], match[1], match[2], float(match[3])
     matched = dist <= effective_threshold
-    confidence = max(0.0, min(1.0, 1.0 - (dist / effective_threshold))) if matched else max(0.0, round(1.0 - min(dist, 1.0), 4))
+    cos_sim = 1.0 - (dist * dist) / 2.0
+    confidence = max(0.0, min(1.0, cos_sim)) if matched else max(0.0, round(1.0 - min(dist, 1.0), 4))
     if not matched:  # don't reveal the nearest non-matching employee
         return {"matched": False, "distance": round(dist, 4), "confidence": confidence,
                 "message": "No matching face found within biometric threshold"}
@@ -242,19 +245,31 @@ async def check_in(
 
     # Target employee with strict authorization enforcement
     target_emp = current_user
-    if payload.employee_code and payload.employee_code.strip().lower() != current_user.employee_code.strip().lower():
-        if current_user.role not in PRIVILEGED_ADMINS:
-            raise HTTPException(
-                status_code=403,
-                detail="Security Violation: Regular employees cannot check in on behalf of another employee."
-            )
-        res = await db.execute(select(Employee).where(func.lower(Employee.employee_code) == payload.employee_code.strip().lower()))
-        target = res.scalar_one_or_none()
-        if not target:
-            raise HTTPException(status_code=404, detail=f"Employee with code '{payload.employee_code}' not found")
-        if not target.is_active:
-            raise HTTPException(status_code=400, detail="Cannot check in an inactive employee")
-        target_emp = target
+    if payload.employee_code:
+        code_clean = payload.employee_code.strip().lower()
+        curr_codes = {
+            current_user.employee_code.strip().lower() if current_user.employee_code else "",
+            str(current_user.id).lower(),
+            current_user.legacy_firebase_id.strip().lower() if current_user.legacy_firebase_id else ""
+        }
+        if code_clean not in curr_codes:
+            if current_user.role not in PRIVILEGED_ADMINS:
+                raise HTTPException(
+                    status_code=403,
+                    detail="Security Violation: Regular employees cannot check in on behalf of another employee."
+                )
+            res = await db.execute(select(Employee).where(
+                or_(
+                    func.lower(Employee.employee_code) == code_clean,
+                    func.lower(Employee.legacy_firebase_id) == code_clean
+                )
+            ))
+            target = res.scalar_one_or_none()
+            if not target:
+                raise HTTPException(status_code=404, detail=f"Employee with code '{payload.employee_code}' not found")
+            if not target.is_active:
+                raise HTTPException(status_code=400, detail="Cannot check in an inactive employee")
+            target_emp = target
     is_proxy = target_emp.id != current_user.id
 
     res = await db.execute(
@@ -472,7 +487,7 @@ async def get_records(
     employee_id: Optional[UUID] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    limit: int = Query(2000, ge=1, le=5000),
+    limit: int = Query(200, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):

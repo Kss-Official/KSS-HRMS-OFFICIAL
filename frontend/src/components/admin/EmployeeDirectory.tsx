@@ -923,8 +923,11 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
             toast.success(`✓ Face biometric template registered for ${selectedBiometricEmp.fullName}!`);
           }}
           employeeName={selectedBiometricEmp.fullName}
-          employeeId={selectedBiometricEmp.employeeId || selectedBiometricEmp.id}
+          employeeId={selectedBiometricEmp.id}
+          employeeCode={selectedBiometricEmp.employeeId}
           profilePhotoUrl={selectedBiometricEmp.profilePhotoUrl}
+          cloudDescriptor={selectedBiometricEmp.faceDescriptor}
+          isFaceEnrolled={selectedBiometricEmp.isFaceEnrolled}
           isEnrollmentMode={true}
         />
       )}

@@ -349,7 +349,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
       );
     });
 
-  const executePmCheckInProcess = async () => {
+  const executePmCheckInProcess = async (descArr?: number[]) => {
     if (!targetEmployee) return;
     setLoading(true);
 
@@ -371,7 +371,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
     }
 
     try {
-      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Facial Recognition');
+      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Facial Recognition', undefined, undefined, descArr);
       if (res.success) {
         toast.success(res.message || 'PM Duty Check-In recorded via Face Biometrics!');
       } else {
@@ -1569,9 +1569,9 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
         <FaceCaptureModal
           isOpen={isFaceModalOpen}
           onClose={() => setIsFaceModalOpen(false)}
-          onSuccess={() => {
+          onSuccess={(descArr) => {
             setIsFaceModalOpen(false);
-            executePmCheckInProcess();
+            executePmCheckInProcess(descArr);
           }}
           onEnrollSuccess={async (descriptorArray) => {
             if (targetEmployee) {
@@ -1581,6 +1581,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
           }}
           employeeName={targetEmployee.fullName}
           employeeId={targetEmployee.id}
+          employeeCode={targetEmployee.employeeId}
           profilePhotoUrl={profilePhoto || targetEmployee.profilePhotoUrl}
           cloudDescriptor={targetEmployee.faceDescriptor}
           isFaceEnrolled={targetEmployee.isFaceEnrolled}
@@ -1610,6 +1611,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
           }}
           employeeName={targetEmployee.fullName}
           employeeId={targetEmployee.id}
+          employeeCode={targetEmployee.employeeId}
           profilePhotoUrl={profilePhoto || targetEmployee.profilePhotoUrl}
           cloudDescriptor={targetEmployee.faceDescriptor}
           isFaceEnrolled={targetEmployee.isFaceEnrolled}

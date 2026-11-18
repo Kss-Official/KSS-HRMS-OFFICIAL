@@ -18,6 +18,7 @@ from app.core.cloudinary_service import (
 from app.models.employee import Employee
 from app.models.enums import UserRole, ExecutiveTier
 from app.schemas.employee import EmployeeOut, EmployeeCreate, EmployeeUpdate, FaceEnrollRequest, PhotoUploadRequest
+from app.schemas.attendance import BiometricMatchRequest, BiometricMatchResponse
 from app.api.deps import get_current_user, require_roles, invalidate_user_cache
 from app.api.audit_util import add_audit
 
@@ -506,3 +507,15 @@ async def delete_employee(
     if outcome == "deleted":
         return {"message": f"Employee {code} and associated photo deleted successfully", "outcome": outcome}
     return {"message": f"Employee {code} has attendance/leave history, so the account was deactivated instead of deleted", "outcome": outcome}
+
+
+@router.post("/verify-face", response_model=BiometricMatchResponse)
+async def verify_face_alias(
+    payload: BiometricMatchRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user),
+):
+    """Alias for /api/v1/attendance/verify-face to ensure high availability and compatibility"""
+    from app.api.v1.endpoints.attendance import verify_biometric_face
+    return await verify_biometric_face(payload, db=db, current_user=current_user)
+

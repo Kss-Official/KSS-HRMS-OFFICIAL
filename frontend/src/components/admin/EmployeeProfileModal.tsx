@@ -535,8 +535,11 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
             toast.success(`✓ Face biometric template registered for ${employee.fullName}!`);
           }}
           employeeName={employee.fullName}
-          employeeId={employee.employeeId || employee.id}
+          employeeId={employee.id}
+          employeeCode={employee.employeeId}
           profilePhotoUrl={employee.profilePhotoUrl}
+          cloudDescriptor={employee.faceDescriptor}
+          isFaceEnrolled={employee.isFaceEnrolled}
           isEnrollmentMode={true}
         />
       )}
