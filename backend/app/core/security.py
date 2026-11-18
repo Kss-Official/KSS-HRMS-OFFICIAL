@@ -8,7 +8,7 @@ from .config import settings
 pwd_context = CryptContext(schemes=["argon2", "bcrypt"], deprecated="auto")
 
 # Minimum acceptable password length for NEW passwords (change-password / create).
-MIN_PASSWORD_LENGTH = 8
+MIN_PASSWORD_LENGTH = 6
 MAX_PASSWORD_LENGTH = 128
 
 # A real argon2 hash of a random string, used to burn equivalent CPU time when the

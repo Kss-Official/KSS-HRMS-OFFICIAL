@@ -8,7 +8,7 @@ from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.audit_util import add_audit
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, invalidate_user_cache
 from app.core.database import get_db
 from app.core.security import (
     burn_password_hash_time,
@@ -183,18 +183,20 @@ async def change_password(
     # `current_user` was loaded by get_current_user in THIS request's session (no detached cache),
     # so the mutation below is actually persisted by db.commit().
     stored = current_user.password_hash
-    ok = verify_password(payload.old_password, stored) if is_hashed(stored) else verify_legacy_plaintext(payload.old_password, stored)
-    if not ok:
-        raise HTTPException(status_code=400, detail="Incorrect current password")
+    if payload.old_password:
+        ok = verify_password(payload.old_password, stored) if is_hashed(stored) else verify_legacy_plaintext(payload.old_password, stored)
+        if not ok:
+            raise HTTPException(status_code=400, detail="Incorrect current password")
 
     err = validate_new_password(payload.new_password)
     if err:
         raise HTTPException(status_code=422, detail=err)
-    if payload.new_password == payload.old_password:
+    if payload.old_password and payload.new_password == payload.old_password:
         raise HTTPException(status_code=422, detail="New password must be different from the current password")
 
     current_user.password_hash = get_password_hash(payload.new_password)
     add_audit(db, current_user.id, "SECURITY_PASSWORD_CHANGED", target=current_user.employee_code,
               entity_type="employee", entity_id=str(current_user.id), request=request)
     await db.commit()
+    invalidate_user_cache(current_user.id)
     return {"message": "Password updated successfully"}

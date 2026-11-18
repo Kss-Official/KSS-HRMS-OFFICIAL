@@ -302,6 +302,17 @@ export async function getCurrentProfileApi(): Promise<any> {
   return apiRequest('/auth/me');
 }
 
+export async function changePasswordApi(newPassword: string, oldPassword?: string): Promise<any> {
+  const payload: any = { new_password: newPassword };
+  if (oldPassword && oldPassword.trim().length > 0) {
+    payload.old_password = oldPassword.trim();
+  }
+  return apiRequest('/auth/change-password', {
+    method: 'POST',
+    body: JSON.stringify(payload)
+  });
+}
+
 export async function getEmployeesApi(limit = 200): Promise<any[]> {
   return apiRequest(`/employees/?limit=${limit}`);
 }

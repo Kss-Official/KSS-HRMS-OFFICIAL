@@ -25,6 +25,8 @@ async def test_leave_and_wfh_full_workflow():
             emp = res_emp.fetchone()
             assert emp is not None, "KSS2407004 must exist"
             emp_id = emp[0]
+            orig_el = float(emp[3] or 1.0)
+            orig_sl = float(emp[4] or 1.0)
 
             # Ensure employee has 10 Earn Leave and 5 Sick Leave balance for testing
             await db.execute(text("UPDATE employees SET earn_leave_balance = 10.0, sick_leave_balance = 5.0 WHERE id = :id"), {"id": emp_id})
@@ -262,10 +264,11 @@ async def test_leave_and_wfh_full_workflow():
         assert resp_lop.status_code == 200
         assert resp_lop.json()["type"] == "LOSS_OF_PAY"
 
-        # Clean up test leaves
+        # Clean up test leaves and restore real employee balances
         async with AsyncSessionLocal() as db:
             await db.execute(delete(LeaveLedger).where(LeaveLedger.reference_id.in_([custom_code, wfh_code, lop_code])))
             await db.execute(delete(LeaveRequest).where(LeaveRequest.request_code.in_([custom_code, wfh_code, lop_code])))
+            await db.execute(text("UPDATE employees SET earn_leave_balance = :el, sick_leave_balance = :sl WHERE id = :id"), {"el": orig_el, "sl": orig_sl, "id": emp_id})
             await db.commit()
 
         print("\n>>> ALL LEAVE & WFH WORKFLOW TESTS PASSED PERFECTLY! <<<")

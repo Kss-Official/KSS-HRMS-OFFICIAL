@@ -8,10 +8,10 @@ import urllib.request
 from app.core.database import AsyncSessionLocal
 from sqlalchemy import text
 
-PROJECT_ID = 'kalpanaaa-employees-website'
-API_KEY = 'AIzaSyB5sN1axynuVlmzK0k6lLrvL3PbsR7x0QA'
-ADMIN_EMAIL = 'd.koushik@kalpanaaasoftwaresolutions.in'
-ADMIN_PASS = 'Koushik@777'
+PROJECT_ID = os.getenv('FIREBASE_PROJECT_ID', 'kalpanaaa-employees-website')
+API_KEY = os.getenv('FIREBASE_WEB_API_KEY', '')
+ADMIN_EMAIL = os.getenv('FIREBASE_ADMIN_EMAIL', '')
+ADMIN_PASS = os.getenv('FIREBASE_ADMIN_PASSWORD', '')
 FIRESTORE_BASE = f'https://firestore.googleapis.com/v1/projects/{PROJECT_ID}/databases/(default)/documents'
 
 def http_request(url, method='GET', body=None, token=None):

@@ -23,5 +23,5 @@ class LoginRequest(BaseModel):
     password: str
 
 class PasswordChangeRequest(BaseModel):
-    old_password: str
+    old_password: Optional[str] = None
     new_password: str

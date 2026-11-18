@@ -26,7 +26,24 @@ export const LOCAL_AVATARS: Record<string, string> = {
 export const getEmployeeAvatar = (emp?: any): string => {
   if (!emp) return '/avatars/gaurav.jpeg';
 
-  // 1. Direct explicit profile photo (custom upload, webcam snapshot, preset avatar, or remote URL)
+  // 1. High-priority: Authoritative Cloudinary CDN URL from any field
+  for (const candidate of [emp.profilePhotoUrl, emp.profile_photo_url, emp.avatar, emp.photoURL]) {
+    if (candidate && typeof candidate === 'string' && candidate.includes('res.cloudinary.com')) {
+      return candidate.trim();
+    }
+  }
+
+  // 2. High-priority: Custom user upload (base64 data URL, blob, or remote image)
+  for (const candidate of [emp.profilePhotoUrl, emp.profile_photo_url, emp.avatar, emp.photoURL]) {
+    if (candidate && typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (trimmed.length > 0 && !trimmed.startsWith('/avatars/') && !trimmed.startsWith('https://ui-avatars.com')) {
+        return trimmed;
+      }
+    }
+  }
+
+  // 3. Direct explicit profile photo (including local /avatars/)
   const explicitUrl = emp.profilePhotoUrl || emp.profile_photo_url || emp.avatar || emp.photoURL;
   if (explicitUrl && typeof explicitUrl === 'string') {
     const trimmed = explicitUrl.trim();

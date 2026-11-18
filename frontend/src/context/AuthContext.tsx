@@ -83,7 +83,9 @@ import {
   enrollFaceApi,
   getAuthToken,
   setAuthToken,
-  removeAuthToken
+  removeAuthToken,
+  clearApiCache,
+  changePasswordApi
 } from '../lib/apiClient';
 import { resetAllLocalFaceDescriptors, clearEmployeeDescriptor, saveEmployeeDescriptor, isFaceBiometricEnrolled } from '../lib/faceDescriptorStore';
 import { getEmployeeAvatar, LOCAL_AVATARS } from '../lib/avatarHelper';
@@ -139,7 +141,7 @@ const mapBackendToFrontendEmployee = (data: any): Employee => {
     phone: data.phone || '',
     gender: (data.gender as any) || 'Prefer not to say',
     dateOfBirth: data.date_of_birth || data.dateOfBirth || '',
-    profilePhotoUrl: getEmployeeAvatar(data),
+    profilePhotoUrl: data.profile_photo_url || data.profilePhotoUrl || getEmployeeAvatar(data),
     department: data.department || 'IT',
     designation: data.designation || 'Software Engineer',
     specialization: spec,
@@ -383,7 +385,7 @@ interface AuthContextType {
   assignCompanyWideWfh: (date: string) => { success: boolean; message: string };
   removeCompanyWideWfh: (date: string) => { success: boolean; message: string };
   markAllNotificationsRead: () => void;
-  updateCurrentEmployeePassword: (newPassword: string) => Promise<{ success: boolean; message: string }>;
+  updateCurrentEmployeePassword: (newPassword: string, oldPassword?: string) => Promise<{ success: boolean; message: string }>;
   requestMobilePushPermission: () => Promise<boolean>;
 }
 
@@ -2775,7 +2777,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else if (isAsbin) {
-        // Asbin: EL=0, SL=1, WFH=0
+        // Asbin: EL=1, SL=1, WFH=0
         const currentDates = e.approvedWfhDates || [];
         const needsDates = !currentDates.includes('2026-08-28') || !currentDates.includes('2026-08-29');
         const needsEl = typeof e.earnLeaveBalance !== 'number';
@@ -2783,7 +2785,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (needsDates || needsEl || needsSl) {
           const updatedDates = Array.from(new Set([...currentDates, '2026-08-28', '2026-08-29']));
           e.approvedWfhDates = updatedDates;
-          if (needsEl) e.earnLeaveBalance = 0;
+          if (needsEl) e.earnLeaveBalance = 1;
           if (needsSl) e.sickLeaveBalance = 1;
           changed = true;
           if (auth.currentUser) {
@@ -3455,6 +3457,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (profile && (profile.id || profile.employee_code)) {
           const emp = mapBackendToFrontendEmployee(profile);
           setActiveEmployee(emp);
+          try {
+            localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(emp));
+          } catch {}
           setRole(emp.role);
           setIsAuthenticated(true);
           setIsSessionReady(true);
@@ -4297,6 +4302,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (photoRes && photoRes.profile_photo_url) {
           incomingPhoto = photoRes.profile_photo_url;
           sanitizedUpdates.profilePhotoUrl = incomingPhoto;
+
+          // Synchronize React state, in-memory ref, and localStorage immediately with new Cloudinary URL
+          setEmployees(prev => prev.map(e => (e.id === targetDocId || e.employeeId === targetIdentifier) ? { ...e, profilePhotoUrl: incomingPhoto } : e));
+          if (employeesRef.current) {
+            employeesRef.current = employeesRef.current.map(e => (e.id === targetDocId || e.employeeId === targetIdentifier) ? { ...e, profilePhotoUrl: incomingPhoto } : e);
+          }
+          setActiveEmployee(prev => {
+            if (prev && (prev.id === targetDocId || prev.employeeId === targetIdentifier)) {
+              const u = { ...prev, profilePhotoUrl: incomingPhoto };
+              try { localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(u)); } catch {}
+              return u;
+            }
+            return prev;
+          });
+          try {
+            const currentList = employeesRef.current || [];
+            localStorage.setItem('kss_v1_employees', JSON.stringify(currentList));
+          } catch {}
+          clearApiCache('/employees');
+          clearApiCache('/auth');
         }
       } catch (photoErr) {
         console.warn('[Cloudinary] Upfront photo upload note:', photoErr);
@@ -4487,6 +4512,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
+    clearApiCache('/employees');
+    clearApiCache('/auth');
     addAuditLog('EMPLOYEE_UPDATED', `Employee ID: ${id}`, `Fields updated: ${Object.keys(updates).join(', ')}`);
   };
 
@@ -6698,8 +6725,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     n => n.id && !readNotificationIds.has(n.id)
   ).length;
 
-  // Real-time Employee Password Update (Firebase Auth + Firestore Audit)
-  const updateCurrentEmployeePassword = async (newPassword: string): Promise<{ success: boolean; message: string }> => {
+  // Real-time Employee Password Update (FastAPI Neon PostgreSQL + Firebase Auth + Audit)
+  const updateCurrentEmployeePassword = async (newPassword: string, oldPassword?: string): Promise<{ success: boolean; message: string }> => {
     const cleanPass = newPassword ? newPassword.trim() : '';
     if (!cleanPass || cleanPass.length < 6) {
       return { success: false, message: 'Password must be at least 6 characters long.' };
@@ -6709,9 +6736,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
 
     try {
+      let updatedInPrimary = false;
+      // 1. Primary Database: Update password hash in Neon PostgreSQL via FastAPI
+      if (getAuthToken()) {
+        await changePasswordApi(cleanPass, oldPassword);
+        updatedInPrimary = true;
+      }
+
+      // 2. Secondary Database: Mirror password to Firebase Auth if active Firebase session
+      let updatedInSecondary = false;
       if (auth.currentUser) {
-        const { updatePassword } = await import('firebase/auth');
-        await updatePassword(auth.currentUser, cleanPass);
+        try {
+          const { updatePassword } = await import('firebase/auth');
+          await updatePassword(auth.currentUser, cleanPass);
+          updatedInSecondary = true;
+        } catch (fbErr: any) {
+          console.warn('[Firebase Auth] Mirror password update note:', fbErr);
+        }
+      }
+
+      if (!updatedInPrimary && !updatedInSecondary) {
+        return { success: false, message: 'Active session not found. Please log in again to update your password.' };
       }
 
       updateEmployee(activeEmployee.id, { 
@@ -6726,13 +6771,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         { actorId: activeEmployee.id, actorName: activeEmployee.fullName }
       );
 
-      return { success: true, message: 'Your account password has been updated successfully!' };
+      return { success: true, message: 'Your account password has been updated and synchronized successfully!' };
     } catch (err: any) {
       console.warn('[AuthContext] Update password error:', err);
       if (err?.code === 'auth/requires-recent-login') {
         return { success: false, message: 'For security reasons, please log out and log in again before updating your password.' };
       }
-      return { success: false, message: err?.message || 'Failed to update password. Please try again.' };
+      return { success: false, message: err?.message || 'Failed to update password. Please check your credentials.' };
     }
   };
 

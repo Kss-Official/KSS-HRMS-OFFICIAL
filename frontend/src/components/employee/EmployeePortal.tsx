@@ -5,17 +5,17 @@ import { useHaptic } from '../../hooks/useHaptic';
 import { animations } from '../../lib/animations';
 import { getEmployeeAvatar } from '../../lib/avatarHelper';
 import { motion, AnimatePresence } from 'motion/react';
-import { 
-  Clock, 
-  CheckCircle2, 
-  XCircle, 
-  AlertTriangle, 
-  CreditCard, 
-  QrCode, 
-  User, 
-  MapPin, 
-  FileText, 
-  Download, 
+import {
+  Clock,
+  CheckCircle2,
+  XCircle,
+  AlertTriangle,
+  CreditCard,
+  QrCode,
+  User,
+  MapPin,
+  FileText,
+  Download,
   LogOut,
   Sparkles,
   Camera,
@@ -61,13 +61,13 @@ import {
 } from 'lucide-react';
 import QRCode from 'qrcode';
 import Barcode from 'react-barcode';
-import { 
-  generateEmployeeQrToken, 
-  calculateGpsDistanceMeters, 
-  getEmployeeWorkDate, 
-  getAttendanceDocId, 
-  getCanonicalEmployeeUid, 
-  isAttendanceForEmployee, 
+import {
+  generateEmployeeQrToken,
+  calculateGpsDistanceMeters,
+  getEmployeeWorkDate,
+  getAttendanceDocId,
+  getCanonicalEmployeeUid,
+  isAttendanceForEmployee,
   resolveAttendanceRecord,
   isShiftComplete,
   safeGetTimestampMillis,
@@ -143,7 +143,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           return parsed;
         }
       }
-    } catch {}
+    } catch { }
     return null;
   });
   const [gpsError, setGpsError] = useState<string | null>(null);
@@ -239,8 +239,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
   const [savedSuccess, setSavedSuccess] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
+  const [isPhotoSaving, setIsPhotoSaving] = useState(false);
   const [isCapturingCamera, setIsCapturingCamera] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const bannerFileInputRef = useRef<HTMLInputElement>(null);
 
   // Keep profile form fields synchronized with activeEmployee from Cloud DB
   useEffect(() => {
@@ -358,7 +360,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
   // Break & WFH state
   const [activeBreak, setActiveBreak] = useState<{ type: string; startAt: string } | null>(null);
-  
+
   // Single authoritative WFH determination for today
   const isApprovedWfhToday = React.useMemo(() => {
     return isApprovedWfhForEmployee(activeEmployee, todayStr, {
@@ -668,7 +670,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       setGpsError(null);
       try {
         sessionStorage.setItem('kss_cached_gps', JSON.stringify(coords));
-      } catch {}
+      } catch { }
     };
 
     // Fast initial GPS probe with cached position (<20ms)
@@ -708,8 +710,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           lastLat = lat;
           lastLon = lon;
           lastTime = Date.now();
-          saveGps({ 
-            lat, 
+          saveGps({
+            lat,
             lon,
             accuracy: Math.round(pos.coords.accuracy) || 8
           });
@@ -720,8 +722,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         if (err.code === 3 && fallbackWatchId === null) {
           fallbackWatchId = navigator.geolocation.watchPosition(
             pos => {
-              saveGps({ 
-                lat: pos.coords.latitude, 
+              saveGps({
+                lat: pos.coords.latitude,
                 lon: pos.coords.longitude,
                 accuracy: Math.round(pos.coords.accuracy) || 15
               });
@@ -763,8 +765,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   useEffect(() => {
     if (activeEmployee) {
       const payload = 'https://www.kalpanaaasoftwaresolutions.in/';
-      QRCode.toDataURL(payload, { 
-        width: 320, 
+      QRCode.toDataURL(payload, {
+        width: 320,
         margin: 2,
         errorCorrectionLevel: 'H',
         color: { dark: '#000000', light: '#FFFFFF' }
@@ -854,7 +856,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     checkInSubmissionGuardRef.current = true;
     setIsCheckingIn(true);
     setActionFeedback(null);
-    
+
     try {
       const isWfhActive = isApprovedWfhToday || isWfh;
       const res = await recordCheckIn(
@@ -867,13 +869,13 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         isWfhActive,
         descriptorArray
       );
-      
+
       if (res.success) {
         triggerHaptic('success');
       } else {
         triggerHaptic('error');
       }
-      
+
       setActionFeedback({ success: res.success, message: res.message });
     } finally {
       setIsCheckingIn(false);
@@ -908,14 +910,14 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     setIsCheckingOut(true);
     triggerHaptic('medium');
     setActionFeedback(null);
-    
+
     const res = await recordCheckOut(activeEmployee.id, gpsLocation?.lat, gpsLocation?.lon, gpsLocation?.accuracy);
-    
+
     setIsCheckingOut(false);
     checkingOutRef.current = false;
     if (res.success) triggerHaptic('success');
     else triggerHaptic('error');
-    
+
     setActionFeedback({ success: res.success, message: res.message });
   };
 
@@ -949,7 +951,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
     // Proactively request browser system notification permission if needed
     if (typeof window !== 'undefined' && 'Notification' in window && Notification.permission === 'default') {
-      Notification.requestPermission().catch(() => {});
+      Notification.requestPermission().catch(() => { });
     }
 
     try {
@@ -995,7 +997,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   const handleToggleWfh = () => {
     const todayStr = todayInIST();
     const isApproved = isApprovedWfhToday || (activeEmployee.approvedWfhDates || []).includes(todayStr);
-    
+
     if (!isApproved) {
       setActionFeedback({ success: false, message: 'Work From Home requires prior approval. Please submit a request in the "My Leave & WFH" tab.' });
       return;
@@ -1021,21 +1023,44 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     setActionFeedback({ success: true, message: newVal ? '🏠 Work From Home mode activated for today.' : '🏢 Office attendance mode restored.' });
   };
 
+  // Instant Profile Photo Persistence to Cloudinary & Database
+  const persistPhotoImmediately = async (photoDataUrl: string) => {
+    if (!activeEmployee || !photoDataUrl) return;
+    setIsPhotoSaving(true);
+    triggerHaptic('medium');
+    try {
+      await updateEmployee(activeEmployee.id, {
+        profilePhotoUrl: photoDataUrl
+      });
+      triggerHaptic('success');
+      setActionFeedback({ success: true, message: '✓ Profile photo successfully uploaded & synchronized to Cloudinary!' });
+      setTimeout(() => setActionFeedback(null), 3500);
+    } catch (err: any) {
+      console.error('[EmployeePortal] Photo save error:', err);
+      setActionFeedback({ success: false, message: `Failed to save photo: ${err?.message || 'Upload failed'}` });
+    } finally {
+      setIsPhotoSaving(false);
+    }
+  };
+
   // Handle Photo File Upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       try {
         const { compressImageBase64 } = await import('../../lib/imageUtils');
-        const compressedBase64 = await compressImageBase64(file, 400, 400, 0.7);
+        const compressedBase64 = await compressImageBase64(file, 500, 500, 0.8);
         setProfilePhoto(compressedBase64);
+        await persistPhotoImmediately(compressedBase64);
       } catch (err) {
         console.error('Image compression failed:', err);
         // Fallback to FileReader if compression fails
         const reader = new FileReader();
-        reader.onloadend = () => {
+        reader.onloadend = async () => {
           if (typeof reader.result === 'string') {
-            setProfilePhoto(reader.result);
+            const raw = reader.result;
+            setProfilePhoto(raw);
+            await persistPhotoImmediately(raw);
           }
         };
         reader.readAsDataURL(file);
@@ -1046,10 +1071,6 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   // Genuine Real Webcam Camera Photo Capture (Fixes E33 Contract)
   const handleRealCameraPhotoCapture = async () => {
     setIsCapturingCamera(true);
-    // B FIX (camera leak): hold the stream in an outer binding so `finally` can always
-    // release it. Previously getTracks().stop() ran only on the success path — if
-    // video.play() or the canvas draw threw, control jumped to catch and the camera
-    // (and its recording indicator) stayed live until the page was closed.
     let stream: MediaStream | null = null;
     try {
       if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
@@ -1069,7 +1090,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const realPhotoUrl = canvas.toDataURL('image/jpeg', 0.9);
           setProfilePhoto(realPhotoUrl);
-          setActionFeedback({ success: true, message: '✓ Genuine webcam camera photo snapshot captured!' });
+          await persistPhotoImmediately(realPhotoUrl);
         }
         video.srcObject = null;
       } else {
@@ -1139,9 +1160,9 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
   return (
     <div className="space-y-6 w-full">
-      
+
       {/* Global Profile Header - Unified Obsidian Theme */}
-      <motion.div 
+      <motion.div
         initial={{ opacity: 0, y: 15 }}
         animate={{ opacity: 1, y: 0 }}
         className={`bg-[var(--bg-elevated)] text-[var(--text-primary)] p-5 sm:p-6 rounded-3xl border border-[var(--border-subtle)] shadow-[var(--shadow-md)] backdrop-blur-xl flex flex-col md:flex-row items-center justify-between gap-6 ${animations.stagger.container}`}
@@ -1149,7 +1170,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         <div className={`flex items-center gap-5 text-center md:text-left ${animations.stagger.item(1)}`}>
           <div className="relative group">
             <img
-              src={getEmployeeAvatar(activeEmployee)}
+              src={activeEmployee.profilePhotoUrl || profilePhoto || getEmployeeAvatar(activeEmployee)}
               alt={activeEmployee.fullName}
               onError={(e) => {
                 e.currentTarget.onerror = null;
@@ -1158,12 +1179,23 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
               className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover border-2 border-[var(--border-strong)] shadow-lg shadow-blue-500/10"
             />
             <button
-              onClick={() => { triggerHaptic('light'); setActiveTab('emp_profile'); }}
-              className={`absolute -bottom-2 -right-2 p-1.5 bg-[var(--accent-blue)] text-white rounded-xl shadow-md cursor-pointer outline-none ${animations.tap}`}
-              title="Edit Profile Photo"
+              type="button"
+              onClick={() => {
+                triggerHaptic('light');
+                bannerFileInputRef.current?.click();
+              }}
+              className={`absolute -bottom-2 -right-2 p-1.5 bg-[var(--accent-blue)] hover:bg-blue-500 text-white rounded-xl shadow-md cursor-pointer outline-none ${animations.tap}`}
+              title="Upload New Profile Photo"
             >
               <Camera className="w-3.5 h-3.5" />
             </button>
+            <input
+              type="file"
+              ref={bannerFileInputRef}
+              onChange={handleFileUpload}
+              accept="image/*"
+              className="hidden"
+            />
           </div>
 
           <div>
@@ -1187,19 +1219,18 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         <div className={`bg-[var(--bg-secondary)] p-3.5 sm:p-4 rounded-2xl border border-[var(--border-subtle)] w-full md:w-auto ${animations.stagger.item(2)}`}>
           <div className="text-xs text-[var(--text-tertiary)] font-medium flex flex-row md:flex-col items-center justify-between md:justify-center md:items-end gap-2">
             <span className="uppercase tracking-wider font-semibold text-[10px] text-slate-400">Today's Status</span>
-            <strong className={`font-bold px-3 py-1 rounded-lg border text-xs sm:text-sm ${
-              todayRecord?.status === 'Late'
-                ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
-                : todayRecord?.status === 'Absent'
+            <strong className={`font-bold px-3 py-1 rounded-lg border text-xs sm:text-sm ${todayRecord?.status === 'Late'
+              ? 'text-amber-400 bg-amber-500/10 border-amber-500/30'
+              : todayRecord?.status === 'Absent'
                 ? 'text-rose-400 bg-rose-500/10 border-rose-500/30'
                 : todayRecord?.status === 'On Leave'
-                ? 'text-purple-400 bg-purple-500/10 border-purple-500/30'
-                : todayRecord?.isWfh
-                ? 'text-sky-400 bg-sky-500/10 border-sky-500/30'
-                : todayRecord?.status === 'Present'
-                ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
-                : 'text-slate-400 bg-slate-800/50 border-slate-700'
-            }`}>
+                  ? 'text-purple-400 bg-purple-500/10 border-purple-500/30'
+                  : todayRecord?.isWfh
+                    ? 'text-sky-400 bg-sky-500/10 border-sky-500/30'
+                    : todayRecord?.status === 'Present'
+                      ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30'
+                      : 'text-slate-400 bg-slate-800/50 border-slate-700'
+              }`}>
               {todayRecord?.status || 'Not Checked In'}
               {todayRecord?.isWfh && ' (WFH)'}
             </strong>
@@ -1210,21 +1241,20 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       {/* Action Feedback Banner */}
       <AnimatePresence>
         {actionFeedback && (
-          <motion.div 
+          <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             exit={{ opacity: 0, y: -10 }}
-            className={`p-4 rounded-2xl border text-xs font-bold flex items-center justify-between gap-3 ${
-              actionFeedback.success 
-                ? 'bg-emerald-950/60 border-emerald-800/80 text-emerald-300' 
-                : 'bg-rose-950/60 border-rose-800/80 text-rose-300'
-            }`}
+            className={`p-4 rounded-2xl border text-xs font-bold flex items-center justify-between gap-3 ${actionFeedback.success
+              ? 'bg-emerald-950/60 border-emerald-800/80 text-emerald-300'
+              : 'bg-rose-950/60 border-rose-800/80 text-rose-300'
+              }`}
           >
             <div className="flex items-center gap-3">
               {actionFeedback.success ? <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" /> : <XCircle className="w-5 h-5 text-rose-400 shrink-0" />}
               <span>{actionFeedback.message}</span>
             </div>
-            <button 
+            <button
               onClick={() => setActionFeedback(null)}
               className="text-slate-400 hover:text-white text-xs font-mono"
             >
@@ -1274,7 +1304,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
               </div>
             </div>
           )}
-          
+
           {/* 📢 High-Visibility Official Company Broadcast Announcement Banner */}
           {(() => {
             const broadcasts = notifications.filter(n =>
@@ -1312,11 +1342,11 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
           {/* Section 1: Hero & Command Center */}
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-            
+
             {/* Left: Personalized Command Center */}
             <div className={`bg-[var(--bg-tertiary)] rounded-2xl border border-[var(--border-subtle)] p-6 sm:p-8 flex flex-col justify-between relative overflow-hidden shadow-[var(--shadow-sm)] ${animations.stagger.item(1)}`}>
               <div className="absolute inset-0 bg-[var(--gradient-card)] opacity-30"></div>
-              
+
               <div className="relative z-10 space-y-8 flex flex-col items-center">
                 <div className="text-center">
                   <p className="text-sm font-semibold text-[var(--accent-blue)] tracking-wider uppercase mb-1">
@@ -1368,13 +1398,12 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                   ) : !todayRecord?.checkInAt ? (
                     !checkInEligibility.allowed ? (
                       <div className="flex flex-col items-center justify-center gap-3 text-center">
-                        <div className={`relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] shadow-xl text-center p-4 ${
-                          checkInEligibility.reason === 'ON_LEAVE'
-                            ? 'border-purple-500/60 bg-gradient-to-b from-purple-950/40 to-slate-900 text-purple-300 shadow-purple-950/50'
-                            : checkInEligibility.reason === 'OFFICIAL_HOLIDAY'
-                              ? 'border-amber-500/60 bg-gradient-to-b from-amber-950/40 to-slate-900 text-amber-300 shadow-amber-950/50'
-                              : 'border-blue-500/60 bg-gradient-to-b from-blue-950/40 to-slate-900 text-blue-300 shadow-blue-950/50'
-                        }`}>
+                        <div className={`relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] shadow-xl text-center p-4 ${checkInEligibility.reason === 'ON_LEAVE'
+                          ? 'border-purple-500/60 bg-gradient-to-b from-purple-950/40 to-slate-900 text-purple-300 shadow-purple-950/50'
+                          : checkInEligibility.reason === 'OFFICIAL_HOLIDAY'
+                            ? 'border-amber-500/60 bg-gradient-to-b from-amber-950/40 to-slate-900 text-amber-300 shadow-amber-950/50'
+                            : 'border-blue-500/60 bg-gradient-to-b from-blue-950/40 to-slate-900 text-blue-300 shadow-blue-950/50'
+                          }`}>
                           {checkInEligibility.reason === 'ON_LEAVE' ? (
                             <>
                               <Palmtree className="w-10 h-10 mb-1.5 text-purple-400" />
@@ -1401,29 +1430,27 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                             </>
                           )}
                         </div>
-                        <div className={`text-xs font-semibold px-4 py-2 rounded-xl border max-w-[320px] ${
-                          checkInEligibility.reason === 'ON_LEAVE'
-                            ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
-                            : checkInEligibility.reason === 'OFFICIAL_HOLIDAY'
-                              ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                              : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
-                        }`}>
+                        <div className={`text-xs font-semibold px-4 py-2 rounded-xl border max-w-[320px] ${checkInEligibility.reason === 'ON_LEAVE'
+                          ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                          : checkInEligibility.reason === 'OFFICIAL_HOLIDAY'
+                            ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
+                            : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                          }`}>
                           {checkInEligibility.message}
                         </div>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center">
-                        <button 
-                          onClick={handleSelfCheckIn} 
+                        <button
+                          onClick={handleSelfCheckIn}
                           disabled={isCheckingIn || isCheckingOut}
-                          className={`relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] transition-all cursor-pointer outline-none ${
-                            isCheckingIn 
-                              ? 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] text-[var(--accent-blue)] animate-pulse'
-                              : 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-glow-blue)]'
-                          } ${!isCheckingIn && animations.tap}`}
+                          className={`relative flex flex-col items-center justify-center w-[180px] h-[180px] rounded-full border-[3px] transition-all cursor-pointer outline-none ${isCheckingIn
+                            ? 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] text-[var(--accent-blue)] animate-pulse'
+                            : 'border-[var(--accent-blue)] bg-[var(--bg-elevated)] hover:bg-[var(--bg-secondary)] text-[var(--text-primary)] shadow-[var(--shadow-glow-blue)]'
+                            } ${!isCheckingIn && animations.tap}`}
                         >
                           <div className="absolute inset-1 rounded-full border border-[var(--border-subtle)] opacity-50 pointer-events-none" />
-                          
+
                           {isCheckingIn ? (
                             <>
                               <Loader2 className="w-10 h-10 mb-2 animate-spin text-[var(--accent-blue)]" />
@@ -1454,7 +1481,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     <div className="flex flex-col items-center justify-center gap-4 w-full">
                       <div className="flex items-center justify-center gap-4 sm:gap-6 flex-wrap">
                         {/* Circle 1: Shift Active Status Indicator (Check-in only, never accidental checkout) */}
-                        <div 
+                        <div
                           className="relative flex flex-col items-center justify-center w-[160px] h-[160px] sm:w-[170px] sm:h-[170px] rounded-full border-[3px] border-[var(--accent-emerald)] bg-[var(--accent-emerald)]/10 text-[var(--accent-emerald)] shadow-[var(--shadow-glow-emerald)]"
                         >
                           <div className="absolute inset-0 bg-[var(--gradient-success)] opacity-10 rounded-full" />
@@ -1518,110 +1545,108 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                       </span>
                     </div>
                   )}
-                  
+
                   {/* Break & Activity Actions (if checked in) */}
                   {todayRecord?.checkInAt && !shiftComplete && (
                     <div className="w-full mt-4">
-                       {activeBreak ? (() => {
-                         const cfg = getBreakColorConfig(activeBreak.type);
-                         return (
-                           <button 
-                             onClick={handleEndBreak} 
-                             disabled={isProcessingBreak}
-                             className={`w-full py-2.5 rounded-2xl ${cfg.btnBg} font-black text-xs shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${animations.tap}`}
-                           >
-                             <StopCircle className="w-4 h-4" /> End {activeBreak.type} ({String(Math.floor(breakElapsedSec / 60)).padStart(2, '0')}:{String(breakElapsedSec % 60).padStart(2, '0')})
-                           </button>
-                         );
-                       })() : (
-                         <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-                           <button 
-                             onClick={() => handleStartBreak('Tea Break')} 
-                             disabled={isProcessingBreak}
-                             className="px-2.5 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             🍵 Tea Break
-                           </button>
-                           <button 
-                             onClick={() => handleStartBreak('Snack Break')} 
-                             disabled={isProcessingBreak}
-                             className="px-2.5 py-2 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-300 hover:bg-orange-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             🍿 Snack Break
-                           </button>
-                           <button 
-                             onClick={() => handleStartBreak('Meal Break')} 
-                             disabled={isProcessingBreak}
-                             className="px-2.5 py-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             🍱 Meal Break
-                           </button>
-                           <button 
-                             onClick={() => handleStartBreak('Team Huddle')} 
-                             disabled={isProcessingBreak}
-                             className="px-2.5 py-2 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 hover:bg-blue-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             👥 Team Huddle
-                           </button>
-                           <button 
-                             onClick={() => handleStartBreak('Team Meeting')} 
-                             disabled={isProcessingBreak}
-                             className="px-2.5 py-2 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             📅 Team Meeting
-                           </button>
-                           <button 
-                             onClick={() => handleStartBreak('Attainment / Training')} 
-                             disabled={isProcessingBreak}
-                             className="px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             🎓 Training
-                           </button>
-                           <button 
-                             onClick={() => handleStartBreak('Activity')} 
-                             disabled={isProcessingBreak}
-                             className="px-2.5 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                           >
-                             ⚡ Activity
-                           </button>
-                         </div>
-                       )}
+                      {activeBreak ? (() => {
+                        const cfg = getBreakColorConfig(activeBreak.type);
+                        return (
+                          <button
+                            onClick={handleEndBreak}
+                            disabled={isProcessingBreak}
+                            className={`w-full py-2.5 rounded-2xl ${cfg.btnBg} font-black text-xs shadow-lg flex items-center justify-center gap-2 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${animations.tap}`}
+                          >
+                            <StopCircle className="w-4 h-4" /> End {activeBreak.type} ({String(Math.floor(breakElapsedSec / 60)).padStart(2, '0')}:{String(breakElapsedSec % 60).padStart(2, '0')})
+                          </button>
+                        );
+                      })() : (
+                        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                          <button
+                            onClick={() => handleStartBreak('Tea Break')}
+                            disabled={isProcessingBreak}
+                            className="px-2.5 py-2 rounded-xl bg-amber-500/15 border border-amber-500/30 text-amber-300 hover:bg-amber-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            🍵 Tea Break
+                          </button>
+                          <button
+                            onClick={() => handleStartBreak('Snack Break')}
+                            disabled={isProcessingBreak}
+                            className="px-2.5 py-2 rounded-xl bg-orange-500/15 border border-orange-500/30 text-orange-300 hover:bg-orange-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            🍿 Snack Break
+                          </button>
+                          <button
+                            onClick={() => handleStartBreak('Meal Break')}
+                            disabled={isProcessingBreak}
+                            className="px-2.5 py-2 rounded-xl bg-rose-500/15 border border-rose-500/30 text-rose-300 hover:bg-rose-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            🍱 Meal Break
+                          </button>
+                          <button
+                            onClick={() => handleStartBreak('Team Huddle')}
+                            disabled={isProcessingBreak}
+                            className="px-2.5 py-2 rounded-xl bg-blue-500/15 border border-blue-500/30 text-blue-300 hover:bg-blue-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            👥 Team Huddle
+                          </button>
+                          <button
+                            onClick={() => handleStartBreak('Team Meeting')}
+                            disabled={isProcessingBreak}
+                            className="px-2.5 py-2 rounded-xl bg-purple-500/15 border border-purple-500/30 text-purple-300 hover:bg-purple-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            📅 Team Meeting
+                          </button>
+                          <button
+                            onClick={() => handleStartBreak('Attainment / Training')}
+                            disabled={isProcessingBreak}
+                            className="px-2.5 py-2 rounded-xl bg-emerald-500/15 border border-emerald-500/30 text-emerald-300 hover:bg-emerald-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            🎓 Training
+                          </button>
+                          <button
+                            onClick={() => handleStartBreak('Activity')}
+                            disabled={isProcessingBreak}
+                            className="px-2.5 py-2 rounded-xl bg-cyan-500/15 border border-cyan-500/30 text-cyan-300 hover:bg-cyan-500/25 font-bold text-[11px] flex items-center justify-center gap-1 transition-colors cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            ⚡ Activity
+                          </button>
+                        </div>
+                      )}
                     </div>
                   )}
                 </div>
 
                 {/* GPS Verification Status */}
                 {settings.gpsRequired && !todayRecord?.checkInAt && (
-                   <div className={`text-xs px-4 py-2 rounded-full border flex items-center justify-center gap-2 font-medium transition-all ${
-                     gpsError ? 'bg-[var(--accent-rose)]/10 border-[var(--accent-rose)]/20 text-[var(--accent-rose)]' :
-                     !gpsLocation ? 'bg-[var(--accent-blue)]/10 border-[var(--accent-blue)]/20 text-[var(--accent-blue)] animate-pulse' :
-                     isVerifiedLocation ? 'bg-[var(--accent-emerald)]/10 border-[var(--accent-emerald)]/20 text-[var(--accent-emerald)]' :
-                     'bg-[var(--accent-amber)]/10 border-[var(--accent-amber)]/20 text-[var(--accent-amber)]'
-                   }`}>
-                     {gpsError ? (
-                       <><AlertTriangle className="w-3.5 h-3.5" /> {gpsError}</>
-                     ) : !gpsLocation ? (
-                       <><Clock className="w-3.5 h-3.5" /> Acquiring GPS...</>
-                     ) : (
-                       <>
-                         {isVerifiedLocation ? <MapPin className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
-                         {liveDistanceMeters}m from office zone
-                       </>
-                     )}
-                   </div>
+                  <div className={`text-xs px-4 py-2 rounded-full border flex items-center justify-center gap-2 font-medium transition-all ${gpsError ? 'bg-[var(--accent-rose)]/10 border-[var(--accent-rose)]/20 text-[var(--accent-rose)]' :
+                    !gpsLocation ? 'bg-[var(--accent-blue)]/10 border-[var(--accent-blue)]/20 text-[var(--accent-blue)] animate-pulse' :
+                      isVerifiedLocation ? 'bg-[var(--accent-emerald)]/10 border-[var(--accent-emerald)]/20 text-[var(--accent-emerald)]' :
+                        'bg-[var(--accent-amber)]/10 border-[var(--accent-amber)]/20 text-[var(--accent-amber)]'
+                    }`}>
+                    {gpsError ? (
+                      <><AlertTriangle className="w-3.5 h-3.5" /> {gpsError}</>
+                    ) : !gpsLocation ? (
+                      <><Clock className="w-3.5 h-3.5" /> Acquiring GPS...</>
+                    ) : (
+                      <>
+                        {isVerifiedLocation ? <MapPin className="w-3.5 h-3.5" /> : <MapPin className="w-3.5 h-3.5" />}
+                        {liveDistanceMeters}m from office zone
+                      </>
+                    )}
+                  </div>
                 )}
-                
+
                 {/* WFH Toggle */}
                 {settings.wfhEnabled && todayRecord?.checkInAt && !shiftComplete && !activeBreak && (
                   <button
                     onClick={handleToggleWfh}
-                    className={`w-full max-w-[240px] py-2 rounded-xl text-xs font-semibold transition-all border ${
-                      !isApprovedWfhToday
-                        ? 'bg-transparent border-[var(--border-subtle)] text-[var(--text-muted)] cursor-not-allowed'
-                        : isWfh
-                          ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
-                          : 'bg-transparent border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-sky-500/30'
-                    } ${animations.tap}`}
+                    className={`w-full max-w-[240px] py-2 rounded-xl text-xs font-semibold transition-all border ${!isApprovedWfhToday
+                      ? 'bg-transparent border-[var(--border-subtle)] text-[var(--text-muted)] cursor-not-allowed'
+                      : isWfh
+                        ? 'bg-sky-500/10 border-sky-500/30 text-sky-400'
+                        : 'bg-transparent border-[var(--border-subtle)] text-[var(--text-secondary)] hover:border-sky-500/30'
+                      } ${animations.tap}`}
                   >
                     {!isApprovedWfhToday
                       ? '🔒 WFH Locked (Requires Approval)'
@@ -1747,11 +1772,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                         <span>Working Time</span>
                       )}
                     </span>
-                    <span className={`font-mono font-bold px-2.5 py-0.5 rounded-md border text-sm ${
-                      activeBreak
-                        ? 'text-amber-300 bg-amber-500/10 border-amber-500/20'
-                        : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
-                    }`}>
+                    <span className={`font-mono font-bold px-2.5 py-0.5 rounded-md border text-sm ${activeBreak
+                      ? 'text-amber-300 bg-amber-500/10 border-amber-500/20'
+                      : 'text-emerald-400 bg-emerald-500/10 border-emerald-500/20'
+                      }`}>
                       {(() => {
                         const hrs = Math.floor(liveWorkSec / 3600);
                         const mins = Math.floor((liveWorkSec % 3600) / 60);
@@ -2016,9 +2040,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     <div
                       key={b.key}
                       data-testid={`break-total-${b.key}`}
-                      className={`bg-slate-950/70 rounded-xl border p-3 ${
-                        isLive ? 'border-amber-400/60 ring-1 ring-amber-400/30' : 'border-slate-800'
-                      }`}
+                      className={`bg-slate-950/70 rounded-xl border p-3 ${isLive ? 'border-amber-400/60 ring-1 ring-amber-400/30' : 'border-slate-800'
+                        }`}
                     >
                       <div className="flex items-center gap-1.5 mb-1.5">
                         <Icon className="w-3.5 h-3.5 shrink-0" style={{ color: b.color }} />
@@ -2056,9 +2079,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     return (
                       <div
                         key={idx}
-                        className={`flex items-center gap-2.5 text-[10px] p-2.5 rounded-xl border ${
-                          open ? 'bg-amber-500/5 border-amber-500/30' : 'bg-slate-950/60 border-slate-800/60'
-                        }`}
+                        className={`flex items-center gap-2.5 text-[10px] p-2.5 rounded-xl border ${open ? 'bg-amber-500/5 border-amber-500/30' : 'bg-slate-950/60 border-slate-800/60'
+                          }`}
                       >
                         <span className="font-mono text-slate-400 font-bold shrink-0 w-14 tabular-nums">
                           {startMs ? toISTTimeString(b.startAt || b.startTime) : '--:--'}
@@ -2069,9 +2091,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                         </span>
                         <span className="font-bold text-slate-200 truncate flex-1">{b.type || 'Break'}</span>
                         <span
-                          className={`font-mono font-black shrink-0 tabular-nums ${
-                            open ? 'text-amber-300 animate-pulse' : 'text-slate-300'
-                          }`}
+                          className={`font-mono font-black shrink-0 tabular-nums ${open ? 'text-amber-300 animate-pulse' : 'text-slate-300'
+                            }`}
                         >
                           {formatClock(secs)}
                         </span>
@@ -2117,8 +2138,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                         <span className={`block text-[10px] font-bold uppercase tracking-wider ${cfg.iconClass}`}>{activeBreak.type} Active</span>
                         <span className="text-base font-mono font-bold text-white">{formatBreakTime(breakElapsedSec)}</span>
                       </div>
-                      <button 
-                        onClick={handleEndBreak} 
+                      <button
+                        onClick={handleEndBreak}
                         disabled={isProcessingBreak}
                         className={`px-4 py-2 ${cfg.btnBg} font-black text-xs rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-md disabled:opacity-50 disabled:cursor-not-allowed`}
                       >
@@ -2131,56 +2152,56 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
               {!activeBreak && (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-7 gap-2.5 pt-2">
-                  <button 
-                    onClick={() => handleStartBreak('Tea Break')} 
+                  <button
+                    onClick={() => handleStartBreak('Tea Break')}
                     disabled={isProcessingBreak}
                     className="px-3 py-2.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 font-bold text-xs rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <span className="text-base">🍵</span>
                     <span>Tea Break</span>
                   </button>
-                  <button 
-                    onClick={() => handleStartBreak('Snack Break')} 
+                  <button
+                    onClick={() => handleStartBreak('Snack Break')}
                     disabled={isProcessingBreak}
                     className="px-3 py-2.5 bg-orange-500/10 hover:bg-orange-500/20 text-orange-300 border border-orange-500/30 font-bold text-xs rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <span className="text-base">🍿</span>
                     <span>Snack Break</span>
                   </button>
-                  <button 
-                    onClick={() => handleStartBreak('Meal Break')} 
+                  <button
+                    onClick={() => handleStartBreak('Meal Break')}
                     disabled={isProcessingBreak}
                     className="px-3 py-2.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <span className="text-base">🍱</span>
                     <span>Meal Break</span>
                   </button>
-                  <button 
-                    onClick={() => handleStartBreak('Team Huddle')} 
+                  <button
+                    onClick={() => handleStartBreak('Team Huddle')}
                     disabled={isProcessingBreak}
                     className="px-3 py-2.5 bg-blue-500/10 hover:bg-blue-500/20 text-blue-300 border border-blue-500/30 font-bold text-xs rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <span className="text-base">👥</span>
                     <span>Team Huddle</span>
                   </button>
-                  <button 
-                    onClick={() => handleStartBreak('Team Meeting')} 
+                  <button
+                    onClick={() => handleStartBreak('Team Meeting')}
                     disabled={isProcessingBreak}
                     className="px-3 py-2.5 bg-purple-500/10 hover:bg-purple-500/20 text-purple-300 border border-purple-500/30 font-bold text-xs rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <span className="text-base">📅</span>
                     <span>Team Meeting</span>
                   </button>
-                  <button 
-                    onClick={() => handleStartBreak('Attainment / Training')} 
+                  <button
+                    onClick={() => handleStartBreak('Attainment / Training')}
                     disabled={isProcessingBreak}
                     className="px-3 py-2.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 font-bold text-xs rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
                     <span className="text-base">🎓</span>
                     <span>Attainment/Training</span>
                   </button>
-                  <button 
-                    onClick={() => handleStartBreak('Activity')} 
+                  <button
+                    onClick={() => handleStartBreak('Activity')}
                     disabled={isProcessingBreak}
                     className="px-3 py-2.5 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-300 border border-cyan-500/30 font-bold text-xs rounded-xl transition-all flex flex-col items-center gap-1 cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   >
@@ -2248,10 +2269,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           </div>
 
           <div className="flex flex-col md:flex-row items-center justify-center gap-8 bg-slate-950/50 p-8 rounded-2xl border border-slate-800/60 overflow-x-auto">
-            
+
             {/* The Print Container */}
             <div id="employee-id-card-element" className="flex flex-col sm:flex-row gap-6 bg-transparent pb-8">
-              
+
               {/* FRONT OF CARD - BARCODE */}
               <div className="w-[340px] h-[580px] bg-white rounded-3xl shadow-2xl overflow-hidden relative print:shadow-none print:border print:border-slate-300 flex flex-col scale-[0.7] origin-top sm:scale-[0.8] md:scale-[0.85] lg:scale-100 mx-auto items-center justify-center p-8">
                 <div className="w-full flex flex-col items-center justify-center bg-white p-6 rounded-2xl border border-slate-100 shadow-sm gap-4">
@@ -2299,7 +2320,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
               <span>Export PDF</span>
             </button>
           </div>
-          
+
           <p className="text-[10px] text-slate-500 text-center">
             Note: Ensure your printer settings are set to 100% scale (no margins) if printing directly to CR80 ID cards.
           </p>
@@ -2329,7 +2350,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       {/* 7. READ-ONLY PROFILE SUMMARY OR UPDATE PROFILE SHEET TAB */}
       {activeTab === 'emp_profile' && (
         <div className="w-full space-y-6 text-xs">
-          
+
           {/* Header Bar */}
           <div className="bg-slate-900/90 rounded-2xl border border-slate-800 p-5 sm:p-6 shadow-xl flex flex-col sm:flex-row sm:items-center justify-between gap-4">
             <div>
@@ -2376,7 +2397,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
             /* VIEW 1: READ-ONLY USER DETAILS SUMMARY CARD                    */
             /* ============================================================== */
             <div className="space-y-6 animate-in fade-in duration-200">
-              
+
               {/* Profile Hero Box */}
               <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-6 sm:p-8 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="flex flex-col sm:flex-row items-center gap-6 text-center sm:text-left">
@@ -2417,11 +2438,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     </p>
                   </div>
 
-                  <span className={`px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 border ${
-                    activeEmployee.isFaceEnrolled || activeEmployee.faceDescriptor
-                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                  }`}>
+                  <span className={`px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 border ${activeEmployee.isFaceEnrolled || activeEmployee.faceDescriptor
+                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                    : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                    }`}>
                     {isFaceBiometricEnrolled(activeEmployee) ? (
                       <>
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
@@ -2523,7 +2543,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
               {/* Grid 2: Address & Emergency Contacts */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                
+
                 {/* Address Card */}
                 <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-6 shadow-xl space-y-3">
                   <h3 className="text-xs font-bold uppercase tracking-wider text-emerald-400 flex items-center gap-2 border-b border-slate-800 pb-2">
@@ -2601,9 +2621,9 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
             /* VIEW 2: COMPLETE UPDATE PROFILE SHEET FORM                     */
             /* ============================================================== */
             <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-6 sm:p-8 shadow-2xl space-y-8 animate-in fade-in duration-200">
-              
+
               <form onSubmit={handleSaveProfile} className="space-y-8">
-                
+
                 {/* SECTION A: FACE PHOTO & AVATAR EDITOR */}
                 <div className="bg-slate-950/70 p-6 rounded-2xl border border-slate-800 space-y-4">
                   <h3 className="font-extrabold text-white text-xs uppercase tracking-wider text-blue-400 flex items-center gap-2">
@@ -2691,9 +2711,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                               type="button"
                               key={idx}
                               onClick={() => setProfilePhoto(preset)}
-                              className={`relative rounded-xl overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
-                                profilePhoto === preset ? 'border-blue-500 scale-105 shadow-md shadow-blue-500/30' : 'border-slate-800 hover:border-slate-600'
-                              }`}
+                              className={`relative rounded-xl overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${profilePhoto === preset ? 'border-blue-500 scale-105 shadow-md shadow-blue-500/30' : 'border-slate-800 hover:border-slate-600'
+                                }`}
                             >
                               <img src={preset} alt={`Avatar ${idx}`} className="w-10 h-10 object-cover" />
                               {profilePhoto === preset && (
@@ -2930,15 +2949,14 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                 <Lock className="w-4 h-4 text-rose-400" />
                 Account Security & Password Change
               </h3>
-              <span className="text-[10px] text-slate-400 font-mono">Real-time Firebase Auth Update</span>
+              <span className="text-[10px] text-slate-400 font-mono">Real-time Database & Auth Sync</span>
             </div>
 
             {passwordUpdateMsg && (
-              <div className={`p-3 rounded-xl text-xs font-bold border flex items-center gap-2 ${
-                passwordUpdateMsg.success 
-                  ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' 
-                  : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
-              }`}>
+              <div className={`p-3 rounded-xl text-xs font-bold border flex items-center gap-2 ${passwordUpdateMsg.success
+                ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400'
+                : 'bg-rose-500/10 border-rose-500/30 text-rose-400'
+                }`}>
                 {passwordUpdateMsg.success ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <AlertTriangle className="w-4 h-4 text-rose-400" />}
                 <span>{passwordUpdateMsg.message}</span>
               </div>
@@ -2987,17 +3005,16 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     <span className="text-slate-400">Password Strength:</span>
                     <span className={
                       newPassword.length >= 8 && /[A-Z]/.test(newPassword) && /[0-9]/.test(newPassword) ? 'text-emerald-400' :
-                      newPassword.length >= 6 ? 'text-amber-400' : 'text-rose-400'
+                        newPassword.length >= 6 ? 'text-amber-400' : 'text-rose-400'
                     }>
                       {newPassword.length >= 8 && /[A-Z]/.test(newPassword) && /[0-9]/.test(newPassword) ? 'Strong 🟢' :
-                       newPassword.length >= 6 ? 'Medium 🟡' : 'Weak 🔴'}
+                        newPassword.length >= 6 ? 'Medium 🟡' : 'Weak 🔴'}
                     </span>
                   </div>
                   <div className="w-full h-1.5 bg-slate-900 rounded-full overflow-hidden flex">
-                    <div className={`h-full transition-all duration-300 ${
-                      newPassword.length >= 8 && /[A-Z]/.test(newPassword) && /[0-9]/.test(newPassword) ? 'w-full bg-emerald-500' :
+                    <div className={`h-full transition-all duration-300 ${newPassword.length >= 8 && /[A-Z]/.test(newPassword) && /[0-9]/.test(newPassword) ? 'w-full bg-emerald-500' :
                       newPassword.length >= 6 ? 'w-2/3 bg-amber-500' : 'w-1/3 bg-rose-500'
-                    }`} />
+                      }`} />
                   </div>
                 </div>
               )}

@@ -165,7 +165,7 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     createdAt: '2024-03-01T10:00:00Z',
     updatedAt: new Date().toISOString(),
     approvedWfhDates: ['2026-08-28', '2026-08-29'],
-    earnLeaveBalance: 0,
+    earnLeaveBalance: 1,
     sickLeaveBalance: 1,
     profilePhotoUrl: '/avatars/asbin.jpg'
   },

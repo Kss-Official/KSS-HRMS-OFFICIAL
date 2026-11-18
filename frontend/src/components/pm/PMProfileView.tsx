@@ -154,6 +154,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
   const [gender, setGender] = useState(targetEmployee?.gender || 'Prefer not to say');
   const [dateOfBirth, setDateOfBirth] = useState(targetEmployee?.dateOfBirth || '');
   const [profilePhoto, setProfilePhoto] = useState(getEmployeeAvatar(targetEmployee));
+  const [isPhotoSaving, setIsPhotoSaving] = useState(false);
   const [permanentAddress, setPermanentAddress] = useState(targetEmployee?.permanentAddress || '');
   const [currentAddress, setCurrentAddress] = useState(targetEmployee?.currentAddress || '');
   const [sameAsPermanentAddress, setSameAsPermanentAddress] = useState(false);
@@ -193,21 +194,39 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
     }
   }, [targetEmployee]);
 
+  // Instant Profile Photo Persistence to Cloudinary & Database
+  const persistPhotoImmediately = async (photoDataUrl: string) => {
+    if (!targetEmployee || !photoDataUrl) return;
+    setIsPhotoSaving(true);
+    try {
+      await updateEmployee(targetEmployee.id, {
+        profilePhotoUrl: photoDataUrl
+      });
+      toast.success('✓ Profile photo synced to Cloudinary & Database!');
+    } catch (err: any) {
+      console.error('[PMProfileView] Photo save error:', err);
+      toast.error(`Failed to save photo: ${err?.message || 'Upload failed'}`);
+    } finally {
+      setIsPhotoSaving(false);
+    }
+  };
+
   // Handle Photo File Upload
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (file) {
       try {
-        const compressedBase64 = await compressImageBase64(file, 400, 400, 0.7);
+        const compressedBase64 = await compressImageBase64(file, 500, 500, 0.8);
         setProfilePhoto(compressedBase64);
-        toast.success('Profile photo uploaded and compressed.');
+        await persistPhotoImmediately(compressedBase64);
       } catch (err) {
         console.error('Image compression failed:', err);
         const reader = new FileReader();
-        reader.onloadend = () => {
+        reader.onloadend = async () => {
           if (typeof reader.result === 'string') {
-            setProfilePhoto(reader.result);
-            toast.success('Profile photo loaded.');
+            const raw = reader.result;
+            setProfilePhoto(raw);
+            await persistPhotoImmediately(raw);
           }
         };
         reader.readAsDataURL(file);
@@ -237,7 +256,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
           ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
           const realPhotoUrl = canvas.toDataURL('image/jpeg', 0.85);
           setProfilePhoto(realPhotoUrl);
-          toast.success('📸 Webcam snapshot captured successfully!');
+          await persistPhotoImmediately(realPhotoUrl);
         }
         video.srcObject = null;
       } else {
@@ -1044,6 +1063,27 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
                       <span>Upload Photo File</span>
                     </button>
 
+                    {/* Dedicated Save Photo to Cloud Button */}
+                    <button
+                      type="button"
+                      onClick={() => persistPhotoImmediately(profilePhoto)}
+                      disabled={isPhotoSaving}
+                      className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs rounded-xl flex items-center gap-2 cursor-pointer transition-all shadow-md shadow-emerald-900/30"
+                      title="Save and synchronize profile photo to Cloudinary CDN and Cloud Database"
+                    >
+                      {isPhotoSaving ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          <span>Syncing to Cloudinary...</span>
+                        </>
+                      ) : (
+                        <>
+                          <Save className="w-3.5 h-3.5" />
+                          <span>💾 Save Photo to Cloud</span>
+                        </>
+                      )}
+                    </button>
+
                     {/* Biometric Face Template Enrollment */}
                     <button
                       type="button"
@@ -1063,7 +1103,10 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
                         <button
                           type="button"
                           key={idx}
-                          onClick={() => setProfilePhoto(preset)}
+                          onClick={async () => {
+                            setProfilePhoto(preset);
+                            await persistPhotoImmediately(preset);
+                          }}
                           className={`relative rounded-xl overflow-hidden border-2 transition-all cursor-pointer shrink-0 ${
                             profilePhoto === preset ? 'border-amber-500 scale-105 shadow-md shadow-amber-500/30' : 'border-slate-800 hover:border-slate-600'
                           }`}
