@@ -365,8 +365,10 @@ export async function checkInApi(params: {
 }
 
 export async function checkOutApi(params: {
+  employee_code?: string;
   latitude?: number;
   longitude?: number;
+  check_out_at?: string;
   notes?: string;
 }): Promise<any> {
   return apiRequest('/attendance/check-out', {

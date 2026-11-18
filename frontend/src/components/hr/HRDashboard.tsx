@@ -591,6 +591,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
           employeeCode={targetEmployee.employeeId}
           profilePhotoUrl={targetEmployee.profilePhotoUrl}
           cloudDescriptor={targetEmployee.faceDescriptor}
+          isFaceEnrolled={targetEmployee.isFaceEnrolled}
         />
       )}
     </div>

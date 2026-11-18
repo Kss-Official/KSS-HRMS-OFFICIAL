@@ -833,23 +833,33 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
 
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Bulk Check-Out All Active Button */}
-          <button
-            onClick={() => {
-              triggerHaptic();
-              setBulkCheckoutTime(getCurrentIstTimeInput());
-              setIsBulkCheckoutModalOpen(true);
-            }}
-            className="px-4 py-2.5 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-lg shadow-rose-950/40 flex items-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
-            title={`Bulk Check-Out all ${activeCheckedInEmployees.length} active on-duty employees${shiftCompletedCount > 0 ? ` (${shiftCompletedCount} already checked out)` : ''}`}
-          >
-            <LogOut className="w-4 h-4" />
-            <span>Check Out All ({activeCheckedInEmployees.length})</span>
-          </button>
+          {activeCheckedInEmployees.length > 0 ? (
+            <button
+              onClick={() => {
+                triggerHaptic();
+                setBulkCheckoutTime(getCurrentIstTimeInput());
+                setIsBulkCheckoutModalOpen(true);
+              }}
+              className="px-4 py-2.5 bg-gradient-to-r from-rose-600 via-rose-500 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-lg shadow-rose-950/40 flex items-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
+              title={`Bulk Check-Out all ${activeCheckedInEmployees.length} active on-duty employees${shiftCompletedCount > 0 ? ` (${shiftCompletedCount} already checked out)` : ''}`}
+            >
+              <LogOut className="w-4 h-4" />
+              <span>Check Out All ({activeCheckedInEmployees.length})</span>
+            </button>
+          ) : (
+            <div
+              className="px-3.5 py-2 bg-slate-900 border border-emerald-500/30 text-emerald-400 font-bold text-xs rounded-xl flex items-center gap-2 shadow-md cursor-default select-none"
+              title="All on-duty personnel have completed checkout for today."
+            >
+              <CheckCheck className="w-4 h-4 text-emerald-400" />
+              <span>All Checked Out (0 On Duty)</span>
+            </div>
+          )}
         </div>
       </div>
 
       {/* ── PM PERSONAL DUTY & ATTENDANCE COMMAND CENTER ── */}
-      <div className="bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-950 rounded-2xl p-4 sm:p-5 border border-slate-800/80 shadow-2xl backdrop-blur-xl relative z-20 overflow-visible">
+      <div className="bg-gradient-to-r from-slate-900 via-slate-900/95 to-slate-950 rounded-2xl p-4 sm:p-5 border border-slate-800/80 shadow-2xl relative z-30 overflow-visible">
         {/* Subtle decorative glow constrained cleanly to the card */}
         <div className="absolute inset-0 rounded-2xl overflow-hidden pointer-events-none">
           <div className="absolute top-0 right-0 -mr-16 -mt-16 w-64 h-64 bg-emerald-500/5 rounded-full blur-3xl" />
@@ -1004,7 +1014,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
                           className="fixed inset-0 z-40"
                           onClick={() => setShowPmBreakPicker(false)}
                         />
-                        <div className="absolute right-0 top-full mt-2 w-52 bg-slate-900 border border-slate-800 rounded-2xl p-2 shadow-2xl z-50 animate-in fade-in zoom-in-95 space-y-1">
+                        <div className="absolute right-0 top-full mt-2 w-56 bg-slate-900 border border-slate-700 rounded-2xl p-2 shadow-2xl shadow-slate-950/90 z-50 animate-in fade-in zoom-in-95 space-y-1">
                           <div className="text-[10px] uppercase font-bold text-slate-400 px-2 py-1">Select Break Type</div>
                           <button
                             onClick={() => handlePmStartBreak('Lunch Break')}
@@ -1399,18 +1409,25 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
               </div>
 
               <div className="flex items-center gap-3 self-end sm:self-auto">
-                <button
-                  onClick={() => {
-                    triggerHaptic();
-                    setBulkCheckoutTime(getCurrentIstTimeInput());
-                    setIsBulkCheckoutModalOpen(true);
-                  }}
-                  className="px-3.5 py-2 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-all hover:scale-[1.02] cursor-pointer"
-                  title={`Bulk Check-Out all ${activeCheckedInEmployees.length} active on-duty employees${shiftCompletedCount > 0 ? ` (${shiftCompletedCount} already checked out)` : ''}`}
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                  <span>Check Out All ({activeCheckedInEmployees.length})</span>
-                </button>
+                {activeCheckedInEmployees.length > 0 ? (
+                  <button
+                    onClick={() => {
+                      triggerHaptic();
+                      setBulkCheckoutTime(getCurrentIstTimeInput());
+                      setIsBulkCheckoutModalOpen(true);
+                    }}
+                    className="px-3.5 py-2 bg-gradient-to-r from-rose-600 to-amber-600 hover:from-rose-500 hover:to-amber-500 text-white font-black text-xs rounded-xl shadow-md flex items-center gap-1.5 transition-all hover:scale-[1.02] cursor-pointer"
+                    title={`Bulk Check-Out all ${activeCheckedInEmployees.length} active on-duty employees${shiftCompletedCount > 0 ? ` (${shiftCompletedCount} already checked out)` : ''}`}
+                  >
+                    <LogOut className="w-3.5 h-3.5" />
+                    <span>Check Out All ({activeCheckedInEmployees.length})</span>
+                  </button>
+                ) : (
+                  <div className="px-3 py-1.5 bg-slate-900 border border-emerald-500/30 text-emerald-400 font-bold text-xs rounded-xl flex items-center gap-1.5">
+                    <CheckCheck className="w-3.5 h-3.5 text-emerald-400" />
+                    <span>All Checked Out</span>
+                  </div>
+                )}
 
                 <button
                   onClick={() => setIsRosterModalOpen(false)}
@@ -2227,6 +2244,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
           employeeCode={activeEmployee.employeeId}
           profilePhotoUrl={activeEmployee.profilePhotoUrl}
           cloudDescriptor={activeEmployee.faceDescriptor}
+          isFaceEnrolled={activeEmployee.isFaceEnrolled}
         />
       )}
 

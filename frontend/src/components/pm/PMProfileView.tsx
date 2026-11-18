@@ -1583,6 +1583,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
           employeeId={targetEmployee.id}
           profilePhotoUrl={profilePhoto || targetEmployee.profilePhotoUrl}
           cloudDescriptor={targetEmployee.faceDescriptor}
+          isFaceEnrolled={targetEmployee.isFaceEnrolled}
         />
       )}
 
@@ -1611,6 +1612,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
           employeeId={targetEmployee.id}
           profilePhotoUrl={profilePhoto || targetEmployee.profilePhotoUrl}
           cloudDescriptor={targetEmployee.faceDescriptor}
+          isFaceEnrolled={targetEmployee.isFaceEnrolled}
         />
       )}
 

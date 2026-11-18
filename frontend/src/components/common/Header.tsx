@@ -306,6 +306,7 @@ export const Header: React.FC<HeaderProps> = ({
           employeeCode={activeEmployee.employeeId}
           profilePhotoUrl={activeEmployee.profilePhotoUrl}
           cloudDescriptor={activeEmployee.faceDescriptor}
+          isFaceEnrolled={activeEmployee.isFaceEnrolled}
         />
       )}
     </header>

@@ -366,8 +366,15 @@ async def check_out(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    now = datetime.now(timezone.utc)
-    record = await _today_record(db, current_user)
+    target_emp = current_user
+    if payload.employee_code and current_user.role in [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER]:
+        stmt = select(Employee).where(func.lower(Employee.employee_code) == payload.employee_code.strip().lower())
+        found = (await db.execute(stmt)).scalar_one_or_none()
+        if found:
+            target_emp = found
+
+    now = payload.check_out_at or datetime.now(timezone.utc)
+    record = await _today_record(db, target_emp)
     if not record or not record.check_in_at:
         raise HTTPException(status_code=400, detail="Cannot check out without checking in first")
 

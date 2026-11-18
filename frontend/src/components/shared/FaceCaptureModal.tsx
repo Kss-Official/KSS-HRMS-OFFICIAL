@@ -30,6 +30,7 @@ export interface FaceCaptureModalProps {
   employeeCode?: string;
   profilePhotoUrl?: string;
   cloudDescriptor?: number[];
+  isFaceEnrolled?: boolean;
   isTestMode?: boolean;
   isEnrollmentMode?: boolean;
 }
@@ -44,6 +45,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   employeeCode,
   profilePhotoUrl,
   cloudDescriptor,
+  isFaceEnrolled,
   isTestMode = false,
   isEnrollmentMode = false
 }) => {
@@ -93,12 +95,14 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   useEffect(() => {
     if (employeeId && isOpen) {
       const storedDesc = getEmployeeDescriptor(employeeId, cloudDescriptor);
-      const enrolled = storedDesc !== null || (cloudDescriptor && cloudDescriptor.length === 128);
-      setIsEnrolled(!!enrolled);
-      // NOTE: We do NOT fallback to arbitrary Unsplash stock avatar URLs for biometric auth,
-      // ensuring strict 1:1 biometric identity verification.
+      const enrolled = Boolean(
+        isFaceEnrolled ||
+        storedDesc !== null ||
+        (cloudDescriptor && cloudDescriptor.length === 128)
+      );
+      setIsEnrolled(enrolled);
     }
-  }, [employeeId, isOpen, cloudDescriptor]);
+  }, [employeeId, isOpen, cloudDescriptor, isFaceEnrolled]);
 
   // Load Models & Start Camera Stream
   useEffect(() => {
@@ -259,8 +263,12 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
     let active = true;
     let isScanning = false;
+    let isVerifyingInFlight = false;
+    let lastVerifyTime = 0;
     let timerId: any = null;
     let scanAttemptCount = 0;
+    const scanStartTime = Date.now();
+    const MAX_VERIFY_DURATION_MS = 12000; // 12 seconds verification window
 
     const runScanLoop = async () => {
       if (!active || !videoRef.current) return;
@@ -278,7 +286,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
           setQualityMetrics(scan.quality);
         }
 
-        // Anti-Spoofing & Liveness Guard: reject static photos or phone screens
+        // Anti-Spoofing & Liveness Guard: reject genuine static photos or phone screens
         if (scan.liveness?.isStaticSpoof) {
           setAlignmentFeedback('Static image detected • Natural movement required');
           setFeedbackText('Static photo or screen detected. Live movement or natural blink required...');
@@ -403,17 +411,10 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             return;
           }
 
-          // Mode C: Verification — Backend-Mandatory 1:1 biometric check
-          // LOCAL check is ONLY a pre-filter to avoid unnecessary API calls on clearly wrong faces.
-          // onSuccess is NEVER called based on local match alone — backend MUST confirm.
-          const isLive = scan.liveness?.isLive ?? true;
-          if (!isLive) {
-            setFeedbackText('Static image detected. Please blink naturally to confirm you are live...');
-            return;
-          }
-
+          // Mode C: Verification — Backend-Mandatory 1:1 biometric check via Neon PostgreSQL pgvector
           scanAttemptCount++;
-          const progressPct = Math.round(Math.min(100, (scanAttemptCount / 20) * 100));
+          const elapsed = Date.now() - scanStartTime;
+          const progressPct = Math.min(100, Math.round((elapsed / MAX_VERIFY_DURATION_MS) * 100));
 
           if (scan.quality && scan.quality.guidanceMessage) {
             setFeedbackText(`Verifying identity... ${scan.quality.guidanceMessage}`);
@@ -421,9 +422,13 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             setFeedbackText(`Verifying biometrics via secure vector engine... (${progressPct}%)`);
           }
 
-          // Send to backend on frames 1, 3, 5, 8, 12, 16, 20
-          if ([1, 3, 5, 8, 12, 16, 20].includes(scanAttemptCount) && active) {
+          const now = Date.now();
+          // Send verification request at most once every 350ms, and only if no request is in-flight
+          if (!isVerifyingInFlight && (now - lastVerifyTime >= 350) && active) {
+            isVerifyingInFlight = true;
+            lastVerifyTime = now;
             const descArr = Array.from(scan.descriptor);
+
             verifyFaceApi(descArr, 0.38, employeeId, employeeCode)
               .then((backendRes) => {
                 if (!active) return;
@@ -463,35 +468,39 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                   }
 
                   consecutiveMatchesRef.current += 1;
-                  // Temporal Consensus: Require at least 2 consecutive positive matches
-                  if (consecutiveMatchesRef.current >= 2) {
-                    const conf = Math.round((backendRes.confidence || 0.96) * 100);
-                    setConfidencePercent(conf);
-                    setStatusStep('VERIFIED');
-                    setFeedbackText(`✓ Biometric Identity Confirmed (${conf}% Confidence)`);
-                    triggerHaptic('success');
-                    active = false;
-                    if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
-                    actionTimerRef.current = setTimeout(() => {
-                      onSuccess(descArr);
-                      onClose();
-                    }, 250);
-                  } else {
-                    setFeedbackText('Biometric match detected. Confirming temporal stability...');
-                  }
+                  const conf = Math.round((backendRes.confidence || 0.96) * 100);
+                  setConfidencePercent(conf);
+                  setStatusStep('VERIFIED');
+                  setFeedbackText(`✓ Biometric Identity Confirmed (${conf}% Confidence)`);
+                  triggerHaptic('success');
+                  active = false;
+                  if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+                  actionTimerRef.current = setTimeout(() => {
+                    onSuccess(descArr);
+                    onClose();
+                  }, 250);
                 } else {
                   consecutiveMatchesRef.current = 0;
+                  if (backendRes.message && backendRes.message.includes('No biometric face template registered')) {
+                    setStatusStep('NOT_ENROLLED');
+                    setFeedbackText('No biometric face template registered for this account. Please register your face first.');
+                    triggerHaptic('error');
+                    active = false;
+                  }
                 }
               })
               .catch((err) => {
-                console.warn('[Biometrics] Backend verify error on frame', scanAttemptCount, err);
+                console.warn('[Biometrics] Backend verify error:', err);
+              })
+              .finally(() => {
+                isVerifyingInFlight = false;
               });
           }
 
-          if (scanAttemptCount > 20 && active) {
-            // 20-frame window exhausted without backend confirmation → fail
+          if (elapsed >= MAX_VERIFY_DURATION_MS && active) {
+            // 12-second window exhausted without backend confirmation → fail
             setStatusStep('FAILED');
-            setFeedbackText(`❌ Biometric verification failed. Face did not match registered profile. Please try again in better lighting.`);
+            setFeedbackText(`❌ Biometric verification timed out. Face did not match registered profile. Please try again in better lighting.`);
             triggerHaptic('error');
             active = false;
           }

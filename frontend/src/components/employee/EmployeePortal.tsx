@@ -3082,6 +3082,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         employeeCode={activeEmployee.employeeId}
         profilePhotoUrl={activeEmployee.profilePhotoUrl}
         cloudDescriptor={activeEmployee.faceDescriptor}
+        isFaceEnrolled={activeEmployee.isFaceEnrolled}
       />
 
       {/* Diagnostic Facial Recognition Accuracy Test Modal (Zero Shift / Attendance Impact) */}
@@ -3097,6 +3098,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         employeeId={activeEmployee.id}
         employeeCode={activeEmployee.employeeId}
         cloudDescriptor={activeEmployee.faceDescriptor}
+        isFaceEnrolled={activeEmployee.isFaceEnrolled}
         isTestMode={true}
       />
 
@@ -3125,6 +3127,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         employeeCode={activeEmployee.employeeId}
         profilePhotoUrl={activeEmployee.profilePhotoUrl}
         cloudDescriptor={activeEmployee.faceDescriptor}
+        isFaceEnrolled={activeEmployee.isFaceEnrolled}
         isEnrollmentMode={true}
       />
 

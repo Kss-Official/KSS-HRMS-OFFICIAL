@@ -3702,32 +3702,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return;
       }
 
-      try {
-        await setDoc(doc(db, 'users', firebaseUser.uid), {
-          uid: firebaseUser.uid,
-          email: cleanEmail || '',
-          // Guarantee a non-null role — Firestore rules deny null/undefined role writes
-          // for self-service employees. Fall back to 'EMPLOYEE' if the employee doc has
-          // a missing/null/undefined role (legacy records, designation-only docs, etc.).
-          role: (matched.role && matched.role.length > 0) ? matched.role : 'EMPLOYEE',
-          employeeId: matched.employeeId,
-          employeeDocId: matched.id,
-          fullName: matched.fullName,
-          updatedAt: serverTimestamp()
-        }, { merge: true });
-        // Backfill the Firebase Auth UID onto the employee document so future rule
-        // evaluations can match via uid field (not just email). Fire-and-forget.
-        setDoc(doc(db, 'employees', matched.id), {
-          uid: firebaseUser.uid,
-          updatedAt: serverTimestamp()
-        }, { merge: true }).catch((e) => {
-          console.warn('[Auth] Employee uid backfill failed (non-fatal):', e);
-        });
-      } catch (err) {
-        console.warn(
-          `[Auth] Non-fatal: Could not write users/${firebaseUser.uid} mapping, proceeding with verified employee directory record:`,
-          err
-        );
+      if (USE_FIREBASE_FIRESTORE) {
+        try {
+          await setDoc(doc(db, 'users', firebaseUser.uid), {
+            uid: firebaseUser.uid,
+            email: cleanEmail || '',
+            // Guarantee a non-null role — Firestore rules deny null/undefined role writes
+            // for self-service employees. Fall back to 'EMPLOYEE' if the employee doc has
+            // a missing/null/undefined role (legacy records, designation-only docs, etc.).
+            role: (matched.role && matched.role.length > 0) ? matched.role : 'EMPLOYEE',
+            employeeId: matched.employeeId,
+            employeeDocId: matched.id,
+            fullName: matched.fullName,
+            updatedAt: serverTimestamp()
+          }, { merge: true });
+          // Backfill the Firebase Auth UID onto the employee document so future rule
+          // evaluations can match via uid field (not just email). Fire-and-forget.
+          setDoc(doc(db, 'employees', matched.id), {
+            uid: firebaseUser.uid,
+            updatedAt: serverTimestamp()
+          }, { merge: true }).catch((e) => {
+            console.warn('[Auth] Employee uid backfill failed (non-fatal):', e);
+          });
+        } catch (err) {
+          console.warn(
+            `[Auth] Non-fatal: Could not write users/${firebaseUser.uid} mapping, proceeding with verified employee directory record:`,
+            err
+          );
+        }
       }
 
       setActiveEmployee(matched);
@@ -4146,15 +4148,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         return { success: false, message: 'No matching employee record was found for this account.' };
       }
       
-      await setDoc(doc(db, 'users', userCred.user.uid), {
-        uid: userCred.user.uid,
-        email: email,
-        role: employee.role,
-        employeeId: employee.employeeId,
-        employeeDocId: employee.id,
-        fullName: employee.fullName,
-        updatedAt: serverTimestamp()
-      });
+      if (USE_FIREBASE_FIRESTORE) {
+        await setDoc(doc(db, 'users', userCred.user.uid), {
+          uid: userCred.user.uid,
+          email: email,
+          role: employee.role,
+          employeeId: employee.employeeId,
+          employeeDocId: employee.id,
+          fullName: employee.fullName,
+          updatedAt: serverTimestamp()
+        });
+      }
 
       await signOut(secondaryAuth);
       return { success: true, message: 'Password successfully set.' };
@@ -6190,13 +6194,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       `${record.isSynthetic ? 'Created' : 'Updated'} ${record.date}: ${Object.keys(updates).join(', ')}`
     );
 
-    if (auth.currentUser) {
+    // 100% NEON POSTGRESQL PRIMARY ATTENDANCE CORRECTION
+    if (getAuthToken()) {
+      const empCode = emp?.employeeId || record.employeeCode;
+      if (empCode && updates.checkOutAt) {
+        try {
+          await checkOutApi({
+            employee_code: empCode,
+            check_out_at: updates.checkOutAt,
+            notes: updates.notes || 'Attendance checkout correction'
+          });
+        } catch (e) {
+          console.warn('[FastAPI] checkOutApi bulk correction sync note:', e);
+        }
+      }
+    }
+
+    if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
       try {
         await setDoc(doc(db, 'attendance', targetId), payload, { merge: true });
       } catch (err: any) {
         console.warn(`[Firestore] Attendance correction note:`, err);
       }
     }
+
+    fetchFastApiRecords(activeEmployeeRef.current, true);
 
     return { success: true, message: `Attendance for ${record.employeeName || 'employee'} updated.` };
   };

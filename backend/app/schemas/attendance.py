@@ -12,8 +12,10 @@ class CheckInRequest(BaseModel):
     face_descriptor: Optional[List[float]] = None
 
 class CheckOutRequest(BaseModel):
+    employee_code: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
+    check_out_at: Optional[datetime] = None
     notes: Optional[str] = None
 
 class BreakActionRequest(BaseModel):
