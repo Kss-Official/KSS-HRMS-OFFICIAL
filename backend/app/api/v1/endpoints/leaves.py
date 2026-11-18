@@ -1,11 +1,11 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy import select, and_, or_, func
 from uuid import UUID
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Tuple
 import uuid
-import random
 import time
 
 from app.core.database import get_db
@@ -13,25 +13,93 @@ from app.models.employee import Employee
 from app.models.leave import LeaveRequest, LeaveLedger
 from app.models.enums import LeaveType, LeaveStatus, ApprovalStatus, UserRole, ExecutiveTier, LedgerTransactionType
 from app.schemas.leave import LeaveRequestCreate, ExecutiveLeaveReview, LeaveRequestOut
-from app.api.deps import get_current_user, get_optional_current_user, require_executive
+from app.api.deps import get_current_user, require_executive
+from app.api.audit_util import add_audit
+from app.api.v1.endpoints.attendance import company_now
 
 router = APIRouter()
 
-# In-memory leaves cache with 15-second TTL
 _LEAVES_CACHE: Dict[str, Tuple[float, List[LeaveRequestOut]]] = {}
+_LEAVES_CACHE_TTL = 30.0
+_LEAVES_CACHE_MAX_KEYS = 128
+
+PAID_TYPES = (LeaveType.EARN_LEAVE, LeaveType.SICK_LEAVE, LeaveType.CASUAL_LEAVE)
+BALANCE_ATTR = {
+    LeaveType.EARN_LEAVE: "earn_leave_balance",
+    LeaveType.SICK_LEAVE: "sick_leave_balance",
+    LeaveType.CASUAL_LEAVE: "casual_leave_balance",
+}
+MAX_LEAVE_DAYS = 366
+MAX_REASON_LEN = 2000
+
 
 def invalidate_leaves_cache():
     _LEAVES_CACHE.clear()
+
+
+async def _to_out(db: AsyncSession, leave: LeaveRequest) -> LeaveRequestOut:
+    applicant = (await db.execute(select(Employee).where(Employee.id == leave.employee_id))).scalar_one_or_none()
+    out = LeaveRequestOut.model_validate(leave)
+    if applicant:
+        out.employee_code = applicant.employee_code
+        out.employee_name = applicant.full_name
+        out.department = applicant.department
+    return out
+
+
+async def _find_leave(db: AsyncSession, leave_id: str, lock: bool = False) -> Optional[LeaveRequest]:
+    """Exact lookup by UUID / request_code (case-insensitive) or the legacy `LR_<code>_<YYYY-MM-DD>` form.
+    No fuzzy matching: acting on the wrong leave request is worse than a 404."""
+    clean = leave_id.strip()
+    conds = [func.lower(LeaveRequest.request_code) == clean.lower()]
+    try:
+        conds.append(LeaveRequest.id == uuid.UUID(clean))
+    except ValueError:
+        pass
+    stmt = select(LeaveRequest).where(or_(*conds)).limit(2)
+    if lock:
+        stmt = stmt.with_for_update()
+    rows = (await db.execute(stmt)).scalars().all()
+    if len(rows) == 1:
+        return rows[0]
+    if len(rows) > 1:
+        return None
+
+    if clean.startswith("LR_"):
+        parts = clean.split("_")
+        if len(parts) >= 3:
+            try:
+                date_part = datetime.strptime(parts[2], "%Y-%m-%d").date()
+            except ValueError:
+                return None
+            eid = (await db.execute(select(Employee.id).where(or_(
+                func.lower(Employee.employee_code) == parts[1].lower(),
+                func.lower(Employee.legacy_firebase_id) == parts[1].lower()
+            )).limit(2))).scalars().all()
+            if len(eid) == 1:
+                stmt = select(LeaveRequest).where(and_(LeaveRequest.employee_id == eid[0], LeaveRequest.start_date == date_part)).limit(2)
+                if lock:
+                    stmt = stmt.with_for_update()
+                found = (await db.execute(stmt)).scalars().all()
+                if len(found) == 1:
+                    return found[0]
+    return None
+
+
+async def _lock_employee(db: AsyncSession, emp_id: UUID) -> Optional[Employee]:
+    return (await db.execute(select(Employee).where(Employee.id == emp_id).with_for_update())).scalar_one_or_none()
+
 
 @router.get("/", response_model=List[LeaveRequestOut])
 async def list_leaves(
     employee_id: Optional[UUID] = None,
     status: Optional[LeaveStatus] = None,
-    limit: int = 500,
+    limit: int = Query(500, ge=1, le=2000),
     db: AsyncSession = Depends(get_db),
-    current_user: Optional[Employee] = Depends(get_optional_current_user)
+    current_user: Employee = Depends(get_current_user),
 ):
-    target_emp_id = employee_id if employee_id else (current_user.id if (current_user and current_user.role == UserRole.EMPLOYEE) else None)
+    # Plain employees only ever see their own requests (an employee_id param for someone else is ignored).
+    target_emp_id = current_user.id if current_user.role == UserRole.EMPLOYEE else employee_id
     cache_key = f"{target_emp_id}:{status}:{limit}"
     now_ts = time.time()
     cached = _LEAVES_CACHE.get(cache_key)
@@ -44,348 +112,214 @@ async def list_leaves(
     )
     if target_emp_id:
         stmt = stmt.where(LeaveRequest.employee_id == target_emp_id)
-
     if status:
         stmt = stmt.where(LeaveRequest.status == status)
-
     stmt = stmt.order_by(LeaveRequest.created_at.desc()).limit(limit)
-    result = await db.execute(stmt)
-    rows = result.all()
+    rows = (await db.execute(stmt)).all()
 
     out_leaves: List[LeaveRequestOut] = []
     for leave, code, name, dept in rows:
-        leave_dict = LeaveRequestOut.model_validate(leave)
-        leave_dict.employee_code = code
-        leave_dict.employee_name = name
-        leave_dict.department = dept
-        out_leaves.append(leave_dict)
+        o = LeaveRequestOut.model_validate(leave)
+        o.employee_code, o.employee_name, o.department = code, name, dept
+        out_leaves.append(o)
 
-    _LEAVES_CACHE[cache_key] = (now_ts + 60.0, out_leaves)
+    if len(_LEAVES_CACHE) >= _LEAVES_CACHE_MAX_KEYS:
+        _LEAVES_CACHE.clear()
+    _LEAVES_CACHE[cache_key] = (now_ts + _LEAVES_CACHE_TTL, out_leaves)
     return out_leaves
+
 
 @router.post("/", response_model=LeaveRequestOut)
 async def submit_leave(
     payload: LeaveRequestCreate,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    current_user: Employee = Depends(get_current_user),
 ):
+    # 1) Idempotent replay FIRST (a retry must return the original, scoped to the caller only).
+    code_in = payload.request_code.strip() if payload.request_code else None
+    if code_in:
+        existing = (await db.execute(select(LeaveRequest).where(LeaveRequest.request_code == code_in))).scalar_one_or_none()
+        if existing:
+            if existing.employee_id != current_user.id:
+                raise HTTPException(status_code=409, detail="Request code already in use")
+            return await _to_out(db, existing)
+
     if payload.end_date < payload.start_date:
         raise HTTPException(status_code=400, detail="End date cannot be earlier than start date")
+    reason = (payload.reason or "").strip()
+    if not reason:
+        raise HTTPException(status_code=422, detail="A reason is required")
+    if len(reason) > MAX_REASON_LEN:
+        raise HTTPException(status_code=422, detail="Reason is too long")
 
     req_type = LeaveType.WFH if payload.type in [LeaveType.WFH, LeaveType.WORK_FROM_HOME] else payload.type
     num_days = (payload.end_date - payload.start_date).days + 1
+    if num_days > MAX_LEAVE_DAYS:
+        raise HTTPException(status_code=400, detail=f"A single request cannot exceed {MAX_LEAVE_DAYS} days")
 
-    # Balance validation for paid categories
-    if req_type == LeaveType.EARN_LEAVE:
-        avail = float(current_user.earn_leave_balance or 0.0)
-        if avail < num_days:
-            raise HTTPException(status_code=400, detail=f"Insufficient Earn Leave balance: Requested {num_days} day(s), available: {avail}")
-    elif req_type == LeaveType.SICK_LEAVE:
-        avail = float(current_user.sick_leave_balance or 0.0)
-        if avail < num_days:
-            raise HTTPException(status_code=400, detail=f"Insufficient Sick Leave balance: Requested {num_days} day(s), available: {avail}")
-    elif req_type == LeaveType.CASUAL_LEAVE:
-        avail = float(current_user.casual_leave_balance or 0.0)
-        if avail < num_days:
-            raise HTTPException(status_code=400, detail=f"Insufficient Casual Leave balance: Requested {num_days} day(s), available: {avail}")
+    # Serialize this employee's submissions so concurrent requests can't both pass the checks below.
+    emp = await _lock_employee(db, current_user.id)
 
-    # Check for existing duplicate or overlapping pending/approved leave requests
-    overlap_res = await db.execute(
-        select(LeaveRequest).where(
-            and_(
-                LeaveRequest.employee_id == current_user.id,
-                LeaveRequest.status.in_([LeaveStatus.PENDING, LeaveStatus.APPROVED]),
-                LeaveRequest.start_date <= payload.end_date,
-                LeaveRequest.end_date >= payload.start_date
-            )
-        )
-    )
-    existing_overlap = overlap_res.first()
-    if existing_overlap:
-        raise HTTPException(
-            status_code=400,
-            detail=f"An active or pending {existing_overlap[0].type.value} request already exists for dates overlapping with {payload.start_date} to {payload.end_date}."
-        )
+    overlap = (await db.execute(
+        select(LeaveRequest).where(and_(
+            LeaveRequest.employee_id == current_user.id,
+            LeaveRequest.status.in_([LeaveStatus.PENDING, LeaveStatus.APPROVED]),
+            LeaveRequest.start_date <= payload.end_date,
+            LeaveRequest.end_date >= payload.start_date,
+        )).limit(1)
+    )).scalars().first()
+    if overlap:
+        raise HTTPException(status_code=400, detail=f"An active or pending {overlap.type.value} request already exists for dates overlapping with {payload.start_date} to {payload.end_date}.")
 
-    # Idempotency check: if request_code already exists, return existing record
-    if payload.request_code:
-        exist_stmt = select(LeaveRequest).where(LeaveRequest.request_code == payload.request_code.strip())
-        exist_res = await db.execute(exist_stmt)
-        existing = exist_res.scalar_one_or_none()
-        if existing:
-            emp_applicant = await db.execute(select(Employee).where(Employee.id == existing.employee_id))
-            applicant = emp_applicant.scalar_one_or_none()
-            out = LeaveRequestOut.model_validate(existing)
-            if applicant:
-                out.employee_code = applicant.employee_code
-                out.employee_name = applicant.full_name
-                out.department = applicant.department
-            return out
-
-    # Generate sequential/unique request code
-    code = payload.request_code.strip() if payload.request_code else f"LV-{payload.start_date.year}-{uuid.uuid4().hex[:6].upper()}"
+    # Balance check counts days already promised by other PENDING requests of the same type.
+    if req_type in PAID_TYPES:
+        avail = float(getattr(emp, BALANCE_ATTR[req_type]) or 0.0)
+        pending_rows = (await db.execute(select(LeaveRequest.start_date, LeaveRequest.end_date).where(and_(
+            LeaveRequest.employee_id == current_user.id, LeaveRequest.type == req_type,
+            LeaveRequest.status == LeaveStatus.PENDING)))).all()
+        pending_days = sum((e - s).days + 1 for s, e in pending_rows)
+        if avail - pending_days < num_days:
+            raise HTTPException(status_code=400, detail=f"Insufficient {req_type.value.replace('_', ' ').title()} balance: requested {num_days} day(s), available: {max(avail - pending_days, 0)}")
 
     leave = LeaveRequest(
         id=uuid.uuid4(),
-        request_code=code,
-        employee_id=current_user.id,
-        type=req_type,
-        start_date=payload.start_date,
-        end_date=payload.end_date,
-        reason=payload.reason,
-        status=LeaveStatus.PENDING,
-        ceo_status=ApprovalStatus.PENDING,
-        cto_status=ApprovalStatus.WAITING_CEO,
-        deduction_applied=False
+        request_code=code_in or f"LV-{payload.start_date.year}-{uuid.uuid4().hex[:6].upper()}",
+        employee_id=current_user.id, type=req_type, start_date=payload.start_date, end_date=payload.end_date,
+        reason=reason, status=LeaveStatus.PENDING, ceo_status=ApprovalStatus.PENDING,
+        cto_status=ApprovalStatus.WAITING_CEO, deduction_applied=False,
     )
     db.add(leave)
-    await db.commit()
+    add_audit(db, current_user.id, "LEAVE_SUBMITTED", target=leave.request_code,
+              details=f"{req_type.value} {payload.start_date}..{payload.end_date}", entity_type="leave",
+              entity_id=str(leave.id), request=request)
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Request code already in use")
     await db.refresh(leave)
     invalidate_leaves_cache()
-    emp_applicant = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
-    applicant = emp_applicant.scalar_one_or_none()
-    out = LeaveRequestOut.model_validate(leave)
-    if applicant:
-        out.employee_code = applicant.employee_code
-        out.employee_name = applicant.full_name
-        out.department = applicant.department
-    return out
+    return await _to_out(db, leave)
+
 
 @router.patch("/{leave_id}/review", response_model=LeaveRequestOut)
 async def review_leave(
     leave_id: str,
     payload: ExecutiveLeaveReview,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(require_executive())
+    current_user: Employee = Depends(require_executive()),
 ):
+    if payload.action not in (ApprovalStatus.APPROVED, ApprovalStatus.REJECTED):
+        raise HTTPException(status_code=422, detail="Action must be APPROVED or REJECTED")
+
     now = datetime.now(timezone.utc)
-    clean_id = leave_id.strip()
-    try:
-        val_uuid = uuid.UUID(clean_id)
-        stmt = select(LeaveRequest).where(or_(LeaveRequest.id == val_uuid, LeaveRequest.request_code == clean_id))
-    except ValueError:
-        stmt = select(LeaveRequest).where(or_(
-            LeaveRequest.request_code == clean_id,
-            func.lower(LeaveRequest.request_code) == clean_id.lower()
-        ))
-    res = await db.execute(stmt)
-    leave = res.scalar_one_or_none()
-    if not leave:
-        fallback_stmt = select(LeaveRequest).where(LeaveRequest.request_code.ilike(f"%{clean_id}%"))
-        fallback_res = await db.execute(fallback_stmt)
-        leave = fallback_res.scalar_one_or_none()
-
-    if not leave and clean_id.startswith("LR_"):
-        parts = clean_id.split("_")
-        if len(parts) >= 3:
-            emp_code_part = parts[1]
-            try:
-                date_part = datetime.strptime(parts[2], "%Y-%m-%d").date()
-                emp_stmt = select(Employee.id).where(or_(
-                    func.lower(Employee.employee_code) == emp_code_part.lower(),
-                    func.lower(Employee.legacy_firebase_id) == emp_code_part.lower()
-                ))
-                emp_id_res = await db.execute(emp_stmt)
-                found_eid = emp_id_res.scalar_one_or_none()
-                if found_eid:
-                    l_stmt = select(LeaveRequest).where(
-                        and_(LeaveRequest.employee_id == found_eid, LeaveRequest.start_date == date_part)
-                    )
-                    l_res = await db.execute(l_stmt)
-                    leave = l_res.scalar_one_or_none()
-            except Exception:
-                pass
-
+    leave = await _find_leave(db, leave_id, lock=True)
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
 
-    is_super_admin = (current_user.role == UserRole.SUPER_ADMIN)
-    is_ceo = (current_user.executive_tier == ExecutiveTier.CEO)
-    is_cto = (current_user.executive_tier == ExecutiveTier.CTO)
+    if leave.status != LeaveStatus.PENDING:
+        raise HTTPException(status_code=409, detail=f"This request is already {leave.status.value.lower()} and can no longer be reviewed")
+
+    is_ceo = current_user.executive_tier == ExecutiveTier.CEO
+    is_cto = current_user.executive_tier == ExecutiveTier.CTO
+    is_super_override = current_user.role == UserRole.SUPER_ADMIN and not (is_ceo or is_cto)
+
+    # Self-review guard: nobody approves/rejects their own request (DECISION: tier-less Super Admin may review executives').
+    if leave.employee_id == current_user.id:
+        raise HTTPException(status_code=403, detail="You cannot review your own leave request")
 
     if is_cto:
         if leave.ceo_status != ApprovalStatus.APPROVED:
             raise HTTPException(status_code=400, detail="CTO cannot review leave before CEO has approved it")
         leave.cto_status = payload.action
-        leave.cto_reviewed_by = current_user.id
-        leave.cto_reviewed_at = now
-        leave.cto_notes = payload.notes
+        leave.cto_reviewed_by, leave.cto_reviewed_at, leave.cto_notes = current_user.id, now, payload.notes
     elif is_ceo:
         leave.ceo_status = payload.action
-        leave.ceo_reviewed_by = current_user.id
-        leave.ceo_reviewed_at = now
-        leave.ceo_notes = payload.notes
-        if payload.action == ApprovalStatus.APPROVED:
-            # Unblock CTO stage
-            if leave.cto_status == ApprovalStatus.WAITING_CEO:
-                leave.cto_status = ApprovalStatus.PENDING
-    elif is_super_admin:
-        # Super Admin has overarching executive override
-        leave.ceo_status = payload.action
-        leave.cto_status = payload.action
-        leave.ceo_reviewed_by = current_user.id
-        leave.cto_reviewed_by = current_user.id
-        leave.ceo_reviewed_at = now
-        leave.cto_reviewed_at = now
-        leave.ceo_notes = payload.notes
-        leave.cto_notes = payload.notes
+        leave.ceo_reviewed_by, leave.ceo_reviewed_at, leave.ceo_notes = current_user.id, now, payload.notes
+        if payload.action == ApprovalStatus.APPROVED and leave.cto_status == ApprovalStatus.WAITING_CEO:
+            leave.cto_status = ApprovalStatus.PENDING
+    elif is_super_override:
+        leave.ceo_status = leave.cto_status = payload.action
+        leave.ceo_reviewed_by = leave.cto_reviewed_by = current_user.id
+        leave.ceo_reviewed_at = leave.cto_reviewed_at = now
+        leave.ceo_notes = leave.cto_notes = payload.notes
 
-    # Evaluate Overall Status
     if payload.action == ApprovalStatus.REJECTED:
         leave.status = LeaveStatus.REJECTED
         leave.rejection_reason = payload.notes or "Rejected by executive review"
-    elif (leave.ceo_status == ApprovalStatus.APPROVED and 
-          (leave.cto_status == ApprovalStatus.APPROVED or leave.cto_status == ApprovalStatus.NA)):
-        # When both approve or Super Admin overrides both stages
+    elif leave.ceo_status == ApprovalStatus.APPROVED and leave.cto_status in (ApprovalStatus.APPROVED, ApprovalStatus.NA):
+        # Final approval: debit the balance atomically (employee row locked) - never below zero.
+        if leave.type in PAID_TYPES and not leave.deduction_applied:
+            num_days = (leave.end_date - leave.start_date).days + 1
+            emp = await _lock_employee(db, leave.employee_id)
+            attr = BALANCE_ATTR[leave.type]
+            current_bal = float(getattr(emp, attr) or 0.0) if emp else 0.0
+            if emp is None or current_bal < num_days:
+                await db.rollback()
+                raise HTTPException(status_code=400, detail=f"Cannot approve: employee has only {current_bal} day(s) of {leave.type.value.replace('_', ' ').title()} left but {num_days} requested. Adjust the balance or reject the request.")
+            new_bal = current_bal - num_days
+            setattr(emp, attr, new_bal)
+            db.add(LeaveLedger(
+                id=uuid.uuid4(), employee_id=emp.id, category=leave.type,
+                transaction_type=LedgerTransactionType.APPROVED_DEBIT, amount=num_days, balance_after=new_bal,
+                reference_id=leave.request_code, notes=f"Approved leave deduction for {leave.request_code}"))
+            leave.deduction_applied = True
         leave.status = LeaveStatus.APPROVED
 
-        # Apply ledger deduction if not already applied
-        if not leave.deduction_applied:
-            num_days = (leave.end_date - leave.start_date).days + 1
-            # Fetch target employee
-            emp_res = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
-            emp = emp_res.scalar_one_or_none()
-            if emp and leave.type in [LeaveType.EARN_LEAVE, LeaveType.SICK_LEAVE, LeaveType.CASUAL_LEAVE]:
-                new_bal = 0.0
-                if leave.type == LeaveType.EARN_LEAVE:
-                    emp.earn_leave_balance = max(0.0, float(emp.earn_leave_balance or 0.0) - num_days)
-                    new_bal = float(emp.earn_leave_balance)
-                elif leave.type == LeaveType.SICK_LEAVE:
-                    emp.sick_leave_balance = max(0.0, float(emp.sick_leave_balance or 0.0) - num_days)
-                    new_bal = float(emp.sick_leave_balance)
-                elif leave.type == LeaveType.CASUAL_LEAVE:
-                    emp.casual_leave_balance = max(0.0, float(emp.casual_leave_balance or 0.0) - num_days)
-                    new_bal = float(emp.casual_leave_balance)
-
-                # Append to LeaveLedger
-                ledger_entry = LeaveLedger(
-                    id=uuid.uuid4(),
-                    employee_id=emp.id,
-                    category=leave.type,
-                    transaction_type=LedgerTransactionType.APPROVED_DEBIT,
-                    amount=num_days,
-                    balance_after=new_bal,
-                    reference_id=leave.request_code,
-                    notes=f"Approved leave deduction for {leave.request_code}"
-                )
-                db.add(ledger_entry)
-            leave.deduction_applied = True
-
+    add_audit(db, current_user.id, f"LEAVE_{payload.action.value}", target=leave.request_code,
+              details=(payload.notes or "")[:500], entity_type="leave", entity_id=str(leave.id), request=request)
     await db.commit()
     await db.refresh(leave)
     invalidate_leaves_cache()
-    emp_applicant = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
-    applicant = emp_applicant.scalar_one_or_none()
-    out = LeaveRequestOut.model_validate(leave)
-    if applicant:
-        out.employee_code = applicant.employee_code
-        out.employee_name = applicant.full_name
-        out.department = applicant.department
-    return out
+    return await _to_out(db, leave)
+
 
 @router.patch("/{leave_id}/cancel", response_model=LeaveRequestOut)
 @router.delete("/{leave_id}", response_model=LeaveRequestOut)
 async def cancel_leave(
     leave_id: str,
+    request: Request,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    current_user: Employee = Depends(get_current_user),
 ):
-    clean_id = leave_id.strip()
-    try:
-        val_uuid = uuid.UUID(clean_id)
-        stmt = select(LeaveRequest).where(or_(LeaveRequest.id == val_uuid, LeaveRequest.request_code == clean_id))
-    except ValueError:
-        stmt = select(LeaveRequest).where(or_(
-            LeaveRequest.request_code == clean_id,
-            func.lower(LeaveRequest.request_code) == clean_id.lower()
-        ))
-    res = await db.execute(stmt)
-    leave = res.scalar_one_or_none()
-    if not leave:
-        fallback_stmt = select(LeaveRequest).where(LeaveRequest.request_code.ilike(f"%{clean_id}%"))
-        fallback_res = await db.execute(fallback_stmt)
-        leave = fallback_res.scalar_one_or_none()
-
-    if not leave and clean_id.startswith("LR_"):
-        parts = clean_id.split("_")
-        if len(parts) >= 3:
-            emp_code_part = parts[1]
-            try:
-                date_part = datetime.strptime(parts[2], "%Y-%m-%d").date()
-                emp_stmt = select(Employee.id).where(or_(
-                    func.lower(Employee.employee_code) == emp_code_part.lower(),
-                    func.lower(Employee.legacy_firebase_id) == emp_code_part.lower()
-                ))
-                emp_id_res = await db.execute(emp_stmt)
-                found_eid = emp_id_res.scalar_one_or_none()
-                if found_eid:
-                    l_stmt = select(LeaveRequest).where(
-                        and_(LeaveRequest.employee_id == found_eid, LeaveRequest.start_date == date_part)
-                    )
-                    l_res = await db.execute(l_stmt)
-                    leave = l_res.scalar_one_or_none()
-            except Exception:
-                pass
-
+    leave = await _find_leave(db, leave_id, lock=True)
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
 
-    is_owner = (current_user.id == leave.employee_id)
-    is_admin = (current_user.role in [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] or 
+    is_owner = current_user.id == leave.employee_id
+    is_admin = (current_user.role in [UserRole.SUPER_ADMIN, UserRole.HR_ADMIN] or
                 current_user.executive_tier in [ExecutiveTier.CEO, ExecutiveTier.CTO])
     if not is_owner and not is_admin:
         raise HTTPException(status_code=403, detail="Not authorized to cancel this leave request")
 
     if leave.status == LeaveStatus.CANCELLED:
-        emp_applicant = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
-        applicant = emp_applicant.scalar_one_or_none()
-        out = LeaveRequestOut.model_validate(leave)
-        if applicant:
-            out.employee_code = applicant.employee_code
-            out.employee_name = applicant.full_name
-            out.department = applicant.department
-        return out
+        return await _to_out(db, leave)  # idempotent
+    if leave.status == LeaveStatus.REJECTED:
+        raise HTTPException(status_code=409, detail="A rejected request cannot be cancelled")
 
-    # If already approved and deduction was applied, restore the days to balance
+    today = company_now().date()
+    if leave.status == LeaveStatus.APPROVED and leave.end_date < today and not is_admin:
+        raise HTTPException(status_code=409, detail="Leave that has already been taken cannot be cancelled. Please contact HR.")
+
     if leave.status == LeaveStatus.APPROVED and leave.deduction_applied:
         num_days = (leave.end_date - leave.start_date).days + 1
-        emp_res = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
-        emp = emp_res.scalar_one_or_none()
-        if emp and leave.type in [LeaveType.EARN_LEAVE, LeaveType.SICK_LEAVE, LeaveType.CASUAL_LEAVE]:
-            new_bal = 0.0
-            if leave.type == LeaveType.EARN_LEAVE:
-                emp.earn_leave_balance = float(emp.earn_leave_balance or 0.0) + num_days
-                new_bal = float(emp.earn_leave_balance)
-            elif leave.type == LeaveType.SICK_LEAVE:
-                emp.sick_leave_balance = float(emp.sick_leave_balance or 0.0) + num_days
-                new_bal = float(emp.sick_leave_balance)
-            elif leave.type == LeaveType.CASUAL_LEAVE:
-                emp.casual_leave_balance = float(emp.casual_leave_balance or 0.0) + num_days
-                new_bal = float(emp.casual_leave_balance)
-
-            ledger_entry = LeaveLedger(
-                id=uuid.uuid4(),
-                employee_id=emp.id,
-                category=leave.type,
-                transaction_type=LedgerTransactionType.REVERSAL_CREDIT,
-                amount=num_days,
-                balance_after=new_bal,
-                reference_id=leave.request_code,
-                notes=f"Reversal credit for cancelled leave {leave.request_code}"
-            )
-            db.add(ledger_entry)
+        emp = await _lock_employee(db, leave.employee_id)
+        if emp and leave.type in PAID_TYPES:
+            attr = BALANCE_ATTR[leave.type]
+            new_bal = float(getattr(emp, attr) or 0.0) + num_days
+            setattr(emp, attr, new_bal)
+            db.add(LeaveLedger(
+                id=uuid.uuid4(), employee_id=emp.id, category=leave.type,
+                transaction_type=LedgerTransactionType.REVERSAL_CREDIT, amount=num_days, balance_after=new_bal,
+                reference_id=leave.request_code, notes=f"Reversal credit for cancelled leave {leave.request_code}"))
         leave.deduction_applied = False
 
     leave.status = LeaveStatus.CANCELLED
+    add_audit(db, current_user.id, "LEAVE_CANCELLED", target=leave.request_code, entity_type="leave",
+              entity_id=str(leave.id), request=request)
     await db.commit()
     await db.refresh(leave)
     invalidate_leaves_cache()
-
-    emp_applicant = await db.execute(select(Employee).where(Employee.id == leave.employee_id))
-    applicant = emp_applicant.scalar_one_or_none()
-    out = LeaveRequestOut.model_validate(leave)
-    if applicant:
-        out.employee_code = applicant.employee_code
-        out.employee_name = applicant.full_name
-        out.department = applicant.department
-    return out
+    return await _to_out(db, leave)

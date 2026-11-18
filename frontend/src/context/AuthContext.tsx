@@ -56,7 +56,7 @@ import { sendKssNotification, sendAdminBroadcast, registerFcmToken, unregisterFc
 import { clearAllFaceEngineState } from '../lib/faceDescriptorStore';
 import { writeEmployeeResume, backfillEmployeeResumes } from '../lib/employeeResume';
 import { LeaveService } from '../lib/leaveService';
-import { isAuthorizedTechLead } from '../lib/hierarchy';
+import { isAuthorizedTechLead, isTestEmployee, deduplicateEmployeeList } from '../lib/hierarchy';
 import {
   loginApi,
   getCurrentProfileApi,
@@ -398,9 +398,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (saved) {
       try {
         const parsed = JSON.parse(saved) as Employee[];
-        return parsed
+        return deduplicateEmployeeList(parsed)
           .filter(emp => {
-            if (emp.id === 'emp-003' || emp.employeeId === '003') return false;
+            if (emp.id === 'emp-003' || emp.employeeId === '003' || isTestEmployee(emp)) return false;
             const n = (emp.fullName || '').toLowerCase();
             const c = (emp.employeeId || '').toLowerCase();
             const m = (emp.email || '').toLowerCase();
@@ -2027,15 +2027,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             }
 
             if (deduplicated.length > 0) {
-              const resolvedWithAvatars = deduplicated.map(emp => {
+              const cleanDeduplicated = deduplicateEmployeeList(deduplicated);
+              const isCloudinary = (u?: string) => Boolean(u && typeof u === 'string' && u.includes('res.cloudinary.com'));
+
+              const resolvedWithAvatars = cleanDeduplicated.map(emp => {
                 const enrolled = emp.isFaceEnrolled || isFaceBiometricEnrolled(emp);
+                const memoryMatch = employeesRef.current.find(e => 
+                  (emp.employeeId && e.employeeId === emp.employeeId) ||
+                  (emp.id && e.id === emp.id) ||
+                  (emp.email && e.email?.toLowerCase() === emp.email.toLowerCase())
+                );
+                // Prefer authoritative Cloudinary URL from memory (hydrated from PostgreSQL)
+                const chosenPhoto = isCloudinary(emp.profilePhotoUrl)
+                  ? emp.profilePhotoUrl
+                  : isCloudinary(memoryMatch?.profilePhotoUrl)
+                  ? memoryMatch!.profilePhotoUrl
+                  : getEmployeeAvatar(emp);
+
+                // Auto-sync Cloudinary URL to Firestore if Firestore document lacks it and caller is permitted
+                if (canMigrate && isCloudinary(memoryMatch?.profilePhotoUrl) && !isCloudinary(emp.profilePhotoUrl) && emp.id) {
+                  setDoc(doc(db, 'employees', emp.id), { profilePhotoUrl: memoryMatch!.profilePhotoUrl }, { merge: true }).catch(() => { });
+                }
+
                 return {
                   ...emp,
                   isFaceEnrolled: enrolled,
-                  profilePhotoUrl: getEmployeeAvatar(emp)
+                  profilePhotoUrl: chosenPhoto
                 };
               });
               setEmployees(resolvedWithAvatars);
+              employeesRef.current = resolvedWithAvatars;
               setActiveEmployee(prev => {
                 if (!prev) return prev;
                 const fresh = resolvedWithAvatars.find(e => e.id === prev.id || e.employeeId === prev.employeeId || (prev.email && e.email?.toLowerCase() === prev.email.toLowerCase()));
@@ -2046,13 +2067,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   return null;
                 }
                 const enrolled = fresh.isFaceEnrolled || prev.isFaceEnrolled || isFaceBiometricEnrolled(prev) || isFaceBiometricEnrolled(fresh);
-                return {
+                const activePhoto = isCloudinary(fresh.profilePhotoUrl)
+                  ? fresh.profilePhotoUrl
+                  : isCloudinary(prev.profilePhotoUrl)
+                  ? prev.profilePhotoUrl
+                  : (fresh.profilePhotoUrl || getEmployeeAvatar(fresh));
+
+                const updated = {
                   ...prev,
                   ...fresh,
                   isFaceEnrolled: enrolled,
                   faceDescriptor: fresh.faceDescriptor || prev.faceDescriptor,
-                  profilePhotoUrl: getEmployeeAvatar(fresh)
+                  profilePhotoUrl: activePhoto
                 };
+                try {
+                  localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updated));
+                } catch {}
+                return updated;
               });
             }
           } else {
@@ -3196,7 +3227,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         // 1. Attendance Hydration (High priority for immediate Shift Active display)
-        const attPromise = getAttendanceRecordsApi(200).then((attList) => {
+        const attPromise = getAttendanceRecordsApi(2000, force).then((attList) => {
           if (Array.isArray(attList) && attList.length > 0) {
             const empMap = getEmpMap();
             const mappedAtt: AttendanceRecord[] = attList.map((r: any) => {
@@ -3318,8 +3349,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
               return mapped;
             });
-            setEmployees(mappedEmps);
-            employeesRef.current = mappedEmps;
+            const cleanMapped = deduplicateEmployeeList(mappedEmps);
+            setEmployees(cleanMapped);
+            employeesRef.current = cleanMapped;
             setActiveEmployee(prev => {
               if (!prev) return prev;
               const fresh = mappedEmps.find(e => e.id === prev.id || e.employeeId === prev.employeeId || (prev.email && e.email?.toLowerCase() === prev.email.toLowerCase()));
@@ -3418,7 +3450,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const token = getAuthToken();
     if (token) {
       // Parallel execution: Hydrate data concurrently with profile validation
-      fetchFastApiRecords(activeEmployee);
+      fetchFastApiRecords(activeEmployee, true);
       getCurrentProfileApi().then((profile) => {
         if (profile && (profile.id || profile.employee_code)) {
           const emp = mapBackendToFrontendEmployee(profile);
@@ -3428,15 +3460,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setIsSessionReady(true);
           setIsDemoMode(false);
           if (!activeEmployee || (activeEmployee.id !== emp.id && activeEmployee.employeeId !== emp.employeeId)) {
-            fetchFastApiRecords(emp);
+            fetchFastApiRecords(emp, true);
           }
         }
       }).catch((err) => {
         console.warn('[FastAPI] Token validation note:', err);
       });
-    } else {
-      fetchFastApiRecords(null);
     }
+    // Logged out: nothing to hydrate. (The API requires authentication; data loads right after login.)
   }, []);
 
   // ── Session Restore: Already done synchronously via useState initializers above ──
@@ -3766,7 +3797,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           localStorage.setItem('kss_v1_device_category', cat);
           localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updatedMatched));
 
-          fetchFastApiRecords(updatedMatched);
+          fetchFastApiRecords(updatedMatched, true);
 
           if (!auth.currentUser && cleanEmail && cleanPass) {
             signInWithEmailAndPassword(auth, cleanEmail, cleanPass).catch(() => {});
@@ -4227,6 +4258,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (createdEmpRes && createdEmpRes.profile_photo_url) {
           newEmp.profilePhotoUrl = createdEmpRes.profile_photo_url;
           setEmployees(prev => prev.map(e => (e.employeeId === newEmp.employeeId || e.id === newEmp.id) ? { ...e, profilePhotoUrl: createdEmpRes.profile_photo_url } : e));
+          if (employeesRef.current) {
+            employeesRef.current = employeesRef.current.map(e => (e.employeeId === newEmp.employeeId || e.id === newEmp.id) ? { ...e, profilePhotoUrl: createdEmpRes.profile_photo_url } : e);
+          }
+          setDoc(doc(db, 'employees', newEmp.id), { profilePhotoUrl: createdEmpRes.profile_photo_url }, { merge: true }).catch(() => {});
         }
       } catch (e) {
         console.warn('[FastAPI] createEmployeeApi sync note:', e);
@@ -4251,13 +4286,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     const targetDocId = existingEmp?.id || id;
+    const targetIdentifier = existingEmp?.employeeId || existingEmp?.id || id;
 
-    // 2. Prepare payload containing ONLY the fields being updated
+    // 2. CLOUDINARY FIRST: Convert any new/changed profile photo (base64, webcam snapshot, or preset URL)
+    // into a permanent Cloudinary CDN URL upfront BEFORE persisting to Firestore, React state, or localStorage
+    let incomingPhoto = typeof sanitizedUpdates.profilePhotoUrl === 'string' ? sanitizedUpdates.profilePhotoUrl.trim() : '';
+    if (incomingPhoto && targetIdentifier && !incomingPhoto.includes('res.cloudinary.com')) {
+      try {
+        const photoRes = await uploadPhotoApi(targetIdentifier, incomingPhoto);
+        if (photoRes && photoRes.profile_photo_url) {
+          incomingPhoto = photoRes.profile_photo_url;
+          sanitizedUpdates.profilePhotoUrl = incomingPhoto;
+        }
+      } catch (photoErr) {
+        console.warn('[Cloudinary] Upfront photo upload note:', photoErr);
+      }
+    }
+
+    // 3. Prepare payload containing ONLY the fields being updated
     // Critical: Do NOT include untouched fields (e.g. role, salary, ctc, panNumber, bankAccountNumber, etc.)
     // because Firestore security rules evaluate diff(resource.data).affectedKeys() and will reject
     // employee self-service profile edits if protected fields are present in the update payload.
     const fieldsToUpdate: Record<string, any> = { ...sanitizedUpdates };
     delete fieldsToUpdate.resumeUrl; // handle resume separately below
+    if (incomingPhoto) {
+      fieldsToUpdate.profilePhotoUrl = incomingPhoto;
+    }
 
     // Guard: Enforce official specializations and departments for key roles ONLY when modified by Admin/PM or when explicitly provided
     const callerIsAdminOrPM =
@@ -4310,15 +4364,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updatedAt: new Date().toISOString()
     });
 
-    // 3. Update in-memory employees state immediately (optimistic responsiveness)
+    // 4. Update in-memory employees state immediately (optimistic responsiveness)
     setEmployees(prev => prev.map(e => {
       if (e.id === targetDocId || e.id === id || e.employeeId === id || (e.uid && e.uid === id)) {
         return { ...e, ...cleanPayload };
       }
       return e;
     }));
+    if (employeesRef.current) {
+      employeesRef.current = employeesRef.current.map(e => {
+        if (e.id === targetDocId || e.id === id || e.employeeId === id || (e.uid && e.uid === id)) {
+          return { ...e, ...cleanPayload };
+        }
+        return e;
+      });
+    }
 
-    // 4. Update activeEmployee state immediately if this affects the active logged-in employee
+    // 5. Update activeEmployee state immediately if this affects the active logged-in employee
     setActiveEmployee(prev => {
       if (prev && (prev.id === targetDocId || prev.id === id || prev.employeeId === id || (prev.uid && prev.uid === id))) {
         const updated = { ...prev, ...cleanPayload };
@@ -4331,18 +4393,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       return prev;
     });
 
-    // 5. Persist update directly to Firestore Cloud Database (fail-safe non-blocking)
+    // 6. Persist update directly to Firestore Cloud Database (fail-safe non-blocking)
     try {
       await setDoc(doc(db, 'employees', targetDocId), cleanPayload, { merge: true });
       if (cleanPayload.profilePhotoUrl && user?.uid) {
         // Also mirror profile photo to users/{uid} for quick header retrieval
         setDoc(doc(db, 'users', user.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
       }
+      if (cleanPayload.profilePhotoUrl && existingEmp?.uid && existingEmp.uid !== user?.uid) {
+        setDoc(doc(db, 'users', existingEmp.uid), { profilePhotoUrl: cleanPayload.profilePhotoUrl }, { merge: true }).catch(() => {});
+      }
     } catch (err) {
       console.warn('[Firestore] updateEmployee sync note:', err);
     }
 
-    // 6. Handle resume storage out-of-band if present
+    // 7. Handle resume storage out-of-band if present
     if (incomingResume) {
       try {
         const storedOutOfBand = await writeEmployeeResume(targetDocId, incomingResume, `${targetDocId}-resume`);
@@ -4353,8 +4418,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    // 7. Persist to Python FastAPI & Neon PostgreSQL Database
-    const targetIdentifier = existingEmp?.employeeId || existingEmp?.id || id;
+    // 8. Persist to Python FastAPI & Neon PostgreSQL Database
     const apiPayload: any = {};
     if (fieldsToUpdate.fullName !== undefined) apiPayload.full_name = fieldsToUpdate.fullName;
     if (fieldsToUpdate.phone !== undefined) apiPayload.phone = fieldsToUpdate.phone;
@@ -4374,18 +4438,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (callerIsAdminOrPM && fieldsToUpdate.department !== undefined) apiPayload.department = fieldsToUpdate.department;
     if (callerIsAdminOrPM && fieldsToUpdate.designation !== undefined) apiPayload.designation = fieldsToUpdate.designation;
 
-    // Dedicated image storage if base64 data URI was uploaded/captured
-    if (targetIdentifier && fieldsToUpdate.profilePhotoUrl && typeof fieldsToUpdate.profilePhotoUrl === 'string' && fieldsToUpdate.profilePhotoUrl.startsWith('data:image/')) {
+    // Fallback: If upfront upload was somehow bypassed but a raw image is still in fieldsToUpdate
+    if (targetIdentifier && fieldsToUpdate.profilePhotoUrl && typeof fieldsToUpdate.profilePhotoUrl === 'string' && !fieldsToUpdate.profilePhotoUrl.includes('res.cloudinary.com')) {
       try {
         const photoRes = await uploadPhotoApi(targetIdentifier, fieldsToUpdate.profilePhotoUrl);
         if (photoRes && photoRes.profile_photo_url) {
           apiPayload.profile_photo_url = photoRes.profile_photo_url;
           cleanPayload.profilePhotoUrl = photoRes.profile_photo_url;
           setEmployees(prev => prev.map(e => (e.id === targetDocId || e.employeeId === targetIdentifier) ? { ...e, profilePhotoUrl: photoRes.profile_photo_url } : e));
-          setActiveEmployee(prev => (prev && (prev.id === targetDocId || prev.employeeId === targetIdentifier)) ? { ...prev, profilePhotoUrl: photoRes.profile_photo_url } : prev);
+          setActiveEmployee(prev => {
+            if (prev && (prev.id === targetDocId || prev.employeeId === targetIdentifier)) {
+              const u = { ...prev, profilePhotoUrl: photoRes.profile_photo_url };
+              try { localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(u)); } catch {}
+              return u;
+            }
+            return prev;
+          });
+          setDoc(doc(db, 'employees', targetDocId), { profilePhotoUrl: photoRes.profile_photo_url }, { merge: true }).catch(() => {});
         }
       } catch (e) {
-        console.warn('[FastAPI] uploadPhotoApi sync note:', e);
+        console.warn('[FastAPI] uploadPhotoApi fallback sync note:', e);
       }
     }
 
@@ -4395,7 +4467,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (backendRes && backendRes.profile_photo_url) {
           const freshPhoto = backendRes.profile_photo_url;
           setEmployees(prev => prev.map(e => (e.id === targetDocId || e.employeeId === targetIdentifier) ? { ...e, profilePhotoUrl: freshPhoto } : e));
-          setActiveEmployee(prev => (prev && (prev.id === targetDocId || prev.employeeId === targetIdentifier)) ? { ...prev, profilePhotoUrl: freshPhoto } : prev);
+          if (employeesRef.current) {
+            employeesRef.current = employeesRef.current.map(e => (e.id === targetDocId || e.employeeId === targetIdentifier) ? { ...e, profilePhotoUrl: freshPhoto } : e);
+          }
+          setActiveEmployee(prev => {
+            if (prev && (prev.id === targetDocId || prev.employeeId === targetIdentifier)) {
+              const u = { ...prev, profilePhotoUrl: freshPhoto };
+              try { localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(u)); } catch {}
+              return u;
+            }
+            return prev;
+          });
+          if (freshPhoto !== cleanPayload.profilePhotoUrl) {
+            setDoc(doc(db, 'employees', targetDocId), { profilePhotoUrl: freshPhoto }, { merge: true }).catch(() => {});
+          }
         }
       } catch (e) {
         console.warn('[FastAPI] updateEmployeeApi sync note:', e);
@@ -6102,6 +6187,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       ceoStatus: 'Pending',
       ctoStatus: 'Waiting CEO',
     });
+
+    const nowIso = new Date().toISOString();
+    const optRequest: LeaveRequest = {
+      ...data,
+      id: result.id,
+      employeeId: empId,
+      employeeUid: empUid,
+      authUid: empUid,
+      employeeName: empName,
+      department: empDept,
+      employeeRole: empRole,
+      status: 'Pending',
+      ceoStatus: 'Pending',
+      ctoStatus: 'Waiting CEO',
+      pmStatus: 'N/A',
+      hrStatus: 'N/A',
+      requestDate: nowIso,
+      createdAt: nowIso,
+      updatedAt: nowIso
+    };
+    setLeaveRequests(prev => [optRequest, ...prev.filter(r => r.id !== result.id)]);
+    try {
+      localStorage.setItem('kss_v1_leave_requests', JSON.stringify([optRequest, ...leaveRequests.filter(r => r.id !== result.id)].slice(0, 500)));
+    } catch {}
 
     const isWfh = data.type === 'WFH';
     const eventType = isWfh ? 'WFH_REQUEST_SUBMITTED' : 'LEAVE_REQUEST_SUBMITTED';

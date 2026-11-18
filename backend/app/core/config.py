@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     GEOFENCE_LON: float = 77.6446
     GEOFENCE_RADIUS_METERS: float = 100.0
     COMPANY_TIMEZONE: str = "Asia/Kolkata"
+    # Server-side geofence enforcement for on-site check-ins. OFF by default until the office
+    # coordinates in company_settings are confirmed correct (wrong data would lock everyone out).
+    SERVER_GEOFENCE_ENFORCEMENT: bool = False
+    # Set false in production to hide /docs and /openapi.json
+    EXPOSE_API_DOCS: bool = True
 
     # Firebase Bridge (Optional during migration)
     FIREBASE_WEB_API_KEY: str | None = None

@@ -134,7 +134,18 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   const displayName = activeEmployee?.fullName?.split(' ')[0] || 'there';
 
   const [qrUrl, setQrUrl] = useState<string>('');
-  const [gpsLocation, setGpsLocation] = useState<{ lat: number; lon: number; accuracy: number } | null>(null);
+  const [gpsLocation, setGpsLocation] = useState<{ lat: number; lon: number; accuracy: number } | null>(() => {
+    try {
+      const saved = sessionStorage.getItem('kss_cached_gps');
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed.lat === 'number' && typeof parsed.lon === 'number') {
+          return parsed;
+        }
+      }
+    } catch {}
+    return null;
+  });
   const [gpsError, setGpsError] = useState<string | null>(null);
   const [actionFeedback, setActionFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
@@ -652,15 +663,22 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       return;
     }
 
+    const saveGps = (coords: { lat: number; lon: number; accuracy: number }) => {
+      setGpsLocation(coords);
+      setGpsError(null);
+      try {
+        sessionStorage.setItem('kss_cached_gps', JSON.stringify(coords));
+      } catch {}
+    };
+
     // Fast initial GPS probe with cached position (<20ms)
     navigator.geolocation.getCurrentPosition(
       pos => {
-        setGpsLocation({
+        saveGps({
           lat: pos.coords.latitude,
           lon: pos.coords.longitude,
           accuracy: Math.round(pos.coords.accuracy) || 15
         });
-        setGpsError(null);
       },
       () => { /* non-fatal, continuous watchPosition handles live acquisition */ },
       { enableHighAccuracy: false, maximumAge: 60000, timeout: 2500 }
@@ -690,25 +708,23 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           lastLat = lat;
           lastLon = lon;
           lastTime = Date.now();
-          setGpsLocation({ 
+          saveGps({ 
             lat, 
             lon,
             accuracy: Math.round(pos.coords.accuracy) || 8
           });
         }
-        setGpsError(null);
       },
       err => {
         // If high accuracy timed out, fall back to standard accuracy
         if (err.code === 3 && fallbackWatchId === null) {
           fallbackWatchId = navigator.geolocation.watchPosition(
             pos => {
-              setGpsLocation({ 
+              saveGps({ 
                 lat: pos.coords.latitude, 
                 lon: pos.coords.longitude,
                 accuracy: Math.round(pos.coords.accuracy) || 15
               });
-              setGpsError(null);
             },
             err2 => {
               console.warn('Employee location standard watch error:', err2.message);

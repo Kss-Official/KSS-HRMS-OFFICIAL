@@ -1,5 +1,5 @@
 import uuid
-from sqlalchemy import Column, String, Boolean, DateTime, Date, Integer, Float, Text, ForeignKey
+from sqlalchemy import Column, String, Boolean, DateTime, Date, Integer, Float, Text, ForeignKey, UniqueConstraint
 from sqlalchemy.orm import relationship
 from sqlalchemy.dialects.postgresql import UUID, ENUM
 from sqlalchemy.sql import func
@@ -12,6 +12,8 @@ break_type_pg_enum = ENUM(BreakType, name="break_type_enum", create_type=False)
 
 class AttendanceRecord(Base):
     __tablename__ = "attendance_records"
+    # Mirrors the live DB unique index so freshly created databases enforce one record per employee per day.
+    __table_args__ = (UniqueConstraint("employee_id", "date", name="uq_attendance_emp_date"),)
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     employee_id = Column(UUID(as_uuid=True), ForeignKey("employees.id"), nullable=False, index=True)

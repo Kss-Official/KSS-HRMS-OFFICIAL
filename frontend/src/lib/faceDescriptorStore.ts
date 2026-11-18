@@ -143,9 +143,9 @@ export const isFaceBiometricEnrolled = (
   }
 
   // 3. Known enrolled accounts with verified templates in persistent PostgreSQL database
-  const empCode = ((emp.employeeId || (emp as any).employee_code || '') as string).toUpperCase();
-  const empId = ((emp.id || '') as string).toUpperCase();
-  if (emp.isFaceEnrolled === true && (empCode === 'KSS2407013' || empId.includes('KSS2407013') || empId === '429E61F0-E521-4BD2-B7A7-68F27F82BA2B')) {
+  // 3. The backend's `is_face_enrolled` flag. Raw templates are only ever sent to their owner, so for
+  //    every other employee this flag is the only enrolment signal available.
+  if (emp.isFaceEnrolled === true) {
     return true;
   }
 

@@ -151,3 +151,112 @@ export function tierLabel(tier: number): string {
   if (tier === TIER_PM) return 'Project Manager';
   return 'Employee';
 }
+
+/**
+ * Detects whether an employee record is a test account or transient test fixture.
+ */
+export function isTestEmployee(emp: any): boolean {
+  if (!emp) return true;
+  const name = String(emp.fullName || emp.name || '').toLowerCase().trim();
+  const code = String(emp.employeeId || emp.employee_code || '').toUpperCase().trim();
+  const email = String(emp.email || '').toLowerCase().trim();
+
+  if (
+    code.startsWith('AUDIT') ||
+    code.startsWith('CEO_') ||
+    code.startsWith('CTO_') ||
+    code.startsWith('TEST') ||
+    code === 'ALICE001' ||
+    code === 'TEST001'
+  ) {
+    return true;
+  }
+
+  if (
+    name.includes('test portal') ||
+    name.includes('alice test') ||
+    name === 'alice' ||
+    name.includes('audit employee') ||
+    name.startsWith('test ') ||
+    name.endsWith(' test') ||
+    name === 'test'
+  ) {
+    return true;
+  }
+
+  if (
+    email.includes('testportal') ||
+    email.includes('test_portal') ||
+    email.includes('alice') ||
+    email.startsWith('audit_') ||
+    email.startsWith('ceo_') ||
+    email.startsWith('cto_') ||
+    email.endsWith('@test.com') ||
+    email.endsWith('@example.com')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Ensures strict 1-to-1 canonical employee deduplication across Firestore docs,
+ * Auth UID records, and backend hydration.
+ */
+export function deduplicateEmployeeList<T extends any>(list: T[]): T[] {
+  if (!Array.isArray(list)) return [];
+  const result: T[] = [];
+  const seenIds = new Set<string>();
+  const seenEmails = new Set<string>();
+  const seenNames = new Set<string>();
+
+  for (const emp of list) {
+    if (!emp) continue;
+    const name = String((emp as any).fullName || (emp as any).name || '').trim();
+    if (!name) continue;
+
+    // Reject test accounts
+    if (isTestEmployee(emp)) continue;
+
+    // Reject deleted / ghost markers
+    const empId = String((emp as any).id || '');
+    if (
+      empId === 'bf41B0ztyefb6OZzO9NykxA9MSz2' ||
+      name.includes('GHOST') ||
+      name.includes('[DELETED]')
+    ) {
+      continue;
+    }
+
+    // Canonical keys
+    const rawCode = String((emp as any).employeeId || (emp as any).employee_code || '').toUpperCase().trim();
+    const cleanCode = rawCode.replace(/^KS2/, 'KSS2');
+    const email = String((emp as any).email || '').toLowerCase().trim();
+    const normalizedName = name.toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    // Check duplicate by Employee Code
+    if (cleanCode && seenIds.has(cleanCode)) {
+      continue;
+    }
+
+    // Check duplicate by Email
+    if (email && seenEmails.has(email)) {
+      continue;
+    }
+
+    // Check duplicate by exact human name for company roster
+    // (e.g. "D. Koushik", "Akshit Ujjain", "Gaurav Kumar Tripathi", "HR Department")
+    if (normalizedName && seenNames.has(normalizedName)) {
+      continue;
+    }
+
+    if (cleanCode) seenIds.add(cleanCode);
+    if (email) seenEmails.add(email);
+    if (normalizedName) seenNames.add(normalizedName);
+
+    result.push(emp);
+  }
+
+  return result;
+}

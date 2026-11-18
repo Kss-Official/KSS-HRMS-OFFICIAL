@@ -29,8 +29,8 @@ async def test_fastapi():
         # 3. Biometric face verification endpoint
         test_descriptor = [0.0] * 128
         res = await client.post("/api/v1/attendance/verify-face", json={"face_descriptor": test_descriptor})
-        print(f"\n3. Biometric Verification Test [{res.status_code}]: {res.json()}")
-        assert res.status_code == 200
+        print(f"\n3. Anonymous biometric verification must be rejected [{res.status_code}]")
+        assert res.status_code == 401  # was 200: unauthenticated callers could probe the face database
 
     print("\nALL FASTAPI INTEGRATION TESTS PASSED SUCCESSFULLY!")
 

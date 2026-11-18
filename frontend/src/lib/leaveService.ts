@@ -1,4 +1,5 @@
 import { db, cleanFirestorePayload, auth } from './firebase';
+import { getAuthToken, applyLeaveApi } from './apiClient';
 import { 
   collection, 
   doc, 
@@ -62,7 +63,10 @@ export function subscribeLeaveLedger(
   onData: (entries: LeaveLedgerEntry[]) => void,
   onError?: (err: Error) => void
 ): Unsubscribe {
-  if (!employeeId) { onData([]); return () => {}; }
+  if (!employeeId || !auth.currentUser) {
+    onData([]);
+    return () => {};
+  }
   return onSnapshot(
     collection(db, 'employees', employeeId, 'leaveLedger'),
     (snap) => {
@@ -72,6 +76,10 @@ export function subscribeLeaveLedger(
       onData(entries);
     },
     (err) => {
+      if (err?.message?.includes('permission') || (err as any)?.code === 'permission-denied') {
+        onData([]);
+        return;
+      }
       console.warn('[LeaveService] Ledger listener error:', err);
       onError?.(err);
     }
@@ -525,46 +533,86 @@ export class LeaveService {
       ...(currentUid ? { authUid: currentUid } : {})
     };
 
-    // Execute atomic transaction for overlapping date lock validation
-    await runTransaction(db, async (txn) => {
-      // Step 1: Read all date lock documents for the requested range
-      for (const dStr of dateRange) {
-        const lockRef = doc(db, 'employees', data.employeeId, 'leaveLocks', dStr);
-        const lockDoc = await txn.get(lockRef);
-        if (lockDoc.exists()) {
-          const lockData = lockDoc.data() as LeaveLockEntry;
-          if (lockData.active && lockData.requestId !== deterministicId) {
-            throw new Error(`Date Conflict: An active request (${lockData.requestId}) already covers ${dStr}.`);
+    const submitToBackendApi = async (): Promise<{ success: boolean; id: string; message: string }> => {
+      const typeStr = String(data.type || '').toLowerCase();
+      let apiType = 'EARN_LEAVE';
+      if (typeStr.includes('wfh') || typeStr.includes('home')) apiType = 'WFH';
+      else if (typeStr.includes('sick')) apiType = 'SICK_LEAVE';
+      else if (typeStr.includes('casual')) apiType = 'CASUAL_LEAVE';
+      else if (typeStr.includes('loss') || typeStr.includes('lop')) apiType = 'LOSS_OF_PAY';
+
+      const apiRes = await applyLeaveApi({
+        type: apiType,
+        start_date: data.startDate,
+        end_date: data.endDate,
+        reason: data.reason || `${data.type} request`,
+        request_code: deterministicId
+      });
+
+      return {
+        success: true,
+        id: apiRes?.id ? String(apiRes.id) : deterministicId,
+        message: `${data.type} request submitted successfully.`
+      };
+    };
+
+    // If Firebase Auth is not active but FastAPI JWT is, submit directly via backend API
+    if (!auth.currentUser && getAuthToken()) {
+      return await submitToBackendApi();
+    }
+
+    // Execute atomic transaction for overlapping date lock validation in Firestore
+    try {
+      await runTransaction(db, async (txn) => {
+        // Step 1: Read all date lock documents for the requested range
+        for (const dStr of dateRange) {
+          const lockRef = doc(db, 'employees', data.employeeId, 'leaveLocks', dStr);
+          const lockDoc = await txn.get(lockRef);
+          if (lockDoc.exists()) {
+            const lockData = lockDoc.data() as LeaveLockEntry;
+            if (lockData.active && lockData.requestId !== deterministicId) {
+              throw new Error(`Date Conflict: An active request (${lockData.requestId}) already covers ${dStr}.`);
+            }
           }
         }
+
+        // Step 2: Atomic Write Phase
+        const requestRef = doc(db, 'leaveRequests', deterministicId);
+        txn.set(requestRef, cleanFirestorePayload(newRequest));
+
+        for (const dStr of dateRange) {
+          const lockRef = doc(db, 'employees', data.employeeId, 'leaveLocks', dStr);
+          const lockPayload: LeaveLockEntry = {
+            id: dStr,
+            requestId: deterministicId,
+            employeeUid: resolvedUid,
+            employeeId: data.employeeId,
+            type: data.type,
+            active: true,
+            reservedAt: nowIso,
+            ...(userEmail ? { email: userEmail, employeeEmail: userEmail } : {}),
+            ...(currentUid ? { authUid: currentUid } : {})
+          } as any;
+          txn.set(lockRef, cleanFirestorePayload(lockPayload));
+        }
+      });
+
+      return {
+        success: true,
+        id: deterministicId,
+        message: `${data.type} request submitted successfully.`,
+      };
+    } catch (firestoreErr: any) {
+      const errStr = String(firestoreErr?.message || firestoreErr?.code || firestoreErr);
+      if (errStr.includes('Date Conflict:')) {
+        throw firestoreErr;
       }
-
-      // Step 2: Atomic Write Phase
-      const requestRef = doc(db, 'leaveRequests', deterministicId);
-      txn.set(requestRef, cleanFirestorePayload(newRequest));
-
-      for (const dStr of dateRange) {
-        const lockRef = doc(db, 'employees', data.employeeId, 'leaveLocks', dStr);
-        const lockPayload: LeaveLockEntry = {
-          id: dStr,
-          requestId: deterministicId,
-          employeeUid: resolvedUid,
-          employeeId: data.employeeId,
-          type: data.type,
-          active: true,
-          reservedAt: nowIso,
-          ...(userEmail ? { email: userEmail, employeeEmail: userEmail } : {}),
-          ...(currentUid ? { authUid: currentUid } : {})
-        } as any;
-        txn.set(lockRef, cleanFirestorePayload(lockPayload));
+      if (getAuthToken()) {
+        console.warn('[LeaveService] Firestore transaction failed; falling back to FastAPI backend:', firestoreErr);
+        return await submitToBackendApi();
       }
-    });
-
-    return {
-      success: true,
-      id: deterministicId,
-      message: `${data.type} request submitted successfully.`,
-    };
+      throw firestoreErr;
+    }
   }
 
   /**

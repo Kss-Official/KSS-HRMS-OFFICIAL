@@ -26,6 +26,7 @@ export function setAuthToken(token: string): void {
 
 export function removeAuthToken(): void {
   localStorage.removeItem('kalpanaaa_jwt_token');
+  try { clearApiCache(); } catch {}
 }
 
 // High-speed multi-tier cache and in-flight deduplication for instantaneous (0ms) data loading
@@ -40,6 +41,7 @@ const getSessionCachedData = (key: string): any | null => {
     if (raw) {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed.expiresAt === 'number' && parsed.expiresAt > Date.now()) {
+        if (Array.isArray(parsed.data) && parsed.data.length === 0) return null;
         return parsed.data;
       }
     }
@@ -115,6 +117,30 @@ export function clearApiCache(endpointPrefix?: string): void {
   }
 }
 
+// Cached API responses (employees, attendance, leaves...) are keyed by URL only. If a different user logs in
+// on the same browser they must never be served the previous user's cached data, so the cache is tagged with
+// the owner (JWT subject) and wiped whenever the owner changes.
+const CACHE_OWNER_KEY = 'kss_cache_owner';
+function tokenSubject(token: string | null): string {
+  if (!token) return 'anon';
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    return String(payload.sub || 'anon');
+  } catch {
+    return 'anon';
+  }
+}
+function ensureCacheBelongsToCurrentUser(token: string | null): void {
+  if (typeof window === 'undefined') return;
+  const owner = tokenSubject(token);
+  let previous: string | null = null;
+  try { previous = localStorage.getItem(CACHE_OWNER_KEY); } catch {}
+  if (previous !== owner) {
+    clearApiCache();
+    try { localStorage.setItem(CACHE_OWNER_KEY, owner); } catch {}
+  }
+}
+
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
@@ -122,6 +148,7 @@ export async function apiRequest<T>(
   const method = (options.method || 'GET').toUpperCase();
   const token = getAuthToken();
   const forceFresh = (options.headers as any)?.['X-Bypass-Cache'] === 'true';
+  ensureCacheBelongsToCurrentUser(token);
 
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -182,8 +209,11 @@ export async function apiRequest<T>(
         headers,
       });
 
-      if (response.status === 401) {
+      // Only treat 401 as "session expired" when we actually sent a token. An anonymous request that
+      // is rejected (e.g. on a public page) must not redirect the visitor or wipe state.
+      if (response.status === 401 && token) {
         removeAuthToken();
+        clearApiCache();
         if (typeof window !== 'undefined' && window.location.pathname !== '/') {
           window.location.href = '/';
         }
@@ -276,8 +306,8 @@ export async function getEmployeesApi(limit = 200): Promise<any[]> {
   return apiRequest(`/employees/?limit=${limit}`);
 }
 
-export async function getAttendanceRecordsApi(limit = 2000): Promise<any[]> {
-  return apiRequest(`/attendance/records?limit=${limit}`);
+export async function getAttendanceRecordsApi(limit = 2000, forceFresh = false): Promise<any[]> {
+  return apiRequest(`/attendance/records?limit=${limit}`, forceFresh ? { headers: { 'X-Bypass-Cache': 'true' } } : {});
 }
 
 export async function checkInApi(params: {

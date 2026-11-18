@@ -9,7 +9,8 @@ from app.core.database import engine, Base
 from app.api.v1.router import api_router
 
 # Ensure uploads directory for persistent employee photos and documents exists
-os.makedirs("uploads/avatars", exist_ok=True)
+UPLOADS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "uploads")
+os.makedirs(os.path.join(UPLOADS_DIR, "avatars"), exist_ok=True)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -23,9 +24,9 @@ async def lifespan(app: FastAPI):
 app = FastAPI(
     title=settings.PROJECT_NAME,
     version=settings.VERSION,
-    openapi_url=f"{settings.API_V1_STR}/openapi.json",
-    docs_url=f"{settings.API_V1_STR}/docs",
-    redoc_url=f"{settings.API_V1_STR}/redoc",
+    openapi_url=f"{settings.API_V1_STR}/openapi.json" if settings.EXPOSE_API_DOCS else None,
+    docs_url=f"{settings.API_V1_STR}/docs" if settings.EXPOSE_API_DOCS else None,
+    redoc_url=f"{settings.API_V1_STR}/redoc" if settings.EXPOSE_API_DOCS else None,
     lifespan=lifespan
 )
 
@@ -33,17 +34,17 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
+    allow_origin_regex=(r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$" if settings.ENVIRONMENT.lower() != "production" else None),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "X-Bypass-Cache"],
 )
 
 # Include API v1 Router
 app.include_router(api_router, prefix=settings.API_V1_STR)
 
 # Serve uploaded employee photos and static assets
-app.mount("/uploads", StaticFiles(directory="uploads"), name="uploads")
+app.mount("/uploads", StaticFiles(directory=UPLOADS_DIR), name="uploads")
 
 @app.get("/health", tags=["System"])
 async def health_check():

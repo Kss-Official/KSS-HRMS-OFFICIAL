@@ -6,7 +6,7 @@ import { getEmployeeAvatar } from '../../lib/avatarHelper';
 import { motion } from 'framer-motion';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
 import { isExecutiveOrLeadership, computeEmploymentType } from '../../lib/attendanceEngine';
-import { isAuthorizedTechLead } from '../../lib/hierarchy';
+import { isAuthorizedTechLead, isTestEmployee, deduplicateEmployeeList } from '../../lib/hierarchy';
 import { 
   Search, 
   Plus, 
@@ -111,7 +111,10 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
     }, 2000);
   };
 
-  const departments = useMemo(() => Array.from(new Set(employees.map(e => e.department).filter(Boolean))), [employees]);
+  // Clean, deduplicated roster free of test accounts and duplicate entries
+  const cleanEmployees = useMemo(() => deduplicateEmployeeList(employees), [employees]);
+
+  const departments = useMemo(() => Array.from(new Set(cleanEmployees.map(e => e.department).filter(Boolean))), [cleanEmployees]);
 
   // Single source of truth, shared with payroll and every dashboard. The local
   // copy this replaced matched `desig.includes('cto')`, which is also true for
@@ -252,13 +255,14 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
   };
 
   const filteredEmployees = useMemo(() => {
-    return employees.filter(emp => {
+    return cleanEmployees.filter(emp => {
       if (!emp.fullName || emp.fullName.trim() === '') return false;
       if (
         emp.id === 'bf41B0ztyefb6OZzO9NykxA9MSz2' ||
         emp.fullName.includes('GHOST') ||
         emp.fullName.includes('[DELETED]') ||
-        emp.employeeId?.includes('GHOST')
+        emp.employeeId?.includes('GHOST') ||
+        isTestEmployee(emp)
       ) {
         return false;
       }
@@ -291,7 +295,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
 
       return matchesSearch && matchesDept && matchesStatus && matchesSpec;
     });
-  }, [employees, searchTerm, deptFilter, statusFilter, specializationFilter]);
+  }, [cleanEmployees, searchTerm, deptFilter, statusFilter, specializationFilter]);
 
   const standardEmployees = useMemo(() => {
     return filteredEmployees.filter(emp => !isExecutiveLeadership(emp));
@@ -322,26 +326,46 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
         return 2;
       }
 
+      // 3. Rahul kr Pathak is THIRD (COO)
+      if (
+        name.includes('rahul') ||
+        id === 'kss2407015' ||
+        execRole === 'COO'
+      ) {
+        return 3;
+      }
+
       const so = Number(emp?.sortOrder);
       if (!isNaN(so) && so > 0) return so + 2;
 
       return 99;
     };
 
-    const rawExecs = employees.filter(emp => isExecutiveLeadership(emp));
+    const rawExecs = cleanEmployees.filter(emp => isExecutiveLeadership(emp));
     const dedupedExecs: Employee[] = [];
     const seenExecKeys = new Set<string>();
 
     for (const exec of rawExecs) {
+      if (isTestEmployee(exec)) continue;
       const nameLower = (exec.fullName || '').toLowerCase().trim();
-      const key = nameLower.includes('akshit')
-        ? 'exec-akshit-ceo'
-        : (exec.employeeId?.trim() || nameLower || exec.id);
+      let key = exec.employeeId?.trim().toUpperCase() || nameLower || exec.id;
+      if (nameLower.includes('gaurav') || exec.employeeId === 'KSS2407001') {
+        key = 'exec-gaurav-cto';
+      } else if (nameLower.includes('akshit') || exec.employeeId === 'KSS2407002') {
+        key = 'exec-akshit-ceo';
+      } else if (nameLower.includes('rahul') || exec.employeeId === 'KSS2407015') {
+        key = 'exec-rahul-coo';
+      }
 
       if (seenExecKeys.has(key)) {
         if (nameLower.includes('akshit')) {
           const idx = dedupedExecs.findIndex(e => (e.fullName || '').toLowerCase().includes('akshit'));
           if (idx !== -1 && (exec.id === 'emp-KSS2407002' || (exec.email || '').includes('akshit.ujjain'))) {
+            dedupedExecs[idx] = exec;
+          }
+        } else if (nameLower.includes('gaurav')) {
+          const idx = dedupedExecs.findIndex(e => (e.fullName || '').toLowerCase().includes('gaurav'));
+          if (idx !== -1 && (exec.id === 'emp-KSS2407001' || exec.employeeId === 'KSS2407001')) {
             dedupedExecs[idx] = exec;
           }
         }
@@ -356,7 +380,7 @@ export const EmployeeDirectory: React.FC<EmployeeDirectoryProps> = ({
       if (diff !== 0) return diff;
       return (a.fullName || '').localeCompare(b.fullName || '');
     });
-  }, [employees]);
+  }, [cleanEmployees]);
 
   const getStatusIndicator = (status?: string) => {
     const s = formatEmployeeStatus(status);

@@ -25,7 +25,7 @@ import {
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { isExecutiveOrLeadership } from '../../lib/attendanceEngine';
-import { isAuthorizedTechLead } from '../../lib/hierarchy';
+import { isAuthorizedTechLead, isTestEmployee, deduplicateEmployeeList } from '../../lib/hierarchy';
 import { Employee } from '../../types';
 import { getEmployeeAvatar } from '../../lib/avatarHelper';
 
@@ -182,8 +182,13 @@ export const EmployeeTeamDirectory: React.FC = () => {
   const [copiedEmail, setCopiedEmail] = useState<string | null>(null);
   const [selectedColleague, setSelectedColleague] = useState<Employee | null>(null);
 
+  // Clean, deduplicated employee roster (strictly free of test fixtures and duplicate member records)
+  const cleanEmployees = useMemo(() => {
+    return deduplicateEmployeeList(employees);
+  }, [employees]);
+
   // Extract unique departments
-  const rawDepts = Array.from(new Set(employees.map(e => e.department).filter(Boolean)));
+  const rawDepts = Array.from(new Set(cleanEmployees.map(e => e.department).filter(Boolean)));
 
   const isExecutiveLeadership = (emp: any) => isExecutiveOrLeadership(emp);
 
@@ -199,13 +204,14 @@ export const EmployeeTeamDirectory: React.FC = () => {
 
   // Filter logic: role tab takes priority over dept tab
   const allFilteredMembers = useMemo(() => {
-    return employees.filter(emp => {
+    return cleanEmployees.filter(emp => {
       if (!emp.fullName || emp.fullName.trim() === '') return false;
       if (
         emp.id === 'bf41B0ztyefb6OZzO9NykxA9MSz2' ||
         emp.fullName.includes('GHOST') ||
         emp.fullName.includes('[DELETED]') ||
-        emp.employeeId?.includes('GHOST')
+        emp.employeeId?.includes('GHOST') ||
+        isTestEmployee(emp)
       ) {
         return false;
       }
@@ -233,7 +239,7 @@ export const EmployeeTeamDirectory: React.FC = () => {
       const matchesDept = selectedDept === 'ALL' || (emp.department?.toLowerCase() || '') === selectedDept.toLowerCase();
       return matchesDept && matchesSearch;
     });
-  }, [employees, searchTerm, selectedRole, selectedDept, specializationFilter]);
+  }, [cleanEmployees, searchTerm, selectedRole, selectedDept, specializationFilter]);
 
   // Separate standard workforce from CEO & CTO with robust deduplication
   const standardEmployees = useMemo(() => {
@@ -241,7 +247,8 @@ export const EmployeeTeamDirectory: React.FC = () => {
     const deduped: Employee[] = [];
     const seen = new Set<string>();
     for (const emp of raw) {
-      const key = emp.employeeId?.trim() || (emp.fullName || '').toLowerCase().trim();
+      if (isTestEmployee(emp)) continue;
+      const key = emp.employeeId?.trim().toUpperCase() || (emp.fullName || '').toLowerCase().trim();
       if (seen.has(key)) continue;
       seen.add(key);
       deduped.push(emp);
@@ -249,7 +256,7 @@ export const EmployeeTeamDirectory: React.FC = () => {
     return deduped;
   }, [allFilteredMembers]);
 
-  // Executive Leaders with strict deduplication for Akshit Ujjain & C-Suite
+  // Executive Leaders with strict deduplication for Akshit Ujjain, Gaurav Kumar Tripathi & C-Suite
   const executiveLeaders = useMemo(() => {
     const getExecutiveRank = (emp: any): number => {
       const name = (emp?.fullName || '').toLowerCase();
@@ -278,24 +285,35 @@ export const EmployeeTeamDirectory: React.FC = () => {
     };
 
     const base = (selectedRole === 'ALL' || !selectedRole)
-      ? employees.filter(emp => isExecutiveLeadership(emp))
+      ? cleanEmployees.filter(emp => isExecutiveLeadership(emp))
       : allFilteredMembers.filter(emp => isExecutiveLeadership(emp));
 
     const dedupedExecs: Employee[] = [];
     const seenExecKeys = new Set<string>();
 
     for (const exec of base) {
+      if (isTestEmployee(exec)) continue;
       const nameLower = (exec.fullName || '').toLowerCase().trim();
-      // Unify any variant of Akshit Ujjain so it can NEVER duplicate
-      const key = nameLower.includes('akshit')
-        ? 'exec-akshit-ceo'
-        : (exec.employeeId?.trim() || nameLower || exec.id);
+      
+      // Unify canonical executive identities so they can NEVER duplicate
+      let key = exec.employeeId?.trim().toUpperCase() || nameLower || exec.id;
+      if (nameLower.includes('gaurav') || exec.employeeId === 'KSS2407001') {
+        key = 'exec-gaurav-cto';
+      } else if (nameLower.includes('akshit') || exec.employeeId === 'KSS2407002') {
+        key = 'exec-akshit-ceo';
+      } else if (nameLower.includes('rahul') || exec.employeeId === 'KSS2407015') {
+        key = 'exec-rahul-coo';
+      }
 
       if (seenExecKeys.has(key)) {
         if (nameLower.includes('akshit')) {
           const idx = dedupedExecs.findIndex(e => (e.fullName || '').toLowerCase().includes('akshit'));
-          // Prefer canonical record
           if (idx !== -1 && (exec.id === 'emp-KSS2407002' || (exec.email || '').includes('akshit.ujjain'))) {
+            dedupedExecs[idx] = exec;
+          }
+        } else if (nameLower.includes('gaurav')) {
+          const idx = dedupedExecs.findIndex(e => (e.fullName || '').toLowerCase().includes('gaurav'));
+          if (idx !== -1 && (exec.id === 'emp-KSS2407001' || exec.employeeId === 'KSS2407001')) {
             dedupedExecs[idx] = exec;
           }
         }
@@ -310,7 +328,7 @@ export const EmployeeTeamDirectory: React.FC = () => {
       if (diff !== 0) return diff;
       return (a.fullName || '').localeCompare(b.fullName || '');
     });
-  }, [employees, allFilteredMembers, selectedRole]);
+  }, [cleanEmployees, allFilteredMembers, selectedRole]);
 
   const handleRoleClick = (key: string) => {
     if (key === 'ALL') {
