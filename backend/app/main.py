@@ -38,10 +38,10 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.CORS_ORIGINS,
-    allow_origin_regex=(r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$" if settings.ENVIRONMENT.lower() != "production" else None),
+    allow_origin_regex=r"^(https?://(localhost|127\.0\.0\.1)(:[0-9]+)?|https://.*\.vercel\.app|https://.*\.firebaseapp\.com|https://.*\.web\.app)$",
     allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Bypass-Cache"],
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
 # Include API v1 Router

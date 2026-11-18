@@ -24,7 +24,11 @@ class Settings(BaseSettings):
     CORS_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:5173",
-        "https://kalpanaaa.in"
+        "https://kalpanaaa.in",
+        "https://kss-hrms-official.vercel.app",
+        "https://kss-hrms-official-ojen.vercel.app",
+        "https://kalpanaaa-employees-website.firebaseapp.com",
+        "https://kalpanaaa-employees-website.web.app"
     ]
 
     @field_validator("CORS_ORIGINS", mode="before")

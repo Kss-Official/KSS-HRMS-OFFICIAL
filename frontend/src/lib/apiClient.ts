@@ -1,16 +1,45 @@
 // Centralized API Client for Kalpanaaa HRMS Python FastAPI & Neon PostgreSQL Backend
 
 export const getBaseUrl = (): string => {
+  let rawUrl = '';
   if (typeof window !== 'undefined' && (window as any).env?.VITE_API_BASE_URL) {
-    return (window as any).env.VITE_API_BASE_URL;
+    rawUrl = (window as any).env.VITE_API_BASE_URL;
+  } else if (import.meta.env.VITE_API_BASE_URL) {
+    rawUrl = import.meta.env.VITE_API_BASE_URL;
   }
-  if (import.meta.env.VITE_API_BASE_URL) {
-    return import.meta.env.VITE_API_BASE_URL;
+
+  // 1. Auto-sanitize accidental Vercel dashboard management URLs (e.g. "https://vercel.com/kss3/kss-hrms-official-ojen")
+  if (rawUrl && rawUrl.includes('vercel.com/')) {
+    const parts = rawUrl.split('/').filter(Boolean);
+    const projectName = parts[parts.length - 1]; // "kss-hrms-official-ojen"
+    rawUrl = `https://${projectName}.vercel.app/api/v1`;
   }
+
+  // 2. Ensure trailing /api/v1 if an absolute URL was provided without the API prefix
+  if (rawUrl && (rawUrl.startsWith('http://') || rawUrl.startsWith('https://'))) {
+    let clean = rawUrl.replace(/\/+$/, '');
+    if (!clean.endsWith('/api/v1')) {
+      if (clean.endsWith('/api')) {
+        clean = `${clean}/v1`;
+      } else {
+        clean = `${clean}/api/v1`;
+      }
+    }
+    return clean;
+  }
+
+  if (rawUrl) {
+    return rawUrl.replace(/\/+$/, '');
+  }
+
+  // 3. In browser on Vercel deployment, automatically resolve backend URL
   if (typeof window !== 'undefined') {
-    // Use same-origin proxy to eliminate CORS OPTIONS preflight round-trips
+    if (window.location.hostname.includes('kss-hrms-official')) {
+      return 'https://kss-hrms-official-ojen.vercel.app/api/v1';
+    }
     return '/api/v1';
   }
+
   return 'http://127.0.0.1:8000/api/v1';
 };
 
@@ -160,7 +189,8 @@ export async function apiRequest<T>(
   }
 
   const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-  const url = `${API_BASE_URL}${cleanEndpoint}`;
+  const baseUrl = getBaseUrl();
+  const url = `${baseUrl}${cleanEndpoint}`;
 
   // 1. Surgical cache invalidation on mutations (never wipe unaffected caches)
   if (method !== 'GET') {
