@@ -69,6 +69,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   const enrollmentSamplesRef = useRef<Float32Array[]>([]);
   const lastEnrollmentSampleTimeRef = useRef<number>(0);
   const livenessTrackerRef = useRef<LivenessTracker>(new LivenessTracker());
+  const consecutiveMatchesRef = useRef<number>(0);
   const REQUIRED_ENROLLMENT_SAMPLES = 8;
 
   // Reset sampling session state whenever modal opens or mode changes
@@ -79,6 +80,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
       setEnrollmentProgress(0);
       setAlignmentFeedback(null);
       livenessTrackerRef.current.reset();
+      consecutiveMatchesRef.current = 0;
     }
   }, [isOpen, currentModeIsEnroll]);
 
@@ -419,15 +421,16 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             setFeedbackText(`Verifying biometrics via secure vector engine... (${progressPct}%)`);
           }
 
-          // Send to backend on frames 1, 3, 6, 10, 15, 18, 20
-          if ([1, 3, 6, 10, 15, 18, 20].includes(scanAttemptCount) && active) {
+          // Send to backend on frames 1, 3, 5, 8, 12, 16, 20
+          if ([1, 3, 5, 8, 12, 16, 20].includes(scanAttemptCount) && active) {
             const descArr = Array.from(scan.descriptor);
-            verifyFaceApi(descArr, 0.48, employeeId, employeeCode)
+            verifyFaceApi(descArr, 0.38, employeeId, employeeCode)
               .then((backendRes) => {
                 if (!active) return;
 
                 if (backendRes.impersonation_detected) {
                   setStatusStep('FAILED');
+                  consecutiveMatchesRef.current = 0;
                   const impMsg = backendRes.message || `Security Violation: Face belongs to a different employee. Cross-employee check-in is blocked.`;
                   setFeedbackText(`❌ ${impMsg}`);
                   setErrorMsg(impMsg);
@@ -450,6 +453,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                   if (!isMatchForTarget && (targetCode || targetId)) {
                     console.warn('[Biometrics] MISMATCH — backend matched', backendRes.employee_code || backendRes.employee_id, 'but expected', targetCode);
                     setStatusStep('FAILED');
+                    consecutiveMatchesRef.current = 0;
                     const mismatchMsg = `Security Violation: Scanned face matches ${backendRes.full_name || backendRes.employee_code}, not ${employeeName}. Cross-employee check-in is forbidden.`;
                     setFeedbackText(mismatchMsg);
                     setErrorMsg(mismatchMsg);
@@ -458,23 +462,29 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                     return;
                   }
 
-                  const conf = Math.round((backendRes.confidence || 0.95) * 100);
-                  setConfidencePercent(conf);
-                  setStatusStep('VERIFIED');
-                  setFeedbackText(`✓ Biometric Identity Confirmed (${conf}% Confidence)`);
-                  triggerHaptic('success');
-                  active = false;
-                  if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
-                  actionTimerRef.current = setTimeout(() => {
-                    onSuccess(descArr);
-                    onClose();
-                  }, 250);
+                  consecutiveMatchesRef.current += 1;
+                  // Temporal Consensus: Require at least 2 consecutive positive matches
+                  if (consecutiveMatchesRef.current >= 2) {
+                    const conf = Math.round((backendRes.confidence || 0.96) * 100);
+                    setConfidencePercent(conf);
+                    setStatusStep('VERIFIED');
+                    setFeedbackText(`✓ Biometric Identity Confirmed (${conf}% Confidence)`);
+                    triggerHaptic('success');
+                    active = false;
+                    if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+                    actionTimerRef.current = setTimeout(() => {
+                      onSuccess(descArr);
+                      onClose();
+                    }, 250);
+                  } else {
+                    setFeedbackText('Biometric match detected. Confirming temporal stability...');
+                  }
+                } else {
+                  consecutiveMatchesRef.current = 0;
                 }
-                // If backendRes.matched === false, let the scan loop continue until frame 20
               })
               .catch((err) => {
                 console.warn('[Biometrics] Backend verify error on frame', scanAttemptCount, err);
-                // Don't block — let the loop retry on next scheduled frame
               });
           }
 

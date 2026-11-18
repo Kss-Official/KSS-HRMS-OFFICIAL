@@ -32,7 +32,7 @@ _RECORDS_CACHE: Dict[str, Tuple[float, List[AttendanceRecordOut]]] = {}
 _RECORDS_CACHE_TTL = 30.0
 _RECORDS_CACHE_MAX_KEYS = 128
 
-FACE_MATCH_THRESHOLD = 0.48           # hard ceiling: clients may ask for stricter, never looser
+FACE_MATCH_THRESHOLD = 0.38           # Hard biometric threshold (cosine similarity >= 0.928)
 LATE_CUTOFF_LOCAL = dt_time(10, 15)   # 10:00 shift start + 15 min grace, in COMPANY time
 GEOFENCE_TOLERANCE_FACTOR = 1.5       # GPS jitter allowance (radius * 1.5 + 50m)
 GEOFENCE_TOLERANCE_EXTRA_M = 50.0
@@ -195,7 +195,8 @@ async def verify_biometric_face(
             if other and float(other[0]) <= effective_threshold:
                 # Never disclose WHOSE face it was.
                 return {
-                    "matched": False, "employee_id": emp_id, "employee_code": target_code, "full_name": full_name,
+                    "matched": False, "impersonation_detected": True,
+                    "employee_id": emp_id, "employee_code": target_code, "full_name": full_name,
                     "distance": round(dist, 4), "confidence": 0.0,
                     "message": "SECURITY REJECTION: Biometric identity mismatch. The scanned face belongs to a different employee. Cross-employee check-in is forbidden."
                 }
@@ -316,9 +317,8 @@ async def check_in(
             raise HTTPException(status_code=403, detail=f"Biometric mismatch: Scanned face does not match the registered profile for {target_emp.full_name}.")
         method = AttendanceMethod.BIOMETRIC_FACE
     else:
-        # Face scan is mandatory except: approved WFH, or HR/Super Admin checking THEMSELVES.
-        admin_exempt = current_user.role in PRIVILEGED_ADMINS
-        if not is_wfh and not admin_exempt:
+        # Face scan is mandatory for all on-site check-ins (only approved WFH is exempt).
+        if not is_wfh:
             if not target_emp.is_face_enrolled:
                 raise HTTPException(status_code=400, detail=f"Biometric registration required: No face template registered for {target_emp.full_name}. Please register your facial biometrics first before checking in.")
             raise HTTPException(status_code=400, detail=f"Biometric verification required: Face scan is mandatory for {target_emp.full_name} to check in.")

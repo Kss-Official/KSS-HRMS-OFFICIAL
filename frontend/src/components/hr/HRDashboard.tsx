@@ -244,7 +244,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     }
   };
 
-  const executeHrCheckInProcess = async () => {
+  const executeHrCheckInProcess = async (descArr?: number[]) => {
     if (!targetEmployee) return;
     setHrActionLoading(true);
     setHrStatusMessage(null);
@@ -254,8 +254,11 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         targetEmployee.id,
         pendingGps?.lat,
         pendingGps?.lon,
+        pendingGps?.accuracy,
         'Facial Recognition',
-        pendingGps?.accuracy
+        undefined,
+        undefined,
+        descArr
       );
       if (res.success) {
         setHrStatusMessage({ type: 'success', text: res.message || '✓ HR Biometric Check-In & GPS Verified!' });
@@ -579,12 +582,13 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         <FaceCaptureModal
           isOpen={isFaceModalOpen}
           onClose={() => setIsFaceModalOpen(false)}
-          onSuccess={() => {
+          onSuccess={(descArr) => {
             setIsFaceModalOpen(false);
-            executeHrCheckInProcess();
+            executeHrCheckInProcess(descArr);
           }}
           employeeName={targetEmployee.fullName}
           employeeId={targetEmployee.id}
+          employeeCode={targetEmployee.employeeId}
           profilePhotoUrl={targetEmployee.profilePhotoUrl}
           cloudDescriptor={targetEmployee.faceDescriptor}
         />

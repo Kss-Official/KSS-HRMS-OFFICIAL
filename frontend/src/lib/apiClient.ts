@@ -452,7 +452,7 @@ export async function createAuditLogApi(payload: {
 
 export async function verifyFaceApi(
   faceDescriptor: number[], 
-  threshold = 0.48,
+  threshold = 0.38,
   employeeId?: string,
   employeeCode?: string
 ): Promise<any> {

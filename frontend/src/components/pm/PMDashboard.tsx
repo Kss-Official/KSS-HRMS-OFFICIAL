@@ -530,7 +530,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
   const [isPmCheckInLoading, setIsPmCheckInLoading] = useState(false);
   const [isPmCheckOutLoading, setIsPmCheckOutLoading] = useState(false);
 
-  const handlePmSelfCheckIn = async () => {
+  const handlePmSelfCheckIn = async (descArr?: number[]) => {
     if (!activeEmployee) return;
     setIsPmCheckInLoading(true);
     try {
@@ -544,7 +544,16 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
           );
         });
       }
-      const res = await checkIn(activeEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Facial Recognition');
+      const res = await checkIn(
+        activeEmployee.id,
+        fix?.lat,
+        fix?.lon,
+        fix?.accuracy,
+        'Facial Recognition',
+        undefined,
+        undefined,
+        descArr
+      );
       if (res.success) {
         toast.success(res.message || 'PM Duty Check-In recorded successfully! Shift active.');
       } else {
@@ -2153,9 +2162,9 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
         <FaceCaptureModal
           isOpen={isPmFaceModalOpen}
           onClose={() => setIsPmFaceModalOpen(false)}
-          onSuccess={() => {
+          onSuccess={(descArr) => {
             setIsPmFaceModalOpen(false);
-            handlePmSelfCheckIn();
+            handlePmSelfCheckIn(descArr);
           }}
           onEnrollSuccess={async (descriptorArray) => {
             if (activeEmployee) {
@@ -2165,6 +2174,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
           }}
           employeeName={activeEmployee.fullName}
           employeeId={activeEmployee.id}
+          employeeCode={activeEmployee.employeeId}
           profilePhotoUrl={activeEmployee.profilePhotoUrl}
           cloudDescriptor={activeEmployee.faceDescriptor}
         />

@@ -24,7 +24,7 @@ from app.api.audit_util import add_audit
 router = APIRouter()
 
 MAX_PHOTO_B64_CHARS = 8 * 1024 * 1024  # ~6 MB of image data
-FACE_MATCH_THRESHOLD = 0.48
+FACE_MATCH_THRESHOLD = 0.38
 
 # Roles that may see every field of every employee.
 PRIVILEGED_VIEW_ROLES = {UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER, UserRole.TECH_LEAD}

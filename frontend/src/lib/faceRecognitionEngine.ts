@@ -546,7 +546,7 @@ export interface MatchVerificationResult {
   message?: string;
 }
 
-export const BIOMETRIC_MATCH_THRESHOLD = 0.48;
+export const BIOMETRIC_MATCH_THRESHOLD = 0.38;
 
 // Compare scanned face descriptor STRICTLY against employee's enrolled descriptor.
 // Euclidean distance threshold: <= 0.48 = MATCH, > 0.48 = MISMATCH (strict biometric boundary)
