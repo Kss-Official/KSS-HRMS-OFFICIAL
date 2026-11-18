@@ -24,8 +24,7 @@ import {
   INITIAL_EMPLOYEES,
   generateInitialAttendance,
   INITIAL_AUDIT_LOGS,
-  INITIAL_COMPANY_SETTINGS,
-  INITIAL_LEAVE_REQUESTS
+  INITIAL_COMPANY_SETTINGS
 } from '../lib/demoData';
 import { initializeApp } from 'firebase/app';
 import { 
@@ -165,9 +164,9 @@ const mapBackendToFrontendEmployee = (data: any): Employee => {
     isFaceEnrolled: !!data.is_face_enrolled,
     faceDescriptor: data.face_descriptor || data.faceDescriptor || undefined,
     qrToken: empCode,
-    earnLeaveBalance: data.earn_leave_balance ?? 12,
-    sickLeaveBalance: data.sick_leave_balance ?? 6,
-    casualLeaveBalance: data.casual_leave_balance ?? 6,
+    earnLeaveBalance: typeof data.earn_leave_balance === 'number' ? data.earn_leave_balance : (typeof data.earnLeaveBalance === 'number' ? data.earnLeaveBalance : 0),
+    sickLeaveBalance: typeof data.sick_leave_balance === 'number' ? data.sick_leave_balance : (typeof data.sickLeaveBalance === 'number' ? data.sickLeaveBalance : 0),
+    casualLeaveBalance: typeof data.casual_leave_balance === 'number' ? data.casual_leave_balance : (typeof data.casualLeaveBalance === 'number' ? data.casualLeaveBalance : 0),
     createdAt: data.created_at || new Date().toISOString(),
     updatedAt: data.updated_at || new Date().toISOString()
   };
@@ -406,7 +405,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const n = (emp.fullName || '').toLowerCase();
             const c = (emp.employeeId || '').toLowerCase();
             const m = (emp.email || '').toLowerCase();
-            if (c === 'alice001' || c === 'test001' || n.includes('test portal') || n.includes('alice test') || n === 'alice' || m.includes('alice')) return false;
+            if (c === 'new6dfc34f4' || n.includes('admin created user') || c === 'alice001' || c === 'test001' || n.includes('test portal') || n.includes('alice test') || n === 'alice' || m.includes('alice')) return false;
             return true;
           })
           .map(emp => {
@@ -446,8 +445,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (empId.includes('kss2407005') || empCode.includes('kss2407005') || empName.includes('thabeethal')) {
               return {
                 ...updated,
+                status: 'Inactive',
                 earnLeaveBalance: 0,
                 sickLeaveBalance: 1
+              };
+            }
+            if (empId.includes('kss2407008') || empCode.includes('kss2407008') || empName.includes('pratiksha')) {
+              return {
+                ...updated,
+                employmentType: 'Trainee'
               };
             }
             if (empId.includes('kss2407003') || empCode.includes('kss2407003') || empName.includes('koushik')) {
@@ -475,9 +481,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             if (empId === 'kfab95lpbjoeylpkqawx4gxopgt2' || empCode === 'kss2407011' || empName.includes('jason')) {
               return {
                 ...updated,
+                status: 'Inactive',
                 earnLeaveBalance: 1,
                 sickLeaveBalance: 0,
                 joiningDate: '2026-08-17'
+              };
+            }
+            if (empId === '4lj6efl4vytaemq24cjgq2hc7fe2' || empCode === 'kss2407017' || empName.includes('shruti')) {
+              return {
+                ...updated,
+                earnLeaveBalance: 2,
+                sickLeaveBalance: 0,
+                joiningDate: '2026-09-01'
               };
             }
 
@@ -741,7 +756,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [leaveRequests, setLeaveRequests] = useState<LeaveRequest[]>(() => {
     const saved = localStorage.getItem('kss_v1_leave_requests');
-    let base: LeaveRequest[] = INITIAL_LEAVE_REQUESTS;
+    let base: LeaveRequest[] = [];
     if (saved !== null) {
       try {
         const parsed = JSON.parse(saved);
@@ -749,13 +764,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           const filtered = parsed.filter((r: any) => {
             if (!r || !r.id) return false;
             const isDummy = (r.reason && (r.reason.toLowerCase().includes('dummy') || r.reason.toLowerCase().includes('test leave'))) ||
-              r.id.startsWith('dummy-') || r.id.startsWith('test-');
+              r.id.startsWith('dummy-') || r.id.startsWith('test-') || r.id.startsWith('leave-') || r.is_dummy === true || r.isDummy === true;
             return !isDummy;
           });
-          const map = new Map<string, LeaveRequest>();
-          INITIAL_LEAVE_REQUESTS.forEach(req => map.set(req.id, req));
-          filtered.forEach(req => map.set(req.id, { ...(map.get(req.id) || {}), ...req }));
-          base = Array.from(map.values());
+          base = filtered;
         }
       } catch (e) {
         console.warn('[AuthContext] Failed to parse saved leave requests', e);
@@ -1840,7 +1852,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
               }
 
-              // LIVE AUTOCORRECT PRATIKSHA HARODE (Employment Type: Intern)
+              // LIVE AUTOCORRECT PRATIKSHA HARODE (Employment Type: Trainee)
               const isPratikshaEmp =
                 data.id === 'NTirYBVT1pSuLj5thrdsjM54F303' ||
                 data.id === 'emp-1785863423639' ||
@@ -1848,11 +1860,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 data.employeeId === 'KSS2407008' ||
                 (data.fullName && data.fullName.toLowerCase().includes('pratiksha'));
               if (isPratikshaEmp) {
-                if (data.employmentType !== 'Intern') {
-                  data.employmentType = 'Intern';
+                if (data.employmentType !== 'Trainee') {
+                  data.employmentType = 'Trainee';
                   if (canMigrate && !migratedEmployeeIds.has(`pratiksha-type-${data.id}`)) {
                     migratedEmployeeIds.add(`pratiksha-type-${data.id}`);
-                    setDoc(doc(db, 'employees', data.id), { employmentType: 'Intern' }, { merge: true }).catch(() => { });
+                    setDoc(doc(db, 'employees', data.id), { employmentType: 'Trainee' }, { merge: true }).catch(() => { });
+                  }
+                }
+              }
+
+              // LIVE AUTOCORRECT FORMER EMPLOYEES (Jason Kenneth N, Thabeethal Asnath I -> Inactive)
+              const isFormerEmp =
+                data.employeeId === 'KSS2407011' || data.id === 'KfAB95lpbJOeylpKQaWX4GXOPGt2' || (data.fullName && data.fullName.toLowerCase().includes('jason')) ||
+                data.employeeId === 'KSS2407005' || data.id === 'emp-KSS2407005' || data.id === 'mzGAL3siJZazGrgf6WNEU7hTREw2' || (data.fullName && data.fullName.toLowerCase().includes('thabeethal'));
+              if (isFormerEmp) {
+                if (data.status !== 'Inactive') {
+                  data.status = 'Inactive';
+                  if (canMigrate && !migratedEmployeeIds.has(`inactive-${data.id}`)) {
+                    migratedEmployeeIds.add(`inactive-${data.id}`);
+                    setDoc(doc(db, 'employees', data.id), { status: 'Inactive' }, { merge: true }).catch(() => { });
                   }
                 }
               }
@@ -1892,8 +1918,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             fetched.sort((a, b) => new Date(b.createdAt || b.updatedAt || 0).getTime() - new Date(a.createdAt || a.updatedAt || 0).getTime());
             
             for (const emp of fetched) {
-              // Skip corrupted records with empty names
-              if (!emp.fullName || emp.fullName.trim() === '') {
+              // Skip corrupted records with empty names or test/admin created users
+              if (!emp.fullName || emp.fullName.trim() === '' || emp.employeeId === 'NEW6dfc34f4' || emp.fullName.toLowerCase().includes('admin created user')) {
                 continue;
               }
 
@@ -2385,13 +2411,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 return;
               }
 
-              // ROOT-LEVEL PURGE: Dummy / test leave requests (e.g. test, ghfgds, dummy-*)
+              // ROOT-LEVEL PURGE: Dummy / test leave requests (e.g. test, ghfgds, dummy-*, leave-*)
               const isDummyReq = (raw.reason && (
                 raw.reason.toLowerCase().trim() === 'test' ||
                 raw.reason.toLowerCase().includes('dummy') ||
                 raw.reason.toLowerCase().includes('ghfgds') ||
                 raw.reason.toLowerCase().includes('test leave')
-              )) || raw.id.startsWith('dummy-') || raw.id.startsWith('test-') || raw.id === 'LR-UVLV1K5' || raw.id === 'LR_KSS2407014_2026-08-19_WFH';
+              )) || raw.id.startsWith('dummy-') || raw.id.startsWith('test-') || raw.id.startsWith('leave-') || (raw as any).is_dummy === true || (raw as any).isDummy === true || raw.id === 'LR-UVLV1K5' || raw.id === 'LR_KSS2407014_2026-08-19_WFH';
 
               if (isDummyReq) {
                 if (roleRef.current === 'SUPER_ADMIN' || roleRef.current === 'HR_ADMIN') {
@@ -2760,20 +2786,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isRitish = e.id === 'emp-KSS2407007' || e.employeeId === 'KSS2407007' || (e.fullName && e.fullName.toLowerCase().includes('ritish'));
       const isPratiksha = e.id === 'emp-KSS2407008' || e.employeeId === 'KSS2407008' || (e.fullName && e.fullName.toLowerCase().includes('pratiksha'));
       const isPriyanka = e.id === 'emp-KSS2407009' || e.employeeId === 'KSS2407009' || (e.fullName && e.fullName.toLowerCase().includes('priyanka'));
+      const isShruti = e.id === '4lJ6efl4vYTAemQ24cjgq2hC7fe2' || e.id === 'emp-KSS2407017' || e.employeeId === 'KSS2407017' || (e.fullName && e.fullName.toLowerCase().includes('shruti'));
 
       if (isAkash) {
-        // Akash: EL=2, SL=0, WFH=0
+        // Akash: EL=1, SL=0, WFH=0
         const cleanedDates = (e.approvedWfhDates || []).filter(d => !accidentalRange.includes(d));
         const datesChanged = cleanedDates.length !== (e.approvedWfhDates || []).length;
-        const needsEl = typeof e.earnLeaveBalance !== 'number';
-        const needsSl = typeof e.sickLeaveBalance !== 'number';
+        const needsEl = typeof e.earnLeaveBalance !== 'number' || e.earnLeaveBalance !== 1;
+        const needsSl = typeof e.sickLeaveBalance !== 'number' || e.sickLeaveBalance !== 0;
         if (datesChanged || needsEl || needsSl) {
           e.approvedWfhDates = cleanedDates;
-          if (needsSl) e.sickLeaveBalance = 0;
-          if (needsEl) e.earnLeaveBalance = 2;
+          e.sickLeaveBalance = 0;
+          e.earnLeaveBalance = 1;
           changed = true;
           if (auth.currentUser) {
-            setDoc(doc(db, 'employees', e.id), { approvedWfhDates: cleanedDates, sickLeaveBalance: e.sickLeaveBalance, earnLeaveBalance: e.earnLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+            setDoc(doc(db, 'employees', e.id), { approvedWfhDates: cleanedDates, sickLeaveBalance: 0, earnLeaveBalance: 1, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
           }
         }
       } else if (isAsbin) {
@@ -2809,14 +2836,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else if (isThabeethal) {
-        // Thabeethal: EL=0, SL=1, WFH=1 (female monthly WFH)
+        // Thabeethal: Inactive (left company), EL=0, SL=1, WFH=1
+        const needsStatus = e.status !== 'Inactive';
         const needsEl = typeof e.earnLeaveBalance !== 'number';
         const needsSl = typeof e.sickLeaveBalance !== 'number';
-        if (needsEl || needsSl) {
+        if (needsStatus || needsEl || needsSl) {
+          e.status = 'Inactive';
           if (needsEl) e.earnLeaveBalance = 0;
           if (needsSl) e.sickLeaveBalance = 1;
           changed = true;
-          setDoc(doc(db, 'employees', e.id), { earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          setDoc(doc(db, 'employees', e.id), { status: 'Inactive', earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
         }
       } else if (isKoushik) {
         // D. Koushik (PM): EL=0, SL=0, WFH=0 — verified policy
@@ -2869,14 +2898,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setDoc(doc(db, 'employees', e.id), { earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
         }
       } else if (isPratiksha) {
-        // Pratiksha Harode: EL=2, SL=1, WFH=0
+        // Pratiksha Harode: Trainee, EL=2, SL=1, WFH=0
+        const needsType = e.employmentType !== 'Trainee';
         const needsEl = typeof e.earnLeaveBalance !== 'number';
         const needsSl = typeof e.sickLeaveBalance !== 'number';
-        if (needsEl || needsSl) {
+        if (needsType || needsEl || needsSl) {
+          e.employmentType = 'Trainee';
           if (needsEl) e.earnLeaveBalance = 2;
           if (needsSl) e.sickLeaveBalance = 1;
           changed = true;
-          setDoc(doc(db, 'employees', e.id), { earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+          setDoc(doc(db, 'employees', e.id), { employmentType: 'Trainee', earnLeaveBalance: e.earnLeaveBalance, sickLeaveBalance: e.sickLeaveBalance, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
         }
       } else if (isPriyanka) {
         // Priyanka Kushwah: EL=2, SL=1, WFH=0
@@ -2900,13 +2931,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setDoc(doc(db, 'employees', e.id), { sickLeaveBalance: e.sickLeaveBalance, earnLeaveBalance: e.earnLeaveBalance, joiningDate: e.joiningDate, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
         }
       } else if (isJason) {
+        // Jason Kenneth N: Inactive (left company)
+        const needsStatus = e.status !== 'Inactive';
         const needsEl = typeof e.earnLeaveBalance !== 'number';
         const needsSl = typeof e.sickLeaveBalance !== 'number';
         const needsDate = !e.joiningDate || e.joiningDate !== '2026-08-17';
-        if (needsEl || needsSl || needsDate) {
+        if (needsStatus || needsEl || needsSl || needsDate) {
+          e.status = 'Inactive';
           if (needsSl) e.sickLeaveBalance = 0;
           if (needsEl) e.earnLeaveBalance = 1;
           if (needsDate) e.joiningDate = '2026-08-17';
+          changed = true;
+          setDoc(doc(db, 'employees', e.id), { status: 'Inactive', sickLeaveBalance: e.sickLeaveBalance, earnLeaveBalance: e.earnLeaveBalance, joiningDate: e.joiningDate, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
+        }
+      } else if (isShruti) {
+        // Shruti Sanjana Sahoo: EL=2, SL=0 (joined 2026-09-01, 2 EL credited, 0 EL taken; 1 SL taken)
+        const needsEl = typeof e.earnLeaveBalance !== 'number' || e.earnLeaveBalance !== 2;
+        const needsSl = typeof e.sickLeaveBalance !== 'number';
+        const needsDate = !e.joiningDate || e.joiningDate !== '2026-09-01';
+        if (needsEl || needsSl || needsDate) {
+          e.earnLeaveBalance = 2;
+          if (needsSl) e.sickLeaveBalance = 0;
+          if (needsDate) e.joiningDate = '2026-09-01';
           changed = true;
           setDoc(doc(db, 'employees', e.id), { sickLeaveBalance: e.sickLeaveBalance, earnLeaveBalance: e.earnLeaveBalance, joiningDate: e.joiningDate, updatedAt: serverTimestamp() }, { merge: true }).catch(() => {});
         }
@@ -2960,17 +3006,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let leaveChanged = false;
     let nextLeaveRequests = [...leaveRequests];
 
-    INITIAL_LEAVE_REQUESTS.forEach(req => {
-      const exists = nextLeaveRequests.some(r => r.id === req.id);
-      if (!exists && req.id) {
-        nextLeaveRequests.push(req);
-        leaveChanged = true;
-        if (auth.currentUser) {
-          setDoc(doc(db, 'leaveRequests', req.id), cleanFirestorePayload(req), { merge: true }).catch(() => {});
-        }
-      }
-    });
-
     const toRemoveLeaveIds = new Set<string>();
     nextLeaveRequests.forEach(req => {
       const isAkash = req.employeeId === 'KSS2407013' || req.employeeId === 'emp-KSS2407013' || (req.employeeName && req.employeeName.toLowerCase().includes('akash'));
@@ -2979,7 +3014,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         ((req as any).fromDate && (req as any).fromDate <= '2026-09-05' && ((req as any).toDate || (req as any).fromDate) >= '2026-08-27')
       );
       const isDummy = (req.reason && (req.reason.toLowerCase().includes('dummy') || req.reason.toLowerCase().includes('test leave') || req.reason.toLowerCase().trim() === 'test' || req.reason.toLowerCase().includes('ghfgds'))) ||
-        req.id.startsWith('dummy-') || req.id.startsWith('test-') || req.id === 'LR-UVLV1K5' || req.id === 'LR_KSS2407014_2026-08-19_WFH';
+        req.id.startsWith('dummy-') || req.id.startsWith('test-') || req.id.startsWith('leave-') || (req as any).is_dummy === true || (req as any).isDummy === true || req.id === 'LR-UVLV1K5' || req.id === 'LR_KSS2407014_2026-08-19_WFH';
       if ((isAccidental || isDummy) && req.id) {
         toRemoveLeaveIds.add(req.id);
         if (auth.currentUser) {

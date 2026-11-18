@@ -537,9 +537,9 @@ export function computeEmploymentType(emp: any, refDate: Date = new Date()): Emp
     return 'Employee';
   }
 
-  // Pratiksha Harode is explicitly Intern for Employment Type
+  // Pratiksha Harode is explicitly Trainee per organization policy
   if (name.includes('pratiksha') || id.includes('kss2407008') || email.includes('pratiksha')) {
-    return 'Intern';
+    return 'Trainee';
   }
 
   if (

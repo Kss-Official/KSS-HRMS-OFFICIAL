@@ -140,6 +140,9 @@ async def login(credentials: LoginRequest, request: Request, db: AsyncSession = 
         "full_name": employee.full_name,
         "role": employee.role,
         "executive_tier": employee.executive_tier,
+        "earn_leave_balance": float(employee.earn_leave_balance or 0.0),
+        "sick_leave_balance": float(employee.sick_leave_balance or 0.0),
+        "casual_leave_balance": float(employee.casual_leave_balance or 0.0),
     }
 
 

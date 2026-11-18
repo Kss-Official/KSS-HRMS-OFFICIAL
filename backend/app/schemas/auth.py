@@ -13,6 +13,9 @@ class Token(BaseModel):
     full_name: str
     role: UserRole
     executive_tier: ExecutiveTier
+    earn_leave_balance: Optional[float] = 0.0
+    sick_leave_balance: Optional[float] = 0.0
+    casual_leave_balance: Optional[float] = 0.0
 
 class TokenPayload(BaseModel):
     sub: str | None = None
