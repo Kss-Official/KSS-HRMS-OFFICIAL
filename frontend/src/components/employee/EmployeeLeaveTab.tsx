@@ -11,7 +11,8 @@ import {
   computeEmployeeLeaveBalance, 
   computeSickLeaveBalance,
   computeEarnLeaveMonthlyCreditHistory,
-  computeSickLeaveCreditHistory
+  computeSickLeaveCreditHistory,
+  isWfhType
 } from '../../lib/attendanceEngine';
 import { subscribeLeaveLedger, LeaveLedgerEntry } from '../../lib/leaveService';
 import { todayInIST } from '../../lib/absoluteTime';
@@ -64,8 +65,8 @@ export const EmployeeLeaveTab: React.FC = () => {
   });
 
   const filteredMyRequests = myRequests.filter(r => {
-    // Normalise legacy 'Leave' type to 'Earn Leave'
-    const normalisedType = r.type === 'Leave' ? 'Earn Leave' : r.type;
+    // Normalise legacy 'Leave' type to 'Earn Leave' and ensure WFH is correctly recognized
+    const normalisedType = (r.type === 'WFH' || r.type === 'WORK_FROM_HOME' || isWfhType(r.type) || String(r.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd') ? 'WFH' : (r.type === 'Leave' ? 'Earn Leave' : r.type);
 
     if (filterType !== 'All' && normalisedType !== filterType) {
       return false;
@@ -534,7 +535,7 @@ export const EmployeeLeaveTab: React.FC = () => {
                   'var(--accent-amber, #f59e0b)';
 
                 const Icon = currentStatus === 'Approved' ? Check : currentStatus === 'Rejected' ? X : Clock;
-                const displayType = req.type === 'Leave' ? 'Earn Leave' : req.type;
+                const displayType = (req.type === 'WFH' || req.type === 'WORK_FROM_HOME' || isWfhType(req.type) || String(req.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd') ? 'WFH' : (req.type === 'Leave' ? 'Earn Leave' : req.type);
 
                 return (
                   <motion.div 

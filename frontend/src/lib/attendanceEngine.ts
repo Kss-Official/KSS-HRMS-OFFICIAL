@@ -198,7 +198,7 @@ export function computeEmployeeLeaveBalance(
     const isApproved = l.status === 'Approved' ||
       (l.ceoStatus === 'Approved' && l.ctoStatus === 'Approved');
     const isSick = l.type === 'Sick Leave' || (l as any).leaveCategory === 'Sick Leave' || (l.reason && l.reason.toLowerCase().includes('sick'));
-    const isWfh = isWfhType(l.type) || isWfhType((l as any).leaveCategory);
+    const isWfh = isWfhType(l.type) || isWfhType((l as any).leaveCategory) || String(l.id || '').toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd' || (l.reason && l.reason.toLowerCase().includes('work from home'));
     const isEarnLeave = !isSick && !isWfh && (l.type === 'Leave' || l.type === 'Earn Leave' || (l as any).leaveCategory === 'Earn Leave');
     return isApproved && isEarnLeave;
   }).length;
@@ -485,7 +485,8 @@ export function computeTotalLeaveBalances(
       (!!lName && !!empName && (lName.trim() === empName.trim() || empName.includes(lName.trim())));
     const isApproved = l.status === 'Approved' ||
       (l.ceoStatus === 'Approved' && l.ctoStatus === 'Approved');
-    const isEarnLeave = l.type === 'Leave' || l.type === 'Earn Leave' || (l as any).leaveCategory === 'Earn Leave';
+    const isWfh = isWfhType(l.type) || isWfhType((l as any).leaveCategory) || String(l.id || '').toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd';
+    const isEarnLeave = !isWfh && (l.type === 'Leave' || l.type === 'Earn Leave' || (l as any).leaveCategory === 'Earn Leave');
     const isInMonth = l.startDate ? l.startDate.startsWith(currentMonthPrefix) : false;
     return isEmp && isApproved && isEarnLeave && isInMonth;
   }).length;

@@ -603,10 +603,10 @@ export interface MatchVerificationResult {
   message?: string;
 }
 
-export const BIOMETRIC_MATCH_THRESHOLD = 0.45;
+export const BIOMETRIC_MATCH_THRESHOLD = 0.52;
 
 // Compare scanned face descriptor STRICTLY against employee's enrolled descriptor.
-// Euclidean distance threshold: <= 0.48 = MATCH, > 0.48 = MISMATCH (strict biometric boundary)
+// Euclidean distance threshold: <= 0.52 = MATCH, > 0.52 = MISMATCH (robust biometric boundary for ResNet-34)
 //
 // SECURITY: An unenrolled employee MUST explicitly register their face before checking in.
 // Never fall back to unverified stock avatars or loose thresholds.

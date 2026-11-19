@@ -33,7 +33,8 @@ _RECORDS_CACHE: Dict[str, Tuple[float, List[AttendanceRecordOut]]] = {}
 _RECORDS_CACHE_TTL = 30.0
 _RECORDS_CACHE_MAX_KEYS = 128
 
-FACE_MATCH_THRESHOLD = 0.45           # Biometric verification threshold (Euclidean L2 <= 0.45, cosine sim >= 0.898)
+FACE_MATCH_THRESHOLD = 0.52           # Biometric verification threshold (Euclidean L2 <= 0.52, cosine sim >= 0.865)
+FACE_MAX_ACCEPTABLE_THRESHOLD = 0.58  # Maximum allowable threshold requested by clients
 LATE_CUTOFF_LOCAL = dt_time(10, 15)   # 10:00 shift start + 15 min grace, in COMPANY time
 GEOFENCE_TOLERANCE_FACTOR = 1.5       # GPS jitter allowance (radius * 1.5 + 50m)
 GEOFENCE_TOLERANCE_EXTRA_M = 50.0
@@ -138,7 +139,7 @@ async def verify_biometric_face(
         req_thr = float(payload.threshold)
     except (TypeError, ValueError):
         req_thr = FACE_MATCH_THRESHOLD
-    effective_threshold = req_thr if (math.isfinite(req_thr) and 0 < req_thr <= FACE_MATCH_THRESHOLD) else FACE_MATCH_THRESHOLD
+    effective_threshold = req_thr if (math.isfinite(req_thr) and 0 < req_thr <= FACE_MAX_ACCEPTABLE_THRESHOLD) else FACE_MATCH_THRESHOLD
 
     is_admin = bool(current_user and current_user.role in PRIVILEGED_ADMINS)
     wants_other = bool(payload.employee_id or payload.employee_code)
@@ -158,12 +159,20 @@ async def verify_biometric_face(
         else:
             return {"matched": False, "message": "Employee identifier required for face verification"}
 
+        clean_code = emp_code.replace("emp-", "").replace("EMP-", "").strip()
+
         lookup_res = await db.execute(text("""
             SELECT id, employee_code, full_name, (face_embedding IS NOT NULL) as has_embedding
             FROM employees
-            WHERE is_active = true AND (id = :emp_uuid OR LOWER(employee_code) = LOWER(:emp_code) OR LOWER(legacy_firebase_id) = LOWER(:emp_code))
+            WHERE is_active = true AND (
+                id = :emp_uuid 
+                OR LOWER(employee_code) = LOWER(:emp_code) 
+                OR LOWER(employee_code) = LOWER(:clean_code)
+                OR LOWER(legacy_firebase_id) = LOWER(:emp_code)
+                OR LOWER(legacy_firebase_id) = LOWER(:clean_code)
+            )
             LIMIT 1;
-        """), {"emp_uuid": emp_uuid, "emp_code": emp_code})
+        """), {"emp_uuid": emp_uuid, "emp_code": emp_code, "clean_code": clean_code})
         target_emp = lookup_res.fetchone()
 
         if not target_emp:

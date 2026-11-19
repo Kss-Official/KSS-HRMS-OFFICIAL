@@ -467,7 +467,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             lastVerifyTime = now;
             const descArr = Array.from(scan.descriptor);
 
-            verifyFaceApi(descArr, 0.45, employeeId, employeeCode)
+            verifyFaceApi(descArr, 0.52, employeeId, employeeCode)
               .then((backendRes) => {
                 if (!active) return;
 
@@ -490,10 +490,15 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                   const matchedName = String(backendRes.full_name || '').trim().toLowerCase();
                   const targetName  = String(employeeName || '').trim().toLowerCase();
 
+                  const cleanMatchedCode = matchedCode.replace('emp-', '');
+                  const cleanTargetCode  = targetCode.replace('emp-', '');
+                  const cleanTargetId    = targetId.replace('emp-', '');
+
                   // Valid match if employee_code, employee_id, or full_name corresponds to the target employee
                   const isMatchForTarget = 
+                    (cleanMatchedCode && (cleanMatchedCode === cleanTargetCode || cleanMatchedCode === cleanTargetId)) ||
                     (matchedCode && (matchedCode === targetCode || matchedCode === targetId)) ||
-                    (matchedId && (matchedId === targetId || matchedId === targetCode)) ||
+                    (matchedId && (matchedId === targetId || matchedId === targetCode || matchedId === cleanTargetCode)) ||
                     (matchedName && targetName && (matchedName === targetName || matchedName.includes(targetName) || targetName.includes(matchedName)));
 
                   if (!isMatchForTarget && (targetCode || targetId)) {

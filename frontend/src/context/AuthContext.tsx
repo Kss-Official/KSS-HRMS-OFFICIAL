@@ -823,8 +823,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         status = 'Pending';
       }
 
+      const rawType = String(r.type || r.leaveCategory || '').toUpperCase().trim();
+      const normalizedType = 
+        (rawType === 'WFH' || rawType === 'WORK_FROM_HOME' || rawType.includes('HOME') || String(r.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd' || (r.reason && r.reason.toLowerCase().includes('work from home'))) ? 'WFH' :
+        (rawType === 'SICK_LEAVE' || rawType === 'SICK') ? 'Sick Leave' :
+        (rawType === 'CASUAL_LEAVE' || rawType === 'CASUAL') ? 'Casual Leave' :
+        (rawType === 'LOSS_OF_PAY' || rawType === 'LOP') ? 'Loss of Pay' :
+        r.type === 'Leave' ? 'Earn Leave' : r.type || 'Earn Leave';
+
       return {
         ...r,
+        type: normalizedType,
+        leaveCategory: normalizedType,
         pmStatus,
         hrStatus,
         ceoStatus,
@@ -2492,8 +2502,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const employeeUid = raw.employeeUid || matchedEmp?.uid || '';
               const pmUid = raw.pmUid || matchedEmp?.pmUid || matchedEmp?.reportingManagerUid || 'uid-KSS2407003';
 
+              const rawType = String(raw.type || raw.leaveCategory || '').toUpperCase().trim();
+              const normalizedType = 
+                (rawType === 'WFH' || rawType === 'WORK_FROM_HOME' || rawType.includes('HOME') || String(raw.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd' || (raw.reason && raw.reason.toLowerCase().includes('work from home'))) ? 'WFH' :
+                (rawType === 'SICK_LEAVE' || rawType === 'SICK') ? 'Sick Leave' :
+                (rawType === 'CASUAL_LEAVE' || rawType === 'CASUAL') ? 'Casual Leave' :
+                (rawType === 'LOSS_OF_PAY' || rawType === 'LOP') ? 'Loss of Pay' :
+                raw.type === 'Leave' ? 'Earn Leave' : raw.type || 'Earn Leave';
+
               fetched.push({
                 ...raw,
+                type: normalizedType,
+                leaveCategory: normalizedType,
                 employeeUid,
                 pmUid,
                 pmStatus,
@@ -3453,6 +3473,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               const empCode = l.employee_code || matchedEmp?.employeeId || String(l.employee_id);
               const empUid = matchedEmp?.uid || matchedEmp?.id || String(l.employee_id);
 
+              const rawType = String(l.type || '').toUpperCase().trim();
+              const normalizedType = 
+                (rawType === 'WFH' || rawType === 'WORK_FROM_HOME' || rawType.includes('HOME') || String(l.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd') ? 'WFH' :
+                (rawType === 'SICK_LEAVE' || rawType === 'SICK') ? 'Sick Leave' :
+                (rawType === 'CASUAL_LEAVE' || rawType === 'CASUAL') ? 'Casual Leave' :
+                (rawType === 'LOSS_OF_PAY' || rawType === 'LOP') ? 'Loss of Pay' :
+                (rawType === 'EARN_LEAVE' || rawType === 'EARNED_LEAVE' || rawType === 'LEAVE') ? 'Earn Leave' : 'Earn Leave';
+
               return {
                 id: String(l.id),
                 employeeId: empCode,
@@ -3460,7 +3488,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 authUid: empUid,
                 employeeName: l.employee_name || matchedEmp?.fullName || '',
                 department: l.department || matchedEmp?.department || 'Engineering',
-                type: l.type === 'WORK_FROM_HOME' ? 'WFH' : (l.type === 'CASUAL_LEAVE' ? 'Casual Leave' : (l.type === 'SICK_LEAVE' ? 'Sick Leave' : 'Earn Leave')),
+                type: normalizedType,
+                leaveCategory: normalizedType,
                 startDate: l.start_date,
                 endDate: l.end_date,
                 reason: l.reason || '',

@@ -25,7 +25,7 @@ from app.api.audit_util import add_audit
 router = APIRouter()
 
 MAX_PHOTO_B64_CHARS = 8 * 1024 * 1024  # ~6 MB of image data
-FACE_MATCH_THRESHOLD = 0.45
+FACE_MATCH_THRESHOLD = 0.52
 DUPLICATE_ENROLL_THRESHOLD = 0.28  # Strict threshold for preventing same physical face under two accounts
 
 # Roles that may see every field of every employee.
@@ -109,8 +109,13 @@ def view_for(out: EmployeeOut, viewer: Employee) -> EmployeeOut:
 async def _find_employee(db: AsyncSession, identifier: str) -> Optional[Employee]:
     """Lookup by UUID, employee_code, or legacy firebase id (exact, case-insensitive)."""
     clean = identifier.strip()
-    conds = [func.lower(Employee.employee_code) == clean.lower(),
-             func.lower(Employee.legacy_firebase_id) == clean.lower()]
+    clean_stripped = clean.replace("emp-", "").replace("EMP-", "").strip()
+    conds = [
+        func.lower(Employee.employee_code) == clean.lower(),
+        func.lower(Employee.employee_code) == clean_stripped.lower(),
+        func.lower(Employee.legacy_firebase_id) == clean.lower(),
+        func.lower(Employee.legacy_firebase_id) == clean_stripped.lower(),
+    ]
     try:
         conds.append(Employee.id == uuid.UUID(clean))
     except ValueError:
