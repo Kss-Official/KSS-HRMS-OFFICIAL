@@ -487,7 +487,7 @@ async def get_records(
     employee_id: Optional[UUID] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    limit: int = Query(200, ge=1, le=5000),
+    limit: int = Query(500, ge=1, le=5000),
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):

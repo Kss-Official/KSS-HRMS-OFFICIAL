@@ -1159,7 +1159,7 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
         presentDays++;
       } else if (rec.status === 'Holiday' || nonWorking) {
         holidayDays++;
-      } else if (rec.status === 'Absent' || !isFuture) {
+      } else if (rec.status === 'Absent' || (dateFormatted < todayStr && !rec.checkInAt)) {
         absentDays++;
       }
     } else {
@@ -1169,7 +1169,7 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
         wfhDays++;
       } else if (nonWorking) {
         holidayDays++;
-      } else if (!isFuture) {
+      } else if (dateFormatted < todayStr) {
         absentDays++;
       }
     }
@@ -1797,6 +1797,10 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
                     statusBg = 'bg-slate-950/40 border-slate-900 text-slate-600';
                     statusLabel = 'Upcoming';
                     statusDot = 'bg-slate-800';
+                  } else if (dateFormatted === todayStr) {
+                    statusBg = 'bg-amber-500/10 border-amber-500/30 text-amber-300';
+                    statusLabel = 'Not Checked In';
+                    statusDot = 'bg-amber-400 animate-pulse';
                   } else {
                     statusBg = 'bg-rose-500/10 border-rose-500/30 text-rose-300';
                     statusLabel = 'Absent';
