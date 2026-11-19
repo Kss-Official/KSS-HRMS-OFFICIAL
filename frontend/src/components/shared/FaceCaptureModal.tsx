@@ -663,33 +663,44 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             </div>
           )}
 
-          {/* Overlay: Fatal Camera Error — informational only, no bypass action */}
-          {errorMsg && (
-            <div className="absolute inset-0 bg-slate-950/95 z-30 flex flex-col items-center justify-center p-6 text-center space-y-4">
-              <div className="w-16 h-16 rounded-2xl bg-rose-500/10 border border-rose-500/30 flex items-center justify-center">
-                <ShieldX className="w-8 h-8 text-rose-400" />
+          {/* Overlay: Fatal Camera Error / Security Error — informational only, no bypass action */}
+          {errorMsg && (() => {
+            const isSecurity = errorMsg.toLowerCase().includes('security violation') || 
+                               errorMsg.toLowerCase().includes('already enrolled') || 
+                               errorMsg.toLowerCase().includes('cross-employee') ||
+                               errorMsg.toLowerCase().includes('forbidden') ||
+                               errorMsg.toLowerCase().includes('blocked');
+            return (
+              <div className="absolute inset-0 bg-slate-950/95 z-30 flex flex-col items-center justify-center p-6 text-center space-y-4">
+                <div className={`w-16 h-16 rounded-2xl ${isSecurity ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-rose-500/10 border border-rose-500/30'} flex items-center justify-center`}>
+                  <ShieldX className={`w-8 h-8 ${isSecurity ? 'text-amber-400' : 'text-rose-400'}`} />
+                </div>
+                <div className="space-y-2">
+                  <p className={`text-sm font-bold ${isSecurity ? 'text-amber-300' : 'text-rose-300'}`}>
+                    {isSecurity ? 'Biometric Security Alert' : 'Camera Access Required'}
+                  </p>
+                  <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">{errorMsg}</p>
+                  <p className="text-[10px] text-slate-500 leading-relaxed">
+                    {isSecurity 
+                      ? 'Anti-proxy security is active. Each employee must enroll with their own unique face.'
+                      : 'Biometric face verification requires camera access. Please grant permission in your browser settings and reload.'}
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setErrorMsg(null);
+                    setStatusStep(isSecurity ? 'SCANNING' : 'LOADING_MODELS');
+                    setFeedbackText(isSecurity ? 'Position face within frame...' : 'Retrying camera access...');
+                  }}
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  <span>{isSecurity ? 'Retry Scan' : 'Retry Camera Access'}</span>
+                </button>
               </div>
-              <div className="space-y-2">
-                <p className="text-sm font-bold text-rose-300">Camera Access Required</p>
-                <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">{errorMsg}</p>
-                <p className="text-[10px] text-slate-500 leading-relaxed">
-                  Biometric face verification requires camera access. Please grant permission in your browser settings and reload.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => {
-                  setErrorMsg(null);
-                  setStatusStep('LOADING_MODELS');
-                  setFeedbackText('Retrying camera access...');
-                }}
-                className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <RefreshCw className="w-4 h-4" />
-                <span>Retry Camera Access</span>
-              </button>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Top Floating Badges */}
           <div className="absolute top-4 left-4 right-4 flex items-center justify-between pointer-events-none">
