@@ -5,43 +5,101 @@
 import * as faceapi from '@vladmandic/face-api';
 
 const MODEL_URLS = [
+  '/models',
   '/models/',
-  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api/model/',
-  'https://raw.githubusercontent.com/vladmandic/face-api/master/model/',
-  'https://cdn.jsdelivr.net/gh/vladmandic/face-api@master/model/'
+  'https://kss-hrms-official.vercel.app/models',
+  'https://kalpanaaa-employees-website.web.app/models',
+  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model',
+  'https://unpkg.com/@vladmandic/face-api@1.7.15/model'
 ];
 
 let isModelsLoaded = false;
 let modelLoadingPromise: Promise<void> | null = null;
 
+// Helper to wrap a promise with a timeout
+const withTimeout = <T>(promise: Promise<T>, ms: number, desc: string): Promise<T> => {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`Timeout of ${ms}ms exceeded while loading ${desc}`));
+    }, ms);
+    promise
+      .then(res => {
+        clearTimeout(timer);
+        resolve(res);
+      })
+      .catch(err => {
+        clearTimeout(timer);
+        reject(err);
+      });
+  });
+};
+
 // Initialize and load lightweight face recognition models with multi-CDN fallback
 export const loadFaceModels = async (): Promise<void> => {
-  if (isModelsLoaded) return;
+  // If already loaded in memory, return immediately
+  if (isModelsLoaded && faceapi.nets.tinyFaceDetector.isLoaded && faceapi.nets.faceLandmark68TinyNet.isLoaded && faceapi.nets.faceRecognitionNet.isLoaded) {
+    return;
+  }
   if (modelLoadingPromise) return modelLoadingPromise;
 
   modelLoadingPromise = (async () => {
     for (const url of MODEL_URLS) {
       try {
-        console.log(`[FaceEngine] Loading neural face models from ${url}...`);
-        await Promise.all([
-          faceapi.nets.tinyFaceDetector.loadFromUri(url),
-          faceapi.nets.faceLandmark68TinyNet.loadFromUri(url),
-          faceapi.nets.faceRecognitionNet.loadFromUri(url)
-        ]);
-        isModelsLoaded = true;
-        console.log('[FaceEngine] Neural face models loaded successfully into memory!');
-        return;
+        console.log(`[FaceEngine] Attempting to load neural face models from: ${url}`);
+
+        // 1. Tiny Face Detector (~190 KB)
+        if (!faceapi.nets.tinyFaceDetector.isLoaded) {
+          await withTimeout(
+            faceapi.nets.tinyFaceDetector.loadFromUri(url),
+            8000,
+            `tinyFaceDetector from ${url}`
+          );
+        }
+
+        // 2. Face Landmark 68 Tiny (~77 KB)
+        if (!faceapi.nets.faceLandmark68TinyNet.isLoaded) {
+          await withTimeout(
+            faceapi.nets.faceLandmark68TinyNet.loadFromUri(url),
+            8000,
+            `faceLandmark68TinyNet from ${url}`
+          );
+        }
+
+        // 3. Face Recognition Net (~6.4 MB)
+        if (!faceapi.nets.faceRecognitionNet.isLoaded) {
+          await withTimeout(
+            faceapi.nets.faceRecognitionNet.loadFromUri(url),
+            15000,
+            `faceRecognitionNet from ${url}`
+          );
+        }
+
+        if (
+          faceapi.nets.tinyFaceDetector.isLoaded &&
+          faceapi.nets.faceLandmark68TinyNet.isLoaded &&
+          faceapi.nets.faceRecognitionNet.isLoaded
+        ) {
+          isModelsLoaded = true;
+          console.log(`[FaceEngine] All neural face models loaded successfully from ${url}!`);
+          return;
+        }
       } catch (err) {
-        console.warn(`[FaceEngine] CDN source ${url} failed, trying next fallback...`, err);
+        console.warn(`[FaceEngine] Source ${url} failed or timed out, trying next fallback...`, err);
       }
     }
-    // Fallback: mark loaded if nets are loaded in background
-    if (faceapi.nets.tinyFaceDetector.isLoaded && faceapi.nets.faceRecognitionNet.isLoaded) {
+
+    // Final check if required networks are loaded
+    if (
+      faceapi.nets.tinyFaceDetector.isLoaded &&
+      faceapi.nets.faceLandmark68TinyNet.isLoaded &&
+      faceapi.nets.faceRecognitionNet.isLoaded
+    ) {
       isModelsLoaded = true;
       return;
     }
+
     modelLoadingPromise = null;
-    throw new Error('Could not load face recognition neural models from CDN sources.');
+    throw new Error('Face recognition AI models could not be downloaded. Please verify your internet connection and tap Retry.');
   })();
 
   return modelLoadingPromise;

@@ -63,6 +63,7 @@ import {
   getAttendanceRecordsApi,
   checkInApi,
   checkOutApi,
+  correctAttendanceApi,
   breakActionApi,
   endBreakApi,
   getLeavesApi,
@@ -6209,16 +6210,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 100% NEON POSTGRESQL PRIMARY ATTENDANCE CORRECTION
     if (getAuthToken()) {
       const empCode = emp?.employeeId || record.employeeCode;
-      if (empCode && updates.checkOutAt) {
-        try {
-          await checkOutApi({
-            employee_code: empCode,
-            check_out_at: updates.checkOutAt,
-            notes: updates.notes || 'Attendance checkout correction'
-          });
-        } catch (e) {
-          console.warn('[FastAPI] checkOutApi bulk correction sync note:', e);
-        }
+      const empUuid = emp?.id && !emp.id.startsWith('emp-') ? emp.id : undefined;
+      const isSynthetic = Boolean(record.isSynthetic || !record.id || record.id.startsWith('synthetic_') || record.id.includes('_'));
+      const isRealUuid = Boolean(record.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.id));
+
+      try {
+        await correctAttendanceApi({
+          record_id: isRealUuid ? record.id : undefined,
+          employee_id: empUuid,
+          employee_code: empCode,
+          date: record.date,
+          check_in_at: updates.checkInAt !== undefined ? updates.checkInAt : record.checkInAt,
+          check_out_at: updates.checkOutAt !== undefined ? updates.checkOutAt : record.checkOutAt,
+          status: updates.status || record.status,
+          working_minutes: updates.workingMinutes !== undefined ? updates.workingMinutes : record.workingMinutes,
+          notes: updates.notes || record.notes
+        });
+      } catch (e) {
+        console.warn('[FastAPI] correctAttendanceApi note:', e);
       }
     }
 

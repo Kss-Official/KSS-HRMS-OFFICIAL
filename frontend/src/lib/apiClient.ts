@@ -442,6 +442,23 @@ export async function checkOutApi(params: {
   });
 }
 
+export async function correctAttendanceApi(params: {
+  record_id?: string;
+  employee_id?: string;
+  employee_code?: string;
+  date?: string;
+  check_in_at?: string | null;
+  check_out_at?: string | null;
+  status?: string;
+  working_minutes?: number;
+  notes?: string;
+}): Promise<any> {
+  return apiRequest('/attendance/correction', {
+    method: 'POST',
+    body: JSON.stringify(params)
+  });
+}
+
 export async function breakActionApi(breakType: string): Promise<any> {
   try {
     return await apiRequest('/attendance/breaks/start', {

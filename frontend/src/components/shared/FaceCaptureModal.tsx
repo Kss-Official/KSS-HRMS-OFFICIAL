@@ -63,6 +63,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
   const [isEnrolled, setIsEnrolled] = useState<boolean>(false);
   const [profileDescriptor, setProfileDescriptor] = useState<Float32Array | null>(null);
   const [currentModeIsEnroll, setCurrentModeIsEnroll] = useState<boolean>(isEnrollmentMode);
+  const [retryTrigger, setRetryTrigger] = useState<number>(0);
 
   // Progressive Smartphone FaceID Multi-Sample State
   const [enrollmentProgress, setEnrollmentProgress] = useState<number>(0);
@@ -127,45 +128,55 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         setStatusStep('LOADING_MODELS');
         setFeedbackText('Loading neural network face models...');
 
-        // Start camera stream acquisition with adaptive HD resolution and smooth fallback
-        let mediaStream: MediaStream | null = null;
-        try {
-          mediaStream = await navigator.mediaDevices.getUserMedia({
-            video: {
-              facingMode: 'user',
-              width: { ideal: 1280, min: 640 },
-              height: { ideal: 720, min: 480 },
-              frameRate: { ideal: 30, min: 15 }
-            },
-            audio: false
-          });
-        } catch {
-          // Fallback to standard 640x480 video
+        // If an active stream already exists (e.g. from camera already granted), reuse it cleanly
+        let mediaStream = streamRef.current;
+        const isStreamActive = Boolean(
+          mediaStream &&
+          mediaStream.active &&
+          mediaStream.getVideoTracks().some(t => t.readyState === 'live')
+        );
+
+        if (!isStreamActive) {
+          // Start camera stream acquisition with adaptive HD resolution and smooth fallback
           try {
             mediaStream = await navigator.mediaDevices.getUserMedia({
-              video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
+              video: {
+                facingMode: 'user',
+                width: { ideal: 1280, min: 640 },
+                height: { ideal: 720, min: 480 },
+                frameRate: { ideal: 30, min: 15 }
+              },
               audio: false
             });
           } catch {
-            // Fallback to generic video
+            // Fallback to standard 640x480 video
             try {
               mediaStream = await navigator.mediaDevices.getUserMedia({
-                video: true,
+                video: { facingMode: 'user', width: { ideal: 640 }, height: { ideal: 480 } },
                 audio: false
               });
             } catch {
-              throw new Error('Camera access denied. Please allow camera permission in browser settings and try again.');
+              // Fallback to generic video
+              try {
+                mediaStream = await navigator.mediaDevices.getUserMedia({
+                  video: true,
+                  audio: false
+                });
+              } catch {
+                throw new Error('Camera access denied. Please allow camera permission in browser settings and try again.');
+              }
             }
+          }
+
+          if (isMounted && mediaStream) {
+            streamRef.current = mediaStream;
+            setStream(mediaStream);
+          } else if (mediaStream) {
+            mediaStream.getTracks().forEach(t => t.stop());
           }
         }
 
-        if (isMounted && mediaStream) {
-          streamRef.current = mediaStream;
-          setStream(mediaStream);
-        } else if (mediaStream) {
-          mediaStream.getTracks().forEach(t => t.stop());
-        }
-
+        // Load models with multi-mirror resilient fallback (local -> vercel edge -> firebase -> cdn)
         await loadFaceModels();
 
         if (isMounted) {
@@ -175,7 +186,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
       } catch (err: any) {
         if (isMounted) {
           console.error('[FaceCaptureModal] Error:', err);
-          setErrorMsg(err?.message || 'Camera access or model loading failed. Please check permissions.');
+          setErrorMsg(err?.message || 'Biometric initialization failed. Please check permissions.');
           setStatusStep('ERROR');
         }
       }
@@ -194,7 +205,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
         streamRef.current = null;
       }
     };
-  }, [isOpen]);
+  }, [isOpen, retryTrigger]);
 
   // Guaranteed video stream binding hook whenever stream or video element is available
   useEffect(() => {
@@ -663,40 +674,74 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             </div>
           )}
 
-          {/* Overlay: Fatal Camera Error / Security Error — informational only, no bypass action */}
+          {/* Overlay: Fatal Camera Error / Model Loading Error / Security Error */}
           {errorMsg && (() => {
-            const isSecurity = errorMsg.toLowerCase().includes('security violation') || 
-                               errorMsg.toLowerCase().includes('already enrolled') || 
-                               errorMsg.toLowerCase().includes('cross-employee') ||
-                               errorMsg.toLowerCase().includes('forbidden') ||
-                               errorMsg.toLowerCase().includes('blocked');
+            const errLower = errorMsg.toLowerCase();
+            const isSecurity = errLower.includes('security violation') || 
+                               errLower.includes('already enrolled') || 
+                               errLower.includes('cross-employee') ||
+                               errLower.includes('forbidden') ||
+                               errLower.includes('blocked');
+            const isModelError = errLower.includes('model') ||
+                                 errLower.includes('cdn') ||
+                                 errLower.includes('neural') ||
+                                 errLower.includes('download') ||
+                                 errLower.includes('network') ||
+                                 errLower.includes('weights') ||
+                                 errLower.includes('fetch') ||
+                                 errLower.includes('timeout');
+
+            let headerTitle = 'Camera Access Required';
+            let descriptionText = 'Biometric face verification requires camera access. Please grant permission in your browser settings and reload.';
+            let buttonLabel = 'Retry Camera Access';
+            let iconColor = 'text-rose-400';
+            let bgBox = 'bg-rose-500/10 border-rose-500/30';
+
+            if (isSecurity) {
+              headerTitle = 'Biometric Security Alert';
+              descriptionText = 'Anti-proxy security is active. Each employee must enroll with their own unique face.';
+              buttonLabel = 'Retry Scan';
+              iconColor = 'text-amber-400';
+              bgBox = 'bg-amber-500/10 border-amber-500/30';
+            } else if (isModelError) {
+              headerTitle = 'AI Neural Models Loading';
+              descriptionText = 'Face recognition AI neural network weights could not be loaded. Please ensure internet connectivity and tap Retry.';
+              buttonLabel = 'Retry Model Download';
+              iconColor = 'text-blue-400';
+              bgBox = 'bg-blue-500/10 border-blue-500/30';
+            }
+
             return (
               <div className="absolute inset-0 bg-slate-950/95 z-30 flex flex-col items-center justify-center p-6 text-center space-y-4">
-                <div className={`w-16 h-16 rounded-2xl ${isSecurity ? 'bg-amber-500/10 border border-amber-500/30' : 'bg-rose-500/10 border border-rose-500/30'} flex items-center justify-center`}>
-                  <ShieldX className={`w-8 h-8 ${isSecurity ? 'text-amber-400' : 'text-rose-400'}`} />
+                <div className={`w-16 h-16 rounded-2xl ${bgBox} border flex items-center justify-center`}>
+                  <ShieldX className={`w-8 h-8 ${iconColor}`} />
                 </div>
                 <div className="space-y-2">
-                  <p className={`text-sm font-bold ${isSecurity ? 'text-amber-300' : 'text-rose-300'}`}>
-                    {isSecurity ? 'Biometric Security Alert' : 'Camera Access Required'}
+                  <p className={`text-sm font-bold ${isSecurity ? 'text-amber-300' : isModelError ? 'text-blue-300' : 'text-rose-300'}`}>
+                    {headerTitle}
                   </p>
                   <p className="text-xs text-slate-300 leading-relaxed max-w-xs mx-auto">{errorMsg}</p>
                   <p className="text-[10px] text-slate-500 leading-relaxed">
-                    {isSecurity 
-                      ? 'Anti-proxy security is active. Each employee must enroll with their own unique face.'
-                      : 'Biometric face verification requires camera access. Please grant permission in your browser settings and reload.'}
+                    {descriptionText}
                   </p>
                 </div>
                 <button
                   type="button"
                   onClick={() => {
                     setErrorMsg(null);
-                    setStatusStep(isSecurity ? 'SCANNING' : 'LOADING_MODELS');
-                    setFeedbackText(isSecurity ? 'Position face within frame...' : 'Retrying camera access...');
+                    if (isSecurity) {
+                      setStatusStep('SCANNING');
+                      setFeedbackText('Position face within frame...');
+                    } else {
+                      setStatusStep('LOADING_MODELS');
+                      setFeedbackText(isModelError ? 'Downloading neural face models...' : 'Retrying camera access...');
+                      setRetryTrigger(prev => prev + 1);
+                    }
                   }}
-                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer"
+                  className="px-5 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-extrabold text-xs rounded-xl shadow-lg flex items-center justify-center gap-2 cursor-pointer transition-transform active:scale-95"
                 >
                   <RefreshCw className="w-4 h-4" />
-                  <span>{isSecurity ? 'Retry Scan' : 'Retry Camera Access'}</span>
+                  <span>{buttonLabel}</span>
                 </button>
               </div>
             );

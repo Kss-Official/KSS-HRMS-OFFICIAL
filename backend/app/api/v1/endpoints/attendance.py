@@ -21,7 +21,8 @@ from app.models.enums import AttendanceStatus, AttendanceMethod, BreakType, User
 from app.schemas.attendance import (
     CheckInRequest, CheckOutRequest, AttendanceRecordOut,
     BreakActionRequest, AttendanceBreakOut,
-    BiometricMatchRequest, BiometricMatchResponse
+    BiometricMatchRequest, BiometricMatchResponse,
+    AttendanceCorrectionRequest
 )
 from app.api.deps import get_current_user
 
@@ -525,3 +526,118 @@ async def get_records(
         _RECORDS_CACHE.clear()
     _RECORDS_CACHE[cache_key] = (now_ts + _RECORDS_CACHE_TTL, out_records)
     return out_records
+
+
+def map_attendance_status(val: Optional[str]) -> Optional[AttendanceStatus]:
+    if not val:
+        return None
+    cleaned = val.strip().upper().replace(" ", "_").replace("-", "_")
+    mapping = {
+        "PRESENT": AttendanceStatus.PRESENT,
+        "LATE": AttendanceStatus.LATE,
+        "WORK_FROM_HOME": AttendanceStatus.WORK_FROM_HOME,
+        "WFH": AttendanceStatus.WORK_FROM_HOME,
+        "HALF_DAY": AttendanceStatus.HALF_DAY,
+        "ON_LEAVE": AttendanceStatus.ON_LEAVE,
+        "LEAVE": AttendanceStatus.ON_LEAVE,
+        "ABSENT": AttendanceStatus.ABSENT,
+        "HOLIDAY": AttendanceStatus.HOLIDAY,
+    }
+    return mapping.get(cleaned, AttendanceStatus.PRESENT)
+
+
+@router.post("/correction", response_model=AttendanceRecordOut)
+@router.patch("/records/{record_id}", response_model=AttendanceRecordOut)
+async def correct_attendance(
+    payload: AttendanceCorrectionRequest,
+    record_id: Optional[UUID] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER):
+        raise HTTPException(
+            status_code=403,
+            detail="Access Denied: Only Project Managers, HR Admins, and Super Admins can override attendance."
+        )
+
+    target_record_id = record_id or payload.record_id
+
+    # 1. Resolve target employee
+    target_emp: Optional[Employee] = None
+    if payload.employee_id:
+        target_emp = (await db.execute(select(Employee).where(Employee.id == payload.employee_id))).scalar_one_or_none()
+    if not target_emp and payload.employee_code:
+        code_clean = payload.employee_code.strip().lower()
+        target_emp = (await db.execute(select(Employee).where(
+            or_(
+                func.lower(Employee.employee_code) == code_clean,
+                func.lower(Employee.legacy_firebase_id) == code_clean
+            )
+        ))).scalar_one_or_none()
+
+    # 2. Locate existing record
+    rec: Optional[AttendanceRecord] = None
+    if target_record_id:
+        rec = (await db.execute(
+            select(AttendanceRecord).where(AttendanceRecord.id == target_record_id).options(selectinload(AttendanceRecord.breaks))
+        )).scalar_one_or_none()
+
+    target_date = payload.date or (payload.check_in_at.date() if payload.check_in_at else None)
+    if not rec and target_emp and target_date:
+        rec = (await db.execute(
+            select(AttendanceRecord).where(
+                and_(AttendanceRecord.employee_id == target_emp.id, AttendanceRecord.date == target_date)
+            ).options(selectinload(AttendanceRecord.breaks))
+        )).scalar_one_or_none()
+
+    # 3. If record doesn't exist yet, create it
+    if not rec:
+        if not target_emp:
+            raise HTTPException(status_code=404, detail="Attendance record or target employee could not be resolved.")
+        if not target_date:
+            target_date = date.today()
+        rec = AttendanceRecord(
+            id=uuid.uuid4(),
+            employee_id=target_emp.id,
+            date=target_date,
+            status=AttendanceStatus.PRESENT,
+            attendance_method=AttendanceMethod.HR_CORRECTION,
+            location_verified=True,
+            is_wfh=False
+        )
+        db.add(rec)
+    elif not target_emp:
+        target_emp = (await db.execute(select(Employee).where(Employee.id == rec.employee_id))).scalar_one_or_none()
+
+    # 4. Apply updates
+    if payload.check_in_at is not None:
+        rec.check_in_at = payload.check_in_at
+    if payload.check_out_at is not None:
+        rec.check_out_at = payload.check_out_at
+    if payload.status:
+        st = map_attendance_status(payload.status)
+        if st:
+            rec.status = st
+            if st == AttendanceStatus.WORK_FROM_HOME:
+                rec.is_wfh = True
+    if payload.working_minutes is not None:
+        rec.working_minutes = payload.working_minutes
+    elif rec.check_in_at and rec.check_out_at:
+        gross_secs = (rec.check_out_at - rec.check_in_at).total_seconds()
+        rec.working_minutes = max(0, int(gross_secs / 60))
+    if payload.notes:
+        rec.notes = payload.notes if not rec.notes else f"{rec.notes} | {payload.notes}"
+
+    rec.corrected_by_id = current_user.id
+    rec.updated_at = datetime.now(timezone.utc)
+
+    invalidate_records_cache()
+    await db.commit()
+    await db.refresh(rec)
+
+    out = AttendanceRecordOut.model_validate(rec)
+    if target_emp:
+        out.employee_code = target_emp.employee_code
+        out.employee_name = target_emp.full_name
+        out.department = target_emp.department
+    return out

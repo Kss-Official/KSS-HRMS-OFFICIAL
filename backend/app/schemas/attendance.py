@@ -61,6 +61,17 @@ class BiometricMatchRequest(BaseModel):
     employee_id: Optional[UUID] = None
     employee_code: Optional[str] = None
 
+class AttendanceCorrectionRequest(BaseModel):
+    record_id: Optional[UUID] = None
+    employee_id: Optional[UUID] = None
+    employee_code: Optional[str] = None
+    date: Optional[date] = None
+    check_in_at: Optional[datetime] = None
+    check_out_at: Optional[datetime] = None
+    status: Optional[str] = None
+    working_minutes: Optional[int] = None
+    notes: Optional[str] = None
+
 class BiometricMatchResponse(BaseModel):
     matched: bool
     employee_id: Optional[UUID] = None
