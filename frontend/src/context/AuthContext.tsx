@@ -84,7 +84,8 @@ import {
   setAuthToken,
   removeAuthToken,
   clearApiCache,
-  changePasswordApi
+  changePasswordApi,
+  syncFirebaseSessionApi
 } from '../lib/apiClient';
 import { resetAllLocalFaceDescriptors, clearEmployeeDescriptor, saveEmployeeDescriptor, isFaceBiometricEnrolled } from '../lib/faceDescriptorStore';
 import { getEmployeeAvatar, LOCAL_AVATARS } from '../lib/avatarHelper';
@@ -3617,6 +3618,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setUser(firebaseUser);
       setIsDemoMode(false);
+      if (!getAuthToken() && (firebaseUser.email || firebaseUser.uid)) {
+        try {
+          const fbToken = await firebaseUser.getIdToken().catch(() => null);
+          await syncFirebaseSessionApi(firebaseUser.email, firebaseUser.uid, fbToken);
+        } catch (syncErr) {
+          console.warn('[AuthContext] syncFirebaseSessionApi failed:', syncErr);
+        }
+      }
       const cleanEmail = firebaseUser.email?.trim().toLowerCase();
       const empList = (employeesRef.current && employeesRef.current.length > 0)
         ? employeesRef.current

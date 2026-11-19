@@ -1,6 +1,6 @@
 import time
 from collections import defaultdict, deque
-from typing import Deque, Dict
+from typing import Deque, Dict, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel
@@ -172,6 +172,50 @@ async def refresh_access_token(payload: RefreshRequest, db: AsyncSession = Depen
     if emp is None or not emp.is_active:
         raise bad
     return {"access_token": create_access_token(subject=str(emp.id)), "token_type": "bearer"}
+
+
+class FirebaseSyncRequest(BaseModel):
+    firebase_token: Optional[str] = None
+    email: Optional[str] = None
+    uid: Optional[str] = None
+
+
+@router.post("/firebase-sync", response_model=Token)
+async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession = Depends(get_db)):
+    """Issue a valid FastAPI JWT token for an employee authenticated via Firebase Auth."""
+    email_clean = (payload.email or "").strip().lower()
+    uid_clean = (payload.uid or "").strip()
+
+    if not email_clean and not uid_clean:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email or UID required")
+
+    stmt = select(Employee).where(
+        or_(
+            func.lower(Employee.email) == email_clean,
+            Employee.legacy_firebase_id == uid_clean
+        )
+    ).limit(1)
+    emp = (await db.execute(stmt)).scalar_one_or_none()
+    if not emp:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+    if not emp.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
+
+    return {
+        "access_token": create_access_token(subject=str(emp.id)),
+        "refresh_token": create_refresh_token(subject=str(emp.id)),
+        "token_type": "bearer",
+        "employee_id": emp.id,
+        "employee_code": emp.employee_code,
+        "email": emp.email,
+        "full_name": emp.full_name,
+        "role": emp.role,
+        "executive_tier": emp.executive_tier,
+        "profile_photo_url": emp.profile_photo_url,
+        "department": emp.department,
+        "designation": emp.designation,
+        "is_active": emp.is_active,
+    }
 
 
 @router.get("/me", response_model=EmployeeOut)

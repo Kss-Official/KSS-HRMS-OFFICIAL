@@ -17,8 +17,8 @@ class Settings(BaseSettings):
     # Security & Auth
     SECRET_KEY: str
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480
-    REFRESH_TOKEN_EXPIRE_DAYS: int = 30
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 10080  # 7 days
+    REFRESH_TOKEN_EXPIRE_DAYS: int = 60      # 60 days
 
     # CORS
     CORS_ORIGINS: List[str] = [

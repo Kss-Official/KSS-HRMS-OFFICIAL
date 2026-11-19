@@ -53,8 +53,17 @@ export function setAuthToken(token: string): void {
   localStorage.setItem('kalpanaaa_jwt_token', token);
 }
 
+export function getRefreshToken(): string | null {
+  return localStorage.getItem('kalpanaaa_refresh_token');
+}
+
+export function setRefreshToken(token: string): void {
+  localStorage.setItem('kalpanaaa_refresh_token', token);
+}
+
 export function removeAuthToken(): void {
   localStorage.removeItem('kalpanaaa_jwt_token');
+  localStorage.removeItem('kalpanaaa_refresh_token');
   try { clearApiCache(); } catch {}
 }
 
@@ -239,14 +248,46 @@ export async function apiRequest<T>(
         headers,
       });
 
-      // Only treat 401 as "session expired" when we actually sent a token. An anonymous request that
-      // is rejected (e.g. on a public page) must not redirect the visitor or wipe state.
+      // 401 Session Handling with Automatic Refresh Token Recovery
       if (response.status === 401 && token) {
+        const refreshToken = getRefreshToken();
+        if (refreshToken && !url.includes('/auth/refresh') && !url.includes('/auth/login')) {
+          try {
+            const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ refresh_token: refreshToken })
+            });
+            if (refreshRes.ok) {
+              const refreshData = await refreshRes.json();
+              if (refreshData.access_token) {
+                setAuthToken(refreshData.access_token);
+                // Seamlessly retry the original request with the fresh access token
+                const retryHeaders = {
+                  ...headers,
+                  'Authorization': `Bearer ${refreshData.access_token}`
+                };
+                const retryResponse = await fetch(url, {
+                  ...options,
+                  headers: retryHeaders
+                });
+                if (retryResponse.ok) {
+                  if (retryResponse.status === 204) return {} as T;
+                  const retryData = await retryResponse.json();
+                  if (method === 'GET') {
+                    apiCache.set(url, { data: retryData, expiresAt: Date.now() + CACHE_TTL_MS });
+                    setSessionCachedData(url, retryData, CACHE_TTL_MS);
+                  }
+                  return retryData as T;
+                }
+              }
+            }
+          } catch (refreshErr) {
+            console.warn('[API] Automatic token refresh failed:', refreshErr);
+          }
+        }
         removeAuthToken();
         clearApiCache();
-        if (typeof window !== 'undefined' && window.location.pathname !== '/') {
-          window.location.href = '/';
-        }
       }
 
       if (!response.ok) {
@@ -325,6 +366,30 @@ export async function loginApi(email: string, pass: string): Promise<ApiLoginRes
 
   const data: ApiLoginResponse = await res.json();
   setAuthToken(data.access_token);
+  if (data.refresh_token) {
+    setRefreshToken(data.refresh_token);
+  }
+  return data;
+}
+
+export async function syncFirebaseSessionApi(email?: string | null, uid?: string | null, firebaseToken?: string | null): Promise<any> {
+  const cleanEndpoint = API_BASE_URL.endsWith('/api/v1') ? '' : '/api/v1';
+  const url = `${API_BASE_URL}${cleanEndpoint}/auth/firebase-sync`;
+  const res = await fetch(url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email: email || null, uid: uid || null, firebase_token: firebaseToken || null })
+  });
+  if (!res.ok) {
+    throw new Error('Firebase session sync failed');
+  }
+  const data = await res.json();
+  if (data.access_token) {
+    setAuthToken(data.access_token);
+    if (data.refresh_token) {
+      setRefreshToken(data.refresh_token);
+    }
+  }
   return data;
 }
 
