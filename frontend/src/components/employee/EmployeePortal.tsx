@@ -2503,9 +2503,20 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                       <span>📸 Register Biometric Face Template</span>
                     </button>
                   ) : (
-                    <div className="px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl flex items-center gap-2">
-                      <ShieldCheck className="w-4 h-4 text-emerald-400" />
-                      <span>Biometrics Verified &amp; Locked</span>
+                    <div className="flex items-center gap-2">
+                      <div className="px-4 py-2.5 bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 font-bold text-xs rounded-xl flex items-center gap-2">
+                        <ShieldCheck className="w-4 h-4 text-emerald-400" />
+                        <span>Biometrics Verified</span>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => setIsEnrollFaceModalOpen(true)}
+                        className="px-3.5 py-2.5 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white border border-slate-700 font-bold text-xs rounded-xl flex items-center gap-1.5 cursor-pointer transition-all"
+                        title="Re-capture and update your 128D facial biometric template"
+                      >
+                        <RotateCcw className="w-3.5 h-3.5 text-blue-400" />
+                        <span>Re-enroll</span>
+                      </button>
                     </div>
                   )}
 
@@ -3116,6 +3127,13 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           triggerHaptic('success');
           setActionFeedback({ success: true, message: '✓ Live Facial Recognition Accuracy Test Passed (95%+ Confidence)' });
           setTimeout(() => setActionFeedback(null), 3000);
+        }}
+        onEnrollSuccess={async (descriptorArray) => {
+          triggerHaptic('success');
+          const res = await enrollEmployeeBiometrics(activeEmployee.id, descriptorArray, true);
+          if (!res.success) throw new Error(res.message);
+          setActionFeedback({ success: true, message: '✓ Face Biometrics Successfully Re-Enrolled & Verified!' });
+          setTimeout(() => setActionFeedback(null), 3500);
         }}
         employeeName={activeEmployee.fullName}
         employeeId={activeEmployee.id}

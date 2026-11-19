@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from uuid import UUID
 from datetime import date, datetime
 from typing import Optional
@@ -14,6 +14,17 @@ class LeaveRequestCreate(BaseModel):
 class ExecutiveLeaveReview(BaseModel):
     action: ApprovalStatus # APPROVED, REJECTED
     notes: Optional[str] = None
+
+    @field_validator("action", mode="before")
+    @classmethod
+    def normalize_action(cls, v):
+        if isinstance(v, str):
+            clean = v.strip().upper()
+            if clean in ("APPROVE", "APPROVED"):
+                return ApprovalStatus.APPROVED
+            if clean in ("REJECT", "REJECTED"):
+                return ApprovalStatus.REJECTED
+        return v
 
 class LeaveReviewRequest(ExecutiveLeaveReview):
     pass

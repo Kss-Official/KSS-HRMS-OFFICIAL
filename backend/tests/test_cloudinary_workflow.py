@@ -22,11 +22,14 @@ from app.core.cloudinary_service import (
 )
 import cloudinary.api
 
+import pytest
+
 # 1x1 test image 1 (blue pixel)
 BLUE_PIXEL_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkWPjfDwAE4QHs7c8l8AAAAABJRU5ErkJggg=="
 # 1x1 test image 2 (red pixel)
 RED_PIXEL_BASE64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=="
 
+@pytest.mark.asyncio
 async def test_cloudinary_lifecycle():
     print("======================================================================")
     print("STARTING CLOUDINARY PHOTO UPLOAD, UPDATE & PURGE LIFECYCLE AUDIT")
@@ -38,10 +41,20 @@ async def test_cloudinary_lifecycle():
     print(f"1. Cloudinary Ping: {ping_res} [PASS]")
     assert ping_res.get("status") == "ok"
 
+    from app.core.security import create_access_token
+    from app.core.database import AsyncSessionLocal
+    from app.models.employee import Employee
+    from sqlalchemy import select
+
+    async with AsyncSessionLocal() as db:
+        akash = (await db.execute(select(Employee).where(Employee.employee_code == "KSS2407013"))).scalar_one()
+        token = create_access_token(str(akash.id))
+        headers = {"Authorization": f"Bearer {token}"}
+
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # 2. Upload initial photo (Blue Pixel) for Akash SB
         print("\n2. Uploading Photo 1 (Initial Profile Photo)...")
-        res1 = await client.post("/api/v1/employees/KSS2407013/photo", json={"photo_data": BLUE_PIXEL_BASE64})
+        res1 = await client.post("/api/v1/employees/KSS2407013/photo", json={"photo_data": BLUE_PIXEL_BASE64}, headers=headers)
         print(f"   Upload 1 Status: [{res1.status_code}]")
         assert res1.status_code == 200
         photo1_url = res1.json().get("profile_photo_url")
@@ -58,7 +71,7 @@ async def test_cloudinary_lifecycle():
 
         # 3. Upload replacement photo (Red Pixel) - should trigger auto-deletion of Photo 1
         print("\n3. Uploading Photo 2 (Updated Profile Photo) - Must Delete Photo 1...")
-        res2 = await client.post("/api/v1/employees/KSS2407013/photo", json={"photo_data": RED_PIXEL_BASE64})
+        res2 = await client.post("/api/v1/employees/KSS2407013/photo", json={"photo_data": RED_PIXEL_BASE64}, headers=headers)
         print(f"   Upload 2 Status: [{res2.status_code}]")
         assert res2.status_code == 200
         photo2_url = res2.json().get("profile_photo_url")
@@ -96,7 +109,7 @@ async def test_cloudinary_lifecycle():
             akash_bytes = f.read()
         restore_res = upload_employee_photo(akash_bytes, "KSS2407013")
         restored_url = restore_res.get("secure_url")
-        await client.post("/api/v1/employees/KSS2407013/photo", json={"photo_data": restored_url})
+        await client.post("/api/v1/employees/KSS2407013/photo", json={"photo_data": restored_url}, headers=headers)
         print(f"   Akash's Portrait Restored: {restored_url} [PASS]")
 
     print("\n======================================================================")

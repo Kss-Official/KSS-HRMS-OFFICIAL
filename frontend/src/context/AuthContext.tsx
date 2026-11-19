@@ -165,6 +165,7 @@ const mapBackendToFrontendEmployee = (data: any): Employee => {
     emergencyContact: data.emergency_contact || data.emergencyContact || '',
     emergencyRelationship: data.emergency_relationship || data.emergencyRelationship || '',
     bio: data.bio || '',
+    linkedinUrl: data.linkedin_url || data.linkedinUrl || '',
     role: (empCode === 'CEO001' || empCode === 'CTO001' || empCode === 'KSS2407001' || empCode === 'KSS2407002' || empCode === 'KSS2407015') ? 'SUPER_ADMIN' : roleVal,
     executiveRole: (data.executive_tier as any) || (roleVal === 'SUPER_ADMIN' ? 'CEO' : undefined),
     isFaceEnrolled: !!data.is_face_enrolled,

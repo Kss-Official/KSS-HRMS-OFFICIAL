@@ -27,6 +27,7 @@ class EmployeeBase(BaseModel):
     emergency_relationship: Optional[str] = None
     profile_photo_url: Optional[str] = None
     bio: Optional[str] = None
+    skills: Optional[List[str]] = None
     linkedin_url: Optional[str] = None
     is_active: bool = True
 
@@ -58,6 +59,7 @@ class EmployeeUpdate(BaseModel):
     emergency_relationship: Optional[str] = None
     profile_photo_url: Optional[str] = None
     bio: Optional[str] = None
+    skills: Optional[List[str]] = None
     linkedin_url: Optional[str] = None
     is_active: Optional[bool] = None
     earn_leave_balance: Optional[float] = None

@@ -33,7 +33,7 @@ _RECORDS_CACHE: Dict[str, Tuple[float, List[AttendanceRecordOut]]] = {}
 _RECORDS_CACHE_TTL = 30.0
 _RECORDS_CACHE_MAX_KEYS = 128
 
-FACE_MATCH_THRESHOLD = 0.52           # Biometric verification threshold (Euclidean L2 <= 0.52, cosine sim >= 0.865)
+FACE_MATCH_THRESHOLD = 0.55           # Biometric verification threshold (Euclidean L2 <= 0.55, cosine sim >= 0.849)
 FACE_MAX_ACCEPTABLE_THRESHOLD = 0.58  # Maximum allowable threshold requested by clients
 LATE_CUTOFF_LOCAL = dt_time(10, 15)   # 10:00 shift start + 15 min grace, in COMPANY time
 GEOFENCE_TOLERANCE_FACTOR = 1.5       # GPS jitter allowance (radius * 1.5 + 50m)

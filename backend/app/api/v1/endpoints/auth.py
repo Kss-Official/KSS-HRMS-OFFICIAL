@@ -189,12 +189,20 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
     if not email_clean and not uid_clean:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Email or UID required")
 
-    stmt = select(Employee).where(
-        or_(
-            func.lower(Employee.email) == email_clean,
-            Employee.legacy_firebase_id == uid_clean
-        )
-    ).limit(1)
+    conds = []
+    if email_clean:
+        conds.append(func.lower(Employee.email) == email_clean)
+    if uid_clean:
+        conds.append(Employee.legacy_firebase_id == uid_clean)
+        clean_code = uid_clean.replace("emp-", "").replace("EMP-", "").strip().lower()
+        conds.append(func.lower(Employee.employee_code) == clean_code)
+        try:
+            from uuid import UUID
+            conds.append(Employee.id == UUID(uid_clean))
+        except Exception:
+            pass
+
+    stmt = select(Employee).where(or_(*conds)).limit(1)
     emp = (await db.execute(stmt)).scalar_one_or_none()
     if not emp:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")

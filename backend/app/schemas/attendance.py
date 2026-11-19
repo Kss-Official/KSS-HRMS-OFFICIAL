@@ -1,4 +1,4 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, field_validator
 from uuid import UUID
 from datetime import date as date_type, datetime as datetime_type
 from typing import Optional, List
@@ -20,6 +20,26 @@ class CheckOutRequest(BaseModel):
 
 class BreakActionRequest(BaseModel):
     break_type: BreakType = BreakType.TEA_BREAK
+
+    @field_validator("break_type", mode="before")
+    @classmethod
+    def normalize_break_type(cls, v):
+        if isinstance(v, str):
+            clean = v.strip().upper().replace(" ", "_")
+            if clean in BreakType.__members__:
+                return BreakType(clean)
+            if "TEA" in clean:
+                return BreakType.TEA_BREAK
+            if "MEAL" in clean or "LUNCH" in clean:
+                return BreakType.LUNCH_BREAK
+            if "SNACK" in clean:
+                return BreakType.SNACK_BREAK
+            if "MEETING" in clean or "HUDDLE" in clean:
+                return BreakType.TEAM_MEETING
+            if "TRAINING" in clean:
+                return BreakType.TRAINING
+            return BreakType.OTHER
+        return v
 
 class AttendanceBreakOut(BaseModel):
     id: UUID

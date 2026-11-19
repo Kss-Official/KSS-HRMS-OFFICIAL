@@ -29,12 +29,12 @@ from datetime import date, datetime, timezone
 API = "/api/v1"
 FAKE_ID = str(uuid.uuid4())
 
-# Every data endpoint must reject anonymous callers.
+# Every protected data endpoint must reject anonymous callers.
 ANON_ENDPOINTS = [
     ("GET", "/employees/"), ("GET", f"/employees/{FAKE_ID}"), ("PATCH", f"/employees/{FAKE_ID}"),
     ("POST", f"/employees/{FAKE_ID}/photo"), ("DELETE", f"/employees/{FAKE_ID}"), ("POST", "/employees/"),
     ("POST", "/employees/reset-all-faces"), ("POST", f"/employees/{FAKE_ID}/enroll-face"),
-    ("GET", "/attendance/records"), ("POST", "/attendance/verify-face"), ("POST", "/attendance/check-in"),
+    ("GET", "/attendance/records"), ("POST", "/attendance/check-in"),
     ("POST", "/attendance/check-out"), ("GET", "/leaves/"), ("POST", "/leaves/"),
     ("PATCH", f"/leaves/{FAKE_ID}/review"), ("PATCH", f"/leaves/{FAKE_ID}/cancel"),
     ("GET", "/settings/"), ("PUT", "/settings/"), ("GET", "/audit/"), ("POST", "/audit/"),

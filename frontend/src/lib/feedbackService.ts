@@ -53,17 +53,15 @@ export function filterFeedbacksByRole(
     isSamePerson(activeEmployee, { id: fb.targetEmployeeId, employeeId: fb.targetEmployeeCode }) ||
     (Boolean(fb.targetEmployeeEmail) && Boolean(activeEmployee.email) && fb.targetEmployeeEmail?.toLowerCase() === activeEmployee.email?.toLowerCase()) ||
     (Boolean(activeEmployee.uid) && (fb.targetEmployeeId === activeEmployee.uid || fb.targetEmployeeUid === activeEmployee.uid)) ||
-    (Boolean(fb.targetEmployeeName) && Boolean(activeEmployee.fullName) && fb.targetEmployeeName.trim().toLowerCase() === activeEmployee.fullName.trim().toLowerCase()) ||
-    ((activeEmployee.employeeId === 'KSS2407012' || (activeEmployee.fullName && activeEmployee.fullName.toLowerCase().includes('satya'))) &&
-      ((fb.targetEmployeeCode && fb.targetEmployeeCode.toUpperCase() === 'KSS2407012') || (fb.targetEmployeeName && fb.targetEmployeeName.toLowerCase().includes('satya')) || fb.targetEmployeeId === 'emp-1785997525850' || fb.targetEmployeeId === 'emp-KSS2407012'));
+    (activeEmployee.employeeId === 'KSS2407012' &&
+      ((fb.targetEmployeeCode && fb.targetEmployeeCode.toUpperCase() === 'KSS2407012') || fb.targetEmployeeId === 'emp-1785997525850' || fb.targetEmployeeId === 'emp-KSS2407012'));
 
   const isAuthoredByMe = (fb: PerformanceFeedback) =>
     isSamePerson(activeEmployee, { id: fb.reviewerId }) ||
     (Boolean(fb.reviewerEmail) && Boolean(activeEmployee.email) && fb.reviewerEmail?.toLowerCase() === activeEmployee.email?.toLowerCase()) ||
     (Boolean(activeEmployee.uid) && (fb.reviewerId === activeEmployee.uid || fb.reviewerUid === activeEmployee.uid)) ||
-    (Boolean(fb.reviewerName) && Boolean(activeEmployee.fullName) && fb.reviewerName.trim().toLowerCase() === activeEmployee.fullName.trim().toLowerCase()) ||
-    ((activeEmployee.employeeId === 'KSS2407012' || (activeEmployee.fullName && activeEmployee.fullName.toLowerCase().includes('satya'))) &&
-      ((fb.reviewerName && fb.reviewerName.toLowerCase().includes('satya')) || fb.reviewerId === 'emp-1785997525850' || fb.reviewerId === 'emp-KSS2407012'));
+    (activeEmployee.employeeId === 'KSS2407012' &&
+      (fb.reviewerId === 'emp-1785997525850' || fb.reviewerId === 'emp-KSS2407012'));
 
   return feedbacks.filter(fb => {
     // A review about you is always yours to read, whatever tier you are on.

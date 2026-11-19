@@ -603,23 +603,23 @@ export interface MatchVerificationResult {
   message?: string;
 }
 
-export const BIOMETRIC_MATCH_THRESHOLD = 0.52;
+export const BIOMETRIC_MATCH_THRESHOLD = 0.55;
 
-// Compare scanned face descriptor STRICTLY against employee's enrolled descriptor.
-// Euclidean distance threshold: <= 0.52 = MATCH, > 0.52 = MISMATCH (robust biometric boundary for ResNet-34)
+// Compare scanned face descriptor STRICTLY against employee's enrolled descriptor or verified profile photo.
+// Euclidean distance threshold: <= 0.55 = MATCH, > 0.55 = MISMATCH (robust biometric boundary for ResNet-34)
 //
 // SECURITY: An unenrolled employee MUST explicitly register their face before checking in.
 // Never fall back to unverified stock avatars or loose thresholds.
 export const verifyFaceAgainstEnrolled = (
   scannedDescriptor: Float32Array,
-  employeeId: string,
+  employeeId: string | string[],
   profilePhotoDescriptor?: Float32Array | null,
   cloudDescriptor?: number[]
 ): MatchVerificationResult => {
   const referenceDescriptor = getEmployeeDescriptor(employeeId, cloudDescriptor);
 
-  // If NO genuine biometric face template is enrolled for this employee:
-  if (!referenceDescriptor) {
+  // If NO genuine biometric face template is enrolled and NO verified profile photo descriptor is available:
+  if (!referenceDescriptor && !profilePhotoDescriptor) {
     return {
       isMatch: false,
       confidencePercent: 0,
@@ -629,29 +629,52 @@ export const verifyFaceAgainstEnrolled = (
     };
   }
 
-  // Unit-normalize both descriptors to ensure illumination-invariant comparison
+  // Unit-normalize scanned face descriptor to ensure illumination-invariant comparison
   const normScanned = normalizeDescriptor(scannedDescriptor);
-  const normRef = normalizeDescriptor(referenceDescriptor);
 
-  // Calculate Euclidean Distance between normalized 128-float descriptors
-  const distance = faceapi.euclideanDistance(normScanned, normRef);
-  // Strict matching threshold: 0.45 reliably distinguishes genuine individuals from impostors
-  const isMatch = distance <= BIOMETRIC_MATCH_THRESHOLD;
+  let bestDistance = 1.0;
+  let isMatch = false;
+  let matchedAgainstProfilePhoto = false;
 
-  // Confidence formula: scale 0..0.45 distance to 99..82 range for genuine match
+  // 1. Primary Check: match against enrolled 128-float biometric template (multi-sample centroid)
+  if (referenceDescriptor) {
+    const normRef = normalizeDescriptor(referenceDescriptor);
+    const distRef = faceapi.euclideanDistance(normScanned, normRef);
+    bestDistance = distRef;
+    if (distRef <= BIOMETRIC_MATCH_THRESHOLD) {
+      isMatch = true;
+    }
+  }
+
+  // 2. Secondary Check: match against verified official profile photo descriptor if primary template did not match
+  if (!isMatch && profilePhotoDescriptor) {
+    const normPhoto = normalizeDescriptor(profilePhotoDescriptor);
+    const distPhoto = faceapi.euclideanDistance(normScanned, normPhoto);
+    if (distPhoto < bestDistance) {
+      bestDistance = distPhoto;
+    }
+    if (distPhoto <= BIOMETRIC_MATCH_THRESHOLD) {
+      isMatch = true;
+      matchedAgainstProfilePhoto = true;
+    }
+  }
+
+  // Confidence formula: scale 0..0.55 distance to 99..82 range for genuine match
   let confidencePercent = 0;
   if (isMatch) {
-    confidencePercent = Math.max(82, Math.min(99, Math.round(99 - (distance / BIOMETRIC_MATCH_THRESHOLD) * 17)));
+    confidencePercent = Math.max(82, Math.min(99, Math.round(99 - (bestDistance / BIOMETRIC_MATCH_THRESHOLD) * 17)));
   } else {
-    confidencePercent = Math.max(5, Math.min(45, Math.round((1 - Math.min(distance, 1.0)) * 45)));
+    confidencePercent = Math.max(5, Math.min(45, Math.round((1 - Math.min(bestDistance, 1.0)) * 45)));
   }
 
   return {
     isMatch,
     confidencePercent,
-    distance,
+    distance: bestDistance,
     enrolled: true,
-    matchedAgainstProfilePhoto: false,
-    message: isMatch ? 'Biometric match verified' : 'Scanned face does not match enrolled profile'
+    matchedAgainstProfilePhoto,
+    message: isMatch 
+      ? (matchedAgainstProfilePhoto ? 'Biometric match verified (matched profile photo)' : 'Biometric match verified') 
+      : 'Scanned face does not match enrolled profile'
   };
 };

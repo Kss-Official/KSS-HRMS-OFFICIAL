@@ -25,7 +25,7 @@ from app.api.audit_util import add_audit
 router = APIRouter()
 
 MAX_PHOTO_B64_CHARS = 8 * 1024 * 1024  # ~6 MB of image data
-FACE_MATCH_THRESHOLD = 0.52
+FACE_MATCH_THRESHOLD = 0.55
 DUPLICATE_ENROLL_THRESHOLD = 0.28  # Strict threshold for preventing same physical face under two accounts
 
 # Roles that may see every field of every employee.
@@ -93,11 +93,14 @@ def _fallback_manager(emp: Employee) -> str:
     return 'D. Koushik'
 
 
-def view_for(out: EmployeeOut, viewer: Employee) -> EmployeeOut:
+def view_for(out: EmployeeOut, viewer: Optional[Employee]) -> EmployeeOut:
     """Returns a copy of `out` appropriate for `viewer`.
     - face_descriptor (biometric template) only ever goes to its owner.
-    - plain EMPLOYEEs don't see peers' address/emergency contact/leave balances."""
-    is_self = out.id == viewer.id
+    - plain EMPLOYEEs don't see peers' private fields when viewer is another non-privileged user."""
+    if viewer is None:
+        return out.model_copy(update={"face_descriptor": None})
+    v_code = getattr(viewer, "employee_code", None)
+    is_self = out.id == viewer.id or (v_code is not None and str(out.employee_code).lower() == str(v_code).lower())
     update: dict = {}
     if not is_self:
         update["face_descriptor"] = None
@@ -286,7 +289,8 @@ async def update_employee(
     if not emp:
         raise HTTPException(status_code=404, detail=f"Employee '{employee_id}' not found")
 
-    is_self = current_user.id == emp.id
+    v_code = getattr(current_user, "employee_code", None)
+    is_self = current_user.id == emp.id or (v_code is not None and str(v_code).lower() == str(emp.employee_code).lower())
     is_hr_or_super = current_user.role in (UserRole.HR_ADMIN, UserRole.SUPER_ADMIN)
     is_pm = current_user.role == UserRole.PROJECT_MANAGER
     update_data = payload.model_dump(exclude_unset=True)
@@ -297,6 +301,8 @@ async def update_employee(
         for f in PM_FORBIDDEN_FIELDS:
             update_data.pop(f, None)
     elif is_self:
+        # Self-service employee profile update: allow updating personal details.
+        # Administrative, hierarchy, and financial fields are strictly stripped.
         for f in SELF_RESTRICTED_FIELDS:
             update_data.pop(f, None)
     else:
@@ -335,7 +341,8 @@ async def update_employee(
     for field, val in update_data.items():
         setattr(emp, field, val)
     if sensitive:
-        add_audit(db, current_user.id, "EMPLOYEE_UPDATED", target=emp.employee_code,
+        actor_id = current_user.id if current_user else emp.id
+        add_audit(db, actor_id, "EMPLOYEE_UPDATED", target=emp.employee_code,
                   details="changed: " + ", ".join(sorted(sensitive)), entity_type="employee",
                   entity_id=str(emp.id), request=request)
 
@@ -343,7 +350,7 @@ async def update_employee(
     await db.refresh(emp)
     invalidate_employees_cache()
     invalidate_user_cache(emp.id)
-    return view_for(EmployeeOut.model_validate(emp), current_user)
+    return view_for(EmployeeOut.model_validate(emp), current_user or emp)
 
 
 @router.post("/{employee_id}/photo", response_model=EmployeeOut)

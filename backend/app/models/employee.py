@@ -49,6 +49,7 @@ class Employee(Base):
     emergency_relationship = Column(String, nullable=True)
     profile_photo_url = Column(String, nullable=True)
     bio = Column(Text, nullable=True)
+    skills = Column(JSONB, nullable=True)
     linkedin_url = Column(String, nullable=True)
     legacy_firebase_id = Column(String, nullable=True)
 

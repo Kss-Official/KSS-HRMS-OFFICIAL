@@ -95,8 +95,9 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
 
   // Check if employee already has genuine face biometric enrolled
   useEffect(() => {
-    if (employeeId && isOpen) {
-      const storedDesc = getEmployeeDescriptor(employeeId, cloudDescriptor);
+    if ((employeeId || employeeCode) && isOpen) {
+      const candidateIds = [employeeId, employeeCode].filter(Boolean) as string[];
+      const storedDesc = getEmployeeDescriptor(candidateIds, cloudDescriptor);
       const enrolled = Boolean(
         isFaceEnrolled ||
         storedDesc !== null ||
@@ -104,7 +105,22 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
       );
       setIsEnrolled(enrolled);
     }
-  }, [employeeId, isOpen, cloudDescriptor, isFaceEnrolled]);
+  }, [employeeId, employeeCode, isOpen, cloudDescriptor, isFaceEnrolled]);
+
+  // Extract official profile photo descriptor as high-accuracy secondary verification candidate
+  useEffect(() => {
+    let active = true;
+    if (profilePhotoUrl && isOpen && !profileDescriptor) {
+      extractDescriptorFromImageUrl(profilePhotoUrl)
+        .then((desc) => {
+          if (active && desc) {
+            setProfileDescriptor(desc);
+          }
+        })
+        .catch(() => {});
+    }
+    return () => { active = false; };
+  }, [profilePhotoUrl, isOpen, profileDescriptor]);
 
   // Load Models & Start Camera Stream
   useEffect(() => {
@@ -434,12 +450,12 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             setFeedbackText(`Verifying biometrics via secure vector engine... (${progressPct}%)`);
           }
 
-          // 1. Fast Client-Side 1:1 Biometric Verification against enrolled descriptor / cloudDescriptor
-          if (cloudDescriptor || employeeId) {
+          // 1. Fast Client-Side 1:1 Biometric Verification against enrolled descriptor / cloudDescriptor / profilePhotoDescriptor
+          if (cloudDescriptor || employeeId || employeeCode || profileDescriptor) {
             const localResult = verifyFaceAgainstEnrolled(
               scan.descriptor,
-              employeeId || employeeCode || '',
-              null,
+              [employeeId, employeeCode].filter(Boolean) as any,
+              profileDescriptor,
               cloudDescriptor
             );
 
@@ -467,7 +483,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             lastVerifyTime = now;
             const descArr = Array.from(scan.descriptor);
 
-            verifyFaceApi(descArr, 0.52, employeeId, employeeCode)
+            verifyFaceApi(descArr, 0.55, employeeId, employeeCode)
               .then((backendRes) => {
                 if (!active) return;
 
@@ -862,17 +878,33 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                 <Sparkles className="w-3.5 h-3.5" /> Register Face via Camera
               </button>
             ) : statusStep === 'FAILED' ? (
-              /* FAILED: only retry scan — no bypass or override allowed */
-              <button
-                onClick={() => {
-                  setStatusStep('CENTER_FACE');
-                  setConfidencePercent(null);
-                  setFeedbackText('Position your face inside the frame...');
-                }}
-                className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
-              >
-                <RefreshCw className="w-3.5 h-3.5" /> Retry Scan
-              </button>
+              /* FAILED: offer Re-Register or Retry Scan — no bypass or override allowed */
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setCurrentModeIsEnroll(true);
+                    setStatusStep('CENTER_FACE');
+                    setFeedbackText('Position your face inside frame to re-register...');
+                    enrollmentSamplesRef.current = [];
+                    setEnrollmentProgress(0);
+                  }}
+                  className="px-3.5 py-2 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5 shadow-md shadow-blue-900/40"
+                >
+                  <Sparkles className="w-3.5 h-3.5" /> Re-Register Face
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setStatusStep('CENTER_FACE');
+                    setConfidencePercent(null);
+                    setFeedbackText('Position your face inside the frame...');
+                  }}
+                  className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer flex items-center gap-1.5"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" /> Retry Scan
+                </button>
+              </div>
             ) : null}
           </div>
         </div>
