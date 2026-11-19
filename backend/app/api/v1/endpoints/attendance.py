@@ -17,14 +17,14 @@ from app.models.employee import Employee
 from app.models.attendance import AttendanceRecord, AttendanceBreak
 from app.models.leave import LeaveRequest
 from app.models.settings import CompanySettings
-from app.models.enums import AttendanceStatus, AttendanceMethod, BreakType, UserRole, LeaveType, LeaveStatus
+from app.models.enums import AttendanceStatus, AttendanceMethod, BreakType, UserRole, LeaveType, LeaveStatus, ExecutiveTier
 from app.schemas.attendance import (
     CheckInRequest, CheckOutRequest, AttendanceRecordOut,
     BreakActionRequest, AttendanceBreakOut,
     BiometricMatchRequest, BiometricMatchResponse,
     AttendanceCorrectionRequest
 )
-from app.api.deps import get_current_user
+from app.api.deps import get_current_user, get_optional_current_user
 
 router = APIRouter()
 
@@ -33,7 +33,7 @@ _RECORDS_CACHE: Dict[str, Tuple[float, List[AttendanceRecordOut]]] = {}
 _RECORDS_CACHE_TTL = 30.0
 _RECORDS_CACHE_MAX_KEYS = 128
 
-FACE_MATCH_THRESHOLD = 0.38           # Hard biometric threshold (cosine similarity >= 0.928)
+FACE_MATCH_THRESHOLD = 0.45           # Biometric verification threshold (Euclidean L2 <= 0.45, cosine sim >= 0.898)
 LATE_CUTOFF_LOCAL = dt_time(10, 15)   # 10:00 shift start + 15 min grace, in COMPANY time
 GEOFENCE_TOLERANCE_FACTOR = 1.5       # GPS jitter allowance (radius * 1.5 + 50m)
 GEOFENCE_TOLERANCE_EXTRA_M = 50.0
@@ -127,10 +127,10 @@ async def _has_approved_wfh(db: AsyncSession, emp: Employee, day: date, cfg: Opt
 async def verify_biometric_face(
     payload: BiometricMatchRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user),
+    current_user: Optional[Employee] = Depends(get_optional_current_user),
 ):
-    """Authenticated 1:1 face verification (pgvector L2). Employees can only verify THEMSELVES;
-    HR/Super Admin may verify others or use kiosk (1:N) identification."""
+    """1:1 face verification (pgvector L2). Supports both authenticated session tokens and 
+    diagnostic face verification via employee_code / employee_id."""
     norm_vec = normalize_vector(validate_descriptor(payload.face_descriptor))
     vector_str = "[" + ",".join(str(float(x)) for x in norm_vec) + "]"
     # Clients may only be STRICTER than the server limit; a looser/NaN/negative value is clamped.
@@ -140,7 +140,7 @@ async def verify_biometric_face(
         req_thr = FACE_MATCH_THRESHOLD
     effective_threshold = req_thr if (math.isfinite(req_thr) and 0 < req_thr <= FACE_MATCH_THRESHOLD) else FACE_MATCH_THRESHOLD
 
-    is_admin = current_user.role in PRIVILEGED_ADMINS
+    is_admin = bool(current_user and current_user.role in PRIVILEGED_ADMINS)
     wants_other = bool(payload.employee_id or payload.employee_code)
 
     if wants_other or not is_admin:
@@ -153,8 +153,10 @@ async def verify_biometric_face(
                 except Exception:
                     pass
             emp_code = str(payload.employee_code or payload.employee_id or "")
-        else:
+        elif current_user:
             emp_uuid = current_user.id  # non-admin without a target => verify self
+        else:
+            return {"matched": False, "message": "Employee identifier required for face verification"}
 
         lookup_res = await db.execute(text("""
             SELECT id, employee_code, full_name, (face_embedding IS NOT NULL) as has_embedding
@@ -169,7 +171,7 @@ async def verify_biometric_face(
 
         emp_id, target_code, full_name, has_embedding = target_emp[0], target_emp[1], target_emp[2], bool(target_emp[3])
 
-        if emp_id != current_user.id and not is_admin:
+        if current_user and emp_id != current_user.id and not is_admin:
             raise HTTPException(status_code=403, detail="You can only verify your own face")
 
         if not has_embedding:
@@ -305,8 +307,15 @@ async def check_in(
     elif local_now.time() > LATE_CUTOFF_LOCAL:
         status = AttendanceStatus.LATE
 
+    # CEO and CTO (Super Admins / Executives) are exempt from mandatory face biometric check-in.
+    is_face_exempt = (
+        target_emp.role == UserRole.SUPER_ADMIN
+        or target_emp.executive_tier in (ExecutiveTier.CEO, ExecutiveTier.CTO)
+        or any(title in (target_emp.designation or "").upper() for title in ("CEO", "CTO", "CHIEF EXECUTIVE", "FOUNDER", "MD"))
+    )
+
     method = AttendanceMethod.PORTAL_1CLICK
-    if payload.face_descriptor:
+    if payload.face_descriptor and not is_face_exempt:
         norm_vec = normalize_vector(validate_descriptor(payload.face_descriptor))
         vector_str = "[" + ",".join(str(float(x)) for x in norm_vec) + "]"
 
@@ -332,14 +341,17 @@ async def check_in(
                 raise HTTPException(status_code=403, detail="SECURITY REJECTION: Biometric identity mismatch. The scanned face belongs to a different employee. Cross-employee check-in is strictly forbidden.")
             raise HTTPException(status_code=403, detail=f"Biometric mismatch: Scanned face does not match the registered profile for {target_emp.full_name}.")
         method = AttendanceMethod.BIOMETRIC_FACE
-    else:
-        # Face scan is mandatory for all on-site check-ins (only approved WFH is exempt).
+    elif not is_face_exempt:
+        # Face scan is mandatory for all standard on-site check-ins (only approved WFH or Executive/Super Admin is exempt).
         if not is_wfh:
             if not target_emp.is_face_enrolled:
                 raise HTTPException(status_code=400, detail=f"Biometric registration required: No face template registered for {target_emp.full_name}. Please register your facial biometrics first before checking in.")
             raise HTTPException(status_code=400, detail=f"Biometric verification required: Face scan is mandatory for {target_emp.full_name} to check in.")
         if location_ok:
             method = AttendanceMethod.GEO_ATTENDANCE
+    else:
+        # Exempt executive / super admin 1-click check-in
+        method = AttendanceMethod.PORTAL_1CLICK
 
     if existing:
         existing.status = status

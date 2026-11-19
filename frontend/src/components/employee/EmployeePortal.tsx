@@ -13,6 +13,7 @@ import {
   CreditCard,
   QrCode,
   User,
+  UserCheck,
   MapPin,
   FileText,
   Download,
@@ -90,7 +91,8 @@ import {
   SHIFT_TOTAL_MINUTES,
   formatShiftTiming,
   validateCheckInEligibility,
-  isApprovedWfhForEmployee
+  isApprovedWfhForEmployee,
+  isExecutiveOrLeadership
 } from '../../lib/attendanceEngine';
 import { downloadElementAsPdf } from '../../lib/pdfGenerator';
 import kalpanaLogo from '../../assets/images/kalpana_logo.jpeg';
@@ -834,6 +836,14 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
     selfCheckInInProgressRef.current = true;
     triggerHaptic('medium');
+
+    // Super Admin / CEO / CTO executive check-in exemption: 1-click check-in without mandatory facial scan
+    if (isExecutiveOrLeadership(activeEmployee) || activeEmployee?.role === 'SUPER_ADMIN') {
+      executeCheckInProcess();
+      setTimeout(() => { selfCheckInInProgressRef.current = false; }, 100);
+      return;
+    }
+
     const hasConsent = localStorage.getItem('kss_biometric_consent') === 'true';
     if (!hasConsent) {
       setIsConsentModalOpen(true);
@@ -1271,7 +1281,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         <div className={`space-y-6 ${animations.stagger.container}`}>
 
           {/* 📸 MANDATORY BIOMETRIC FACE RE-REGISTRATION BANNER */}
-          {!isFaceBiometricEnrolled(activeEmployee) && (
+          {!isFaceBiometricEnrolled(activeEmployee) && !isExecutiveOrLeadership(activeEmployee) && activeEmployee?.role !== 'SUPER_ADMIN' && (
             <div className="bg-gradient-to-r from-amber-950/90 via-slate-900 to-rose-950/90 border-2 border-amber-500/50 rounded-3xl p-5 sm:p-6 shadow-2xl relative overflow-hidden animate-in fade-in slide-in-from-top-4 duration-300">
               <div className="absolute -top-10 -right-10 w-48 h-48 bg-amber-500/10 rounded-full blur-2xl pointer-events-none" />
               <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 relative z-10">
@@ -1366,6 +1376,11 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                       <div className="mb-3 px-3.5 py-1 rounded-full bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-[11px] font-extrabold flex items-center gap-1.5 shadow-sm">
                         <Home className="w-3.5 h-3.5 text-cyan-400" />
                         <span>{isOfficeWfh ? '🏢 Office-Wide WFH Day — GPS Radius Bypassed' : '🏠 Work From Home Approved — GPS Radius Bypassed'}</span>
+                      </div>
+                    ) : (isExecutiveOrLeadership(activeEmployee) || activeEmployee?.role === 'SUPER_ADMIN') ? (
+                      <div className="mb-3 px-3.5 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/30 text-indigo-300 text-[11px] font-extrabold flex items-center gap-1.5 shadow-sm">
+                        <UserCheck className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Executive Level — 1-Click Check-In Active (Face Scan Exempt)</span>
                       </div>
                     ) : !isFaceBiometricEnrolled(activeEmployee) ? (
                       <div className="mb-3 px-3.5 py-1.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-amber-300 text-[11px] font-black flex items-center gap-1.5 shadow-sm animate-pulse">
@@ -1465,7 +1480,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                           )}
                         </button>
 
-                        {!isFaceBiometricEnrolled(activeEmployee) && (
+                        {!isFaceBiometricEnrolled(activeEmployee) && !isExecutiveOrLeadership(activeEmployee) && activeEmployee?.role !== 'SUPER_ADMIN' && (
                           <button
                             type="button"
                             onClick={() => setIsEnrollFaceModalOpen(true)}
@@ -2438,14 +2453,22 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                     </p>
                   </div>
 
-                  <span className={`px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 border ${activeEmployee.isFaceEnrolled || activeEmployee.faceDescriptor
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                    : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
+                  <span className={`px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 border ${
+                    isFaceBiometricEnrolled(activeEmployee)
+                      ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+                      : (isExecutiveOrLeadership(activeEmployee) || activeEmployee?.role === 'SUPER_ADMIN')
+                      ? 'bg-indigo-500/10 text-indigo-300 border-indigo-500/30'
+                      : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
                     }`}>
                     {isFaceBiometricEnrolled(activeEmployee) ? (
                       <>
                         <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
                         <span>Face Biometric Enrolled</span>
+                      </>
+                    ) : (isExecutiveOrLeadership(activeEmployee) || activeEmployee?.role === 'SUPER_ADMIN') ? (
+                      <>
+                        <ShieldCheck className="w-3.5 h-3.5 text-indigo-400" />
+                        <span>Executive Level (Face Scan Exempt)</span>
                       </>
                     ) : (
                       <>
@@ -3097,6 +3120,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         employeeName={activeEmployee.fullName}
         employeeId={activeEmployee.id}
         employeeCode={activeEmployee.employeeId}
+        profilePhotoUrl={activeEmployee.profilePhotoUrl}
         cloudDescriptor={activeEmployee.faceDescriptor}
         isFaceEnrolled={activeEmployee.isFaceEnrolled}
         isTestMode={true}

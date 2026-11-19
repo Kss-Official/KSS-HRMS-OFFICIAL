@@ -41,9 +41,26 @@ messaging.onBackgroundMessage((payload) => {
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
 
+  if (event.action === 'end_break') {
+    event.waitUntil(
+      clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+        for (const client of clientList) {
+          client.postMessage({ type: 'END_ACTIVE_BREAK' });
+          if ('focus' in client) {
+            return client.focus();
+          }
+        }
+        if (clients.openWindow) {
+          return clients.openWindow('/?action=end_break');
+        }
+      })
+    );
+    return;
+  }
+
   if (event.action === 'open' || !event.action) {
     event.waitUntil(
-      clients.matchAll({ type: 'window' }).then((clientList) => {
+      clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
         for (const client of clientList) {
           if (client.url && 'focus' in client) {
             return client.focus();

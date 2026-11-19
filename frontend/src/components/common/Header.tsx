@@ -12,7 +12,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { UserRole } from '../../types';
-import { getEmployeeWorkDate, resolveAttendanceRecord } from '../../lib/attendanceEngine';
+import { getEmployeeWorkDate, resolveAttendanceRecord, isExecutiveOrLeadership } from '../../lib/attendanceEngine';
 import { NotificationBell } from './NotificationBell';
 import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
 import { getEmployeeAvatar } from '../../lib/avatarHelper';
@@ -201,9 +201,15 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Quick Check-In Button for Current User */}
         {activeEmployee && !myTodayRecord?.checkInAt && (
           <button
-            onClick={() => setIsHeaderFaceModalOpen(true)}
+            onClick={() => {
+              if (isExecutiveOrLeadership(activeEmployee) || activeEmployee.role === 'SUPER_ADMIN') {
+                executeHeaderCheckInProcess();
+              } else {
+                setIsHeaderFaceModalOpen(true);
+              }
+            }}
             className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-[11px] font-bold text-white shadow-md cursor-pointer transition-all hover:scale-105"
-            title="Biometric Face / GPS Check-In"
+            title={isExecutiveOrLeadership(activeEmployee) || activeEmployee.role === 'SUPER_ADMIN' ? 'Executive 1-Click Check-In' : 'Biometric Face / GPS Check-In'}
           >
             <UserCheck className="w-3.5 h-3.5 text-emerald-200" />
             <span>Check In</span>

@@ -1507,7 +1507,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
             setSelectedBiometricEmp(null);
           }}
           onEnrollSuccess={async (descriptorArray) => {
-            const res = await enrollEmployeeBiometrics(selectedBiometricEmp.id, descriptorArray);
+            const res = await enrollEmployeeBiometrics(selectedBiometricEmp.id, descriptorArray, true);
             if (!res.success) {
               toast.error(res.message);
               throw new Error(res.message);

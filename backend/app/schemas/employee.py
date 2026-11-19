@@ -83,4 +83,5 @@ class PhotoUploadRequest(BaseModel):
     photo_data: str
 
 class FaceEnrollRequest(BaseModel):
-    face_descriptor: List[float] # 128 float array
+    face_descriptor: List[float]  # 128 float array
+    force: Optional[bool] = False  # HR/SUPER_ADMIN can bypass duplicate check

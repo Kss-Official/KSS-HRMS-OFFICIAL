@@ -19,13 +19,14 @@ from app.models.employee import Employee
 from app.models.enums import UserRole, ExecutiveTier
 from app.schemas.employee import EmployeeOut, EmployeeCreate, EmployeeUpdate, FaceEnrollRequest, PhotoUploadRequest
 from app.schemas.attendance import BiometricMatchRequest, BiometricMatchResponse
-from app.api.deps import get_current_user, require_roles, invalidate_user_cache
+from app.api.deps import get_current_user, get_optional_current_user, require_roles, invalidate_user_cache
 from app.api.audit_util import add_audit
 
 router = APIRouter()
 
 MAX_PHOTO_B64_CHARS = 8 * 1024 * 1024  # ~6 MB of image data
-FACE_MATCH_THRESHOLD = 0.38
+FACE_MATCH_THRESHOLD = 0.45
+DUPLICATE_ENROLL_THRESHOLD = 0.28  # Strict threshold for preventing same physical face under two accounts
 
 # Roles that may see every field of every employee.
 PRIVILEGED_VIEW_ROLES = {UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER, UserRole.TECH_LEAD}
@@ -400,9 +401,11 @@ async def enroll_face(
         ORDER BY dist ASC LIMIT 1
     """), {"vec": vector_str, "id": emp.id})
     closest = dup_res.first()
-    if closest and closest.dist is not None and float(closest.dist) <= FACE_MATCH_THRESHOLD:
+    # HR_ADMIN, SUPER_ADMIN and PROJECT_MANAGER can pass force=True to bypass duplicate check (re-enrollment use case)
+    is_force_override = getattr(payload, 'force', False) and current_user.role in (UserRole.HR_ADMIN, UserRole.SUPER_ADMIN, UserRole.PROJECT_MANAGER)
+    if closest and closest.dist is not None and float(closest.dist) <= DUPLICATE_ENROLL_THRESHOLD and not is_force_override:
         # Don't disclose who the other person is to a non-admin caller.
-        who = f"{closest.full_name} ({closest.employee_code})" if current_user.role in (UserRole.HR_ADMIN, UserRole.SUPER_ADMIN) else "another employee"
+        who = f"{closest.full_name} ({closest.employee_code})" if current_user.role in (UserRole.HR_ADMIN, UserRole.SUPER_ADMIN, UserRole.PROJECT_MANAGER) else "another employee"
         raise HTTPException(status_code=409, detail=f"Security Violation: This face is already enrolled under {who}. One individual cannot register under multiple employee accounts.")
 
     await db.execute(
@@ -513,7 +516,7 @@ async def delete_employee(
 async def verify_face_alias(
     payload: BiometricMatchRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user),
+    current_user: Optional[Employee] = Depends(get_optional_current_user),
 ):
     """Alias for /api/v1/attendance/verify-face to ensure high availability and compatibility"""
     from app.api.v1.endpoints.attendance import verify_biometric_face

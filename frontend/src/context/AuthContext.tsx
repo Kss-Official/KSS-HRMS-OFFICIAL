@@ -380,7 +380,7 @@ interface AuthContextType {
   saveCompanyWorkZone: (zone: Partial<WorkZone>) => Promise<void>;
   addAuditLog: (action: string, target: string, details: string) => void;
   resetToDemoData: () => void;
-  enrollEmployeeBiometrics: (employeeId: string, faceDescriptor: number[]) => Promise<{ success: boolean; message: string }>;
+  enrollEmployeeBiometrics: (employeeId: string, faceDescriptor: number[], force?: boolean) => Promise<{ success: boolean; message: string }>;
   resetEmployeeBiometrics: (employeeId: string) => Promise<{ success: boolean; message: string }>;
   resetAllBiometrics: () => Promise<{ success: boolean; message: string }>;
   regenerateQrToken: (employeeId: string) => string;
@@ -4677,7 +4677,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const enrollEmployeeBiometrics = async (
     employeeId: string,
-    faceDescriptor: number[]
+    faceDescriptor: number[],
+    force = false
   ): Promise<{ success: boolean; message: string }> => {
     try {
       if (!Array.isArray(faceDescriptor) || faceDescriptor.length !== 128) {
@@ -4696,7 +4697,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       // 1. Call FastAPI backend FIRST to validate and persist pgvector embedding in PostgreSQL
       try {
-        const backendRes = await enrollFaceApi(empCode || cleanId, faceDescriptor);
+        const backendRes = await enrollFaceApi(empCode || cleanId, faceDescriptor, force);
         console.log('[FastAPI] enrollFaceApi response:', backendRes);
       } catch (err: any) {
         console.warn('[FastAPI] enrollFaceApi error:', err);
@@ -6273,7 +6274,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     }
 
-    fetchFastApiRecords(activeEmployeeRef.current, true);
+    // NOTE: Do NOT call fetchFastApiRecords here — the optimistic state update above
+    // (lines 6206-6260) is already correct and will immediately reflect in the UI.
+    // A broad refetch of the PM's own records would race-overwrite the corrected record
+    // before Neon has committed the new value. The Firestore setDoc above keeps
+    // the real-time listener in sync for the employee's own portal view.
 
     return { success: true, message: `Attendance for ${record.employeeName || 'employee'} updated.` };
   };

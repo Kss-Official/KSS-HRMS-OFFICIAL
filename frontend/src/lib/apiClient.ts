@@ -506,10 +506,16 @@ export async function uploadPhotoApi(employeeId: string, photoData: string): Pro
   });
 }
 
-export async function enrollFaceApi(employeeId: string, faceDescriptor: number[]): Promise<any> {
+export async function enrollFaceApi(employeeId: string, faceDescriptor: number[], force = false): Promise<any> {
   return apiRequest(`/employees/${employeeId}/enroll-face`, {
     method: 'POST',
-    body: JSON.stringify({ face_descriptor: faceDescriptor })
+    body: JSON.stringify({ face_descriptor: faceDescriptor, force })
+  });
+}
+
+export async function resetFaceApi(employeeId: string): Promise<any> {
+  return apiRequest(`/employees/${employeeId}/reset-face`, {
+    method: 'POST'
   });
 }
 
@@ -577,7 +583,7 @@ export async function createAuditLogApi(payload: {
 
 export async function verifyFaceApi(
   faceDescriptor: number[], 
-  threshold = 0.38,
+  threshold = 0.45,
   employeeId?: string,
   employeeCode?: string
 ): Promise<any> {

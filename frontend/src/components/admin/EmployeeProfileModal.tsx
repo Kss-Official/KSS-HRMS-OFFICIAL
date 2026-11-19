@@ -527,7 +527,7 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
             setIsEnrollModalOpen(false);
           }}
           onEnrollSuccess={async (descriptorArray) => {
-            const res = await enrollEmployeeBiometrics(employee.id, descriptorArray);
+            const res = await enrollEmployeeBiometrics(employee.id, descriptorArray, true);
             if (!res.success) {
               toast.error(res.message);
               throw new Error(res.message);

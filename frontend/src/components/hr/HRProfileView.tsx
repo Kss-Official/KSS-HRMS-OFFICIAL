@@ -679,7 +679,7 @@ export const HRProfileView: React.FC = () => {
             executeHrCheckInProcess(descArr);
           }}
           onEnrollSuccess={async (descriptorArray) => {
-            const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray);
+            const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray, true);
             if (!res.success) throw new Error(res.message);
           }}
           employeeName={targetEmployee.fullName}

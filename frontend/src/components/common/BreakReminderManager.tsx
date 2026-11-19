@@ -1,9 +1,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { getEmployeeWorkDate } from '../../lib/attendanceEngine';
-import { toast } from 'sonner';
-import { Coffee, UtensilsCrossed, Users, Calendar, GraduationCap, Zap, Clock, StopCircle, X, BellRing } from 'lucide-react';
-import { motion, AnimatePresence } from 'motion/react';
+import { BellRing, CheckCircle2, X } from 'lucide-react';
 
 const BREAK_EMOJIS: Record<string, string> = {
   'Tea Break': '🍵',
@@ -72,61 +70,82 @@ export const playBreakReminderSound = (): void => {
 };
 
 /**
- * Sends a native desktop / OS notification that shows in Windows Action Center / System tray.
+ * Sends a native desktop / OS notification that appears in the Windows Action Center
+ * or desktop notification tray, even when the HRMS webpage is minimized or in the background.
  */
-export const sendSystemDesktopNotification = (
+export const sendSystemDesktopNotification = async (
   title: string,
   body: string,
   onClickAction?: () => void
-): void => {
-  if (typeof window === 'undefined' || !('Notification' in window)) return;
+): Promise<boolean> => {
+  if (typeof window === 'undefined' || !('Notification' in window)) return false;
 
-  const trigger = () => {
+  if (Notification.permission !== 'granted') {
+    return false;
+  }
+
+  const notificationOptions: any = {
+    body,
+    icon: '/pwa-192x192.png',
+    badge: '/favicon.png',
+    tag: `kss-break-reminder-${Date.now()}`,
+    renotify: true,
+    requireInteraction: true, // Native Windows desktop toast stays visible until clicked or dismissed
+    silent: false,
+    data: {
+      type: 'break_reminder',
+      timestamp: Date.now()
+    },
+    actions: [
+      { action: 'end_break', title: 'End Break Now' },
+      { action: 'open', title: 'Open HRMS' }
+    ]
+  };
+
+  // Primary: Use ServiceWorkerRegistration.showNotification()
+  // This is the ONLY reliable API that triggers native Windows Action Center / OS system notifications
+  // when the browser tab is minimized, unfocused, or running in the background.
+  let shownViaSW = false;
+  if ('serviceWorker' in navigator) {
     try {
-      const options: any = {
-        body,
-        icon: '/pwa-192x192.png',
-        badge: '/pwa-192x192.png',
-        tag: 'hrms-break-15m-reminder',
-        renotify: true,
-        requireInteraction: true // Sticky on OS desktop until clicked or dismissed
-      };
-      const notification = new Notification(title, options);
+      const reg = await Promise.race([
+        navigator.serviceWorker.ready,
+        new Promise<null>((r) => setTimeout(() => r(null), 1200))
+      ]);
+      if (reg && 'showNotification' in reg) {
+        await reg.showNotification(title, notificationOptions);
+        shownViaSW = true;
+      }
+    } catch (err) {
+      console.warn('[BreakReminder] ServiceWorker showNotification notice:', err);
+    }
+  }
 
+  // Fallback: If ServiceWorker was not ready, use standard window Notification API
+  if (!shownViaSW) {
+    try {
+      const notification = new Notification(title, notificationOptions);
       notification.onclick = () => {
         window.focus();
         notification.close();
         if (onClickAction) onClickAction();
       };
-    } catch {
-      // Fallback to ServiceWorker showNotification if standalone PWA
-      if ('serviceWorker' in navigator) {
-        navigator.serviceWorker.ready.then((reg) => {
-          reg.showNotification(title, {
-            body,
-            icon: '/pwa-192x192.png',
-            tag: 'hrms-break-15m-reminder',
-            requireInteraction: true
-          });
-        }).catch(() => {});
-      }
+      shownViaSW = true;
+    } catch (err) {
+      console.warn('[BreakReminder] Fallback Notification constructor failed:', err);
     }
-  };
-
-  if (Notification.permission === 'granted') {
-    trigger();
-  } else if (Notification.permission === 'default') {
-    Notification.requestPermission().then((perm) => {
-      if (perm === 'granted') trigger();
-    });
   }
+
+  return shownViaSW;
 };
 
 export const BreakReminderManager: React.FC = () => {
   const { activeEmployee, attendance, endBreak } = useAuth();
   const [activeBreakState, setActiveBreakState] = useState<{ type: string; startAt: string } | null>(null);
-  const [activeBreakMinutes, setActiveBreakMinutes] = useState<number>(0);
-  const [showFloatingBanner, setShowFloatingBanner] = useState<boolean>(false);
+  const [permissionStatus, setPermissionStatus] = useState<NotificationPermission>(() => {
+    return typeof window !== 'undefined' && 'Notification' in window ? Notification.permission : 'denied';
+  });
+  const [showPermissionBanner, setShowPermissionBanner] = useState<boolean>(false);
   const [isEndingBreak, setIsEndingBreak] = useState<boolean>(false);
 
   const lastAlertedIntervalRef = useRef<number>(0);
@@ -140,14 +159,36 @@ export const BreakReminderManager: React.FC = () => {
     }
   }, []);
 
-  // Request browser notification permissions on mount if default
+  // Update permission status and show permission banner if not granted
   useEffect(() => {
-    if (typeof window !== 'undefined' && 'Notification' in window) {
-      if (Notification.permission === 'default') {
-        Notification.requestPermission().catch(() => {});
-      }
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    const current = Notification.permission;
+    setPermissionStatus(current);
+    if (activeBreakState && current !== 'granted') {
+      setShowPermissionBanner(true);
+    } else {
+      setShowPermissionBanner(false);
     }
-  }, []);
+  }, [activeBreakState]);
+
+  // Request browser notification permissions with user gesture
+  const requestDesktopNotificationPermission = async () => {
+    if (typeof window === 'undefined' || !('Notification' in window)) return;
+    try {
+      const result = await Notification.requestPermission();
+      setPermissionStatus(result);
+      if (result === 'granted') {
+        setShowPermissionBanner(false);
+        // Show test native notification
+        sendSystemDesktopNotification(
+          '🔔 Native Desktop Notifications Active',
+          'You will now receive break reminders directly in Windows / System Action Center even when HRMS is minimized.'
+        );
+      }
+    } catch (err) {
+      console.warn('[BreakReminder] Permission request error:', err);
+    }
+  };
 
   // Resolve current active break from today's attendance record
   useEffect(() => {
@@ -162,8 +203,8 @@ export const BreakReminderManager: React.FC = () => {
       (r) =>
         candidateIds.includes(r.employeeId) ||
         candidateIds.includes((r as any).employeeUid) ||
-        candidateIds.includes((r as any).uid) &&
-        r.date === todayStr
+        (candidateIds.includes((r as any).uid) && r.date === todayStr) ||
+        (r.employeeCode && candidateIds.includes(r.employeeCode) && r.date === todayStr)
     );
 
     const breaks = todayRecord?.breaks ?? [];
@@ -175,7 +216,6 @@ export const BreakReminderManager: React.FC = () => {
     } else {
       setActiveBreakState(null);
       lastAlertedIntervalRef.current = 0;
-      setShowFloatingBanner(false);
       // Restore tab title
       if (flashTitleIntervalRef.current) {
         clearInterval(flashTitleIntervalRef.current);
@@ -199,7 +239,6 @@ export const BreakReminderManager: React.FC = () => {
       isAlert = !isAlert;
     }, 1000);
 
-    // Auto-stop flashing after 20 seconds or when user focuses window
     const stopFlashing = () => {
       if (flashTitleIntervalRef.current) {
         clearInterval(flashTitleIntervalRef.current);
@@ -209,24 +248,37 @@ export const BreakReminderManager: React.FC = () => {
       window.removeEventListener('focus', stopFlashing);
     };
     window.addEventListener('focus', stopFlashing, { once: true });
-    setTimeout(stopFlashing, 20000);
+    setTimeout(stopFlashing, 25000);
   }, []);
 
-  const handleEndActiveBreak = async () => {
+  const handleEndActiveBreak = useCallback(async () => {
     if (!activeEmployee || isEndingBreak) return;
     setIsEndingBreak(true);
     try {
       await endBreak(activeEmployee.id);
-      setShowFloatingBanner(false);
-      toast.success('Break ended successfully. Welcome back to work! 👋');
     } catch (e: any) {
-      toast.error(e?.message || 'Failed to end break');
+      console.warn('[BreakReminder] Failed to end break:', e);
     } finally {
       setIsEndingBreak(false);
     }
-  };
+  }, [activeEmployee, endBreak, isEndingBreak]);
 
-  // High-Precision 15-Minute Cadence Engine
+  // Listen for Service Worker messages (e.g. user clicked "End Break Now" on the native Windows desktop notification)
+  useEffect(() => {
+    if (typeof navigator === 'undefined' || !('serviceWorker' in navigator)) return;
+    const handleSwMessage = (event: MessageEvent) => {
+      if (event.data?.type === 'END_ACTIVE_BREAK') {
+        handleEndActiveBreak();
+      }
+    };
+    navigator.serviceWorker.addEventListener('message', handleSwMessage);
+    return () => {
+      navigator.serviceWorker.removeEventListener('message', handleSwMessage);
+    };
+  }, [handleEndActiveBreak]);
+
+  // High-Precision Cadence Engine using an inline Web Worker ticker
+  // (Web Workers run in background and are NOT throttled by Chrome/Edge when the tab is minimized)
   useEffect(() => {
     if (!activeBreakState) return;
 
@@ -235,7 +287,6 @@ export const BreakReminderManager: React.FC = () => {
       const now = Date.now();
       const elapsedMs = Math.max(0, now - startMs);
       const elapsedMins = Math.floor(elapsedMs / 60000);
-      setActiveBreakMinutes(elapsedMins);
 
       // 15-minute interval index: 1 = 15m, 2 = 30m, 3 = 45m, 4 = 60m...
       const interval = Math.floor(elapsedMins / 15);
@@ -251,98 +302,82 @@ export const BreakReminderManager: React.FC = () => {
         // 1. Play System Chime Sound
         playBreakReminderSound();
 
-        // 2. Send Native OS Desktop Notification (Action Center)
+        // 2. Send Native OS Desktop Notification (Appears in Windows Action Center / Desktop tray)
         sendSystemDesktopNotification(reminderTitle, reminderBody, () => {
           handleEndActiveBreak();
         });
 
-        // 3. Flash Document Tab Title
+        // 3. Flash Document Tab Title so browser tab is visible even if minimized
         flashDocumentTitle(`⏰ [${totalMinutes}m Alert] ${activeBreakState.type}`);
-
-        // 4. Trigger High-Visibility In-App Toast
-        toast.warning(reminderTitle, {
-          description: reminderBody,
-          duration: 15000,
-          action: {
-            label: `End ${activeBreakState.type}`,
-            onClick: () => handleEndActiveBreak()
-          }
-        });
-
-        // 5. Show Floating System Reminder Banner
-        setShowFloatingBanner(true);
       }
     };
 
     checkCadence();
-    const intervalTimer = setInterval(checkCadence, 1000); // 1-second precision tick
-    return () => clearInterval(intervalTimer);
-  }, [activeBreakState, flashDocumentTitle]);
 
-  if (!activeBreakState || !showFloatingBanner) {
-    return null;
-  }
+    // Start unthrottled Web Worker ticker
+    let worker: Worker | null = null;
+    let fallbackTimer: any = null;
 
-  const emoji = BREAK_EMOJIS[activeBreakState.type] || '⏰';
-  const minutesDisplay = activeBreakMinutes > 0 ? activeBreakMinutes : 15;
+    try {
+      const blob = new Blob([
+        `setInterval(function() { postMessage('tick'); }, 1000);`
+      ], { type: 'application/javascript' });
+      const workerUrl = URL.createObjectURL(blob);
+      worker = new Worker(workerUrl);
+      worker.onmessage = () => {
+        checkCadence();
+      };
+      URL.revokeObjectURL(workerUrl);
+    } catch {
+      fallbackTimer = setInterval(checkCadence, 1000);
+    }
 
-  return (
-    <AnimatePresence>
-      <motion.div
-        initial={{ opacity: 0, y: 50, scale: 0.95 }}
-        animate={{ opacity: 1, y: 0, scale: 1 }}
-        exit={{ opacity: 0, y: 30, scale: 0.95 }}
-        transition={{ type: 'spring', damping: 25, stiffness: 350 }}
-        className="fixed bottom-6 right-6 z-[9999] max-w-md w-full bg-slate-900/95 backdrop-blur-xl border-2 border-amber-500/70 rounded-3xl p-5 shadow-2xl shadow-amber-950/60 text-white"
-      >
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="w-12 h-12 rounded-2xl bg-amber-500/20 text-amber-400 border border-amber-500/40 flex items-center justify-center shrink-0 text-2xl shadow-inner animate-bounce">
-              {emoji}
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <span className="text-[10px] font-black uppercase tracking-widest text-amber-400 bg-amber-500/15 px-2 py-0.5 rounded-full border border-amber-500/30 flex items-center gap-1">
-                  <BellRing className="w-3 h-3 text-amber-400 animate-pulse" /> 15-MIN BREAK REMINDER
-                </span>
-              </div>
-              <h4 className="text-sm font-black text-white mt-0.5">
-                {activeBreakState.type} ({minutesDisplay} mins elapsed)
-              </h4>
-            </div>
+    // Wakeup on tab focus / visibilitychange
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        checkCadence();
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+
+    return () => {
+      if (worker) worker.terminate();
+      if (fallbackTimer) clearInterval(fallbackTimer);
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [activeBreakState, flashDocumentTitle, handleEndActiveBreak]);
+
+  // If active break is running and desktop notifications are not yet allowed by the browser,
+  // show a single non-intrusive banner prompting to enable native system desktop notifications.
+  if (activeBreakState && showPermissionBanner && permissionStatus !== 'granted') {
+    return (
+      <div className="fixed top-4 left-1/2 -translate-x-1/2 z-[10000] max-w-lg w-[92%] bg-slate-900/95 backdrop-blur-xl border border-amber-500/50 rounded-2xl p-3.5 shadow-2xl flex items-center justify-between gap-3 animate-in fade-in slide-in-from-top-4 duration-300">
+        <div className="flex items-center gap-2.5 min-w-0">
+          <div className="p-2 bg-amber-500/10 border border-amber-500/30 rounded-xl shrink-0">
+            <BellRing className="w-4 h-4 text-amber-400 animate-pulse" />
           </div>
-
+          <div className="text-xs">
+            <p className="font-bold text-white">Enable Native Desktop Notifications</p>
+            <p className="text-[11px] text-slate-400">Receive system alerts on your desktop when HRMS is minimized.</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 shrink-0">
           <button
-            onClick={() => setShowFloatingBanner(false)}
-            className="text-slate-400 hover:text-white p-1 rounded-lg hover:bg-slate-800 transition-colors cursor-pointer"
-            title="Dismiss reminder"
+            onClick={requestDesktopNotificationPermission}
+            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs rounded-xl shadow-md transition-all cursor-pointer flex items-center gap-1"
+          >
+            <CheckCircle2 className="w-3.5 h-3.5" /> Enable
+          </button>
+          <button
+            onClick={() => setShowPermissionBanner(false)}
+            className="p-1 text-slate-400 hover:text-white rounded-lg hover:bg-slate-800 transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
+      </div>
+    );
+  }
 
-        <p className="text-xs text-slate-300 mt-3 leading-relaxed">
-          You have been on <strong className="text-white">{activeBreakState.type}</strong> for{' '}
-          <strong className="text-amber-300 font-mono">{minutesDisplay} minutes</strong>. Please wrap up and resume your shift, or end the break below.
-        </p>
-
-        <div className="flex items-center justify-end gap-2.5 mt-4 pt-3 border-t border-slate-800">
-          <button
-            onClick={() => setShowFloatingBanner(false)}
-            className="px-3 py-1.5 text-xs font-bold text-slate-400 hover:text-white rounded-xl hover:bg-slate-800 transition-colors cursor-pointer"
-          >
-            Snooze (Remind in 15m)
-          </button>
-          <button
-            onClick={handleEndActiveBreak}
-            disabled={isEndingBreak}
-            className="px-4 py-2 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-black text-xs rounded-xl shadow-lg flex items-center gap-1.5 cursor-pointer transition-all active:scale-95 disabled:opacity-50"
-          >
-            <StopCircle className="w-4 h-4" />
-            <span>{isEndingBreak ? 'Ending...' : `End ${activeBreakState.type} Now`}</span>
-          </button>
-        </div>
-      </motion.div>
-    </AnimatePresence>
-  );
+  return null;
 };

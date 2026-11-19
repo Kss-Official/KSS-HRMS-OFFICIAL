@@ -1575,7 +1575,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
           }}
           onEnrollSuccess={async (descriptorArray) => {
             if (targetEmployee) {
-              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray);
+              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray, true);
               if (!res.success) throw new Error(res.message);
             }
           }}
@@ -1600,7 +1600,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
           onEnrollSuccess={async (descriptorArray) => {
             triggerHaptic('success');
             if (targetEmployee) {
-              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray);
+              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray, true);
               if (!res.success) {
                 toast.error(res.message);
                 throw new Error(res.message);

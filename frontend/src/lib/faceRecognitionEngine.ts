@@ -4,14 +4,25 @@
 
 import * as faceapi from '@vladmandic/face-api';
 
-const MODEL_URLS = [
-  '/models',
-  '/models/',
-  'https://kss-hrms-official.vercel.app/models',
-  'https://kalpanaaa-employees-website.web.app/models',
-  'https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model',
-  'https://unpkg.com/@vladmandic/face-api@1.7.15/model'
-];
+const getModelUrls = (): string[] => {
+  const urls: string[] = [];
+  if (typeof window !== 'undefined' && window.location?.origin) {
+    urls.push(`${window.location.origin}/models`);
+  }
+  urls.push('/models');
+  urls.push('https://kss-hrms-official.vercel.app/models');
+  urls.push('https://kalpanaaa-employees-website.web.app/models');
+  urls.push('https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model');
+  urls.push('https://unpkg.com/@vladmandic/face-api@1.7.15/model');
+  return Array.from(new Set(urls));
+};
+
+// Check if URL is local/same-origin to allow generous timeout
+const isLocalUrl = (url: string) => {
+  if (url.startsWith('/') && !url.startsWith('//')) return true;
+  if (typeof window !== 'undefined' && window.location?.origin && url.startsWith(window.location.origin)) return true;
+  return false;
+};
 
 let isModelsLoaded = false;
 let modelLoadingPromise: Promise<void> | null = null;
@@ -43,36 +54,24 @@ export const loadFaceModels = async (): Promise<void> => {
   if (modelLoadingPromise) return modelLoadingPromise;
 
   modelLoadingPromise = (async () => {
-    for (const url of MODEL_URLS) {
+    const candidateUrls = getModelUrls();
+    for (const url of candidateUrls) {
       try {
         console.log(`[FaceEngine] Attempting to load neural face models from: ${url}`);
+        const local = isLocalUrl(url);
 
-        // 1. Tiny Face Detector (~190 KB)
-        if (!faceapi.nets.tinyFaceDetector.isLoaded) {
-          await withTimeout(
-            faceapi.nets.tinyFaceDetector.loadFromUri(url),
-            8000,
-            `tinyFaceDetector from ${url}`
-          );
-        }
-
-        // 2. Face Landmark 68 Tiny (~77 KB)
-        if (!faceapi.nets.faceLandmark68TinyNet.isLoaded) {
-          await withTimeout(
-            faceapi.nets.faceLandmark68TinyNet.loadFromUri(url),
-            8000,
-            `faceLandmark68TinyNet from ${url}`
-          );
-        }
-
-        // 3. Face Recognition Net (~6.4 MB)
-        if (!faceapi.nets.faceRecognitionNet.isLoaded) {
-          await withTimeout(
-            faceapi.nets.faceRecognitionNet.loadFromUri(url),
-            15000,
-            `faceRecognitionNet from ${url}`
-          );
-        }
+        // Load all 3 networks in parallel with generous timeout
+        await Promise.all([
+          !faceapi.nets.tinyFaceDetector.isLoaded
+            ? withTimeout(faceapi.nets.tinyFaceDetector.loadFromUri(url), local ? 30000 : 12000, `tinyFaceDetector from ${url}`)
+            : Promise.resolve(),
+          !faceapi.nets.faceLandmark68TinyNet.isLoaded
+            ? withTimeout(faceapi.nets.faceLandmark68TinyNet.loadFromUri(url), local ? 30000 : 12000, `faceLandmark68TinyNet from ${url}`)
+            : Promise.resolve(),
+          !faceapi.nets.faceRecognitionNet.isLoaded
+            ? withTimeout(faceapi.nets.faceRecognitionNet.loadFromUri(url), local ? 60000 : 25000, `faceRecognitionNet from ${url}`)
+            : Promise.resolve()
+        ]);
 
         if (
           faceapi.nets.tinyFaceDetector.isLoaded &&
@@ -604,7 +603,7 @@ export interface MatchVerificationResult {
   message?: string;
 }
 
-export const BIOMETRIC_MATCH_THRESHOLD = 0.38;
+export const BIOMETRIC_MATCH_THRESHOLD = 0.45;
 
 // Compare scanned face descriptor STRICTLY against employee's enrolled descriptor.
 // Euclidean distance threshold: <= 0.48 = MATCH, > 0.48 = MISMATCH (strict biometric boundary)
@@ -637,7 +636,7 @@ export const verifyFaceAgainstEnrolled = (
   // Calculate Euclidean Distance between normalized 128-float descriptors
   const distance = faceapi.euclideanDistance(normScanned, normRef);
   // Strict matching threshold: 0.45 reliably distinguishes genuine individuals from impostors
-  const isMatch = distance < BIOMETRIC_MATCH_THRESHOLD;
+  const isMatch = distance <= BIOMETRIC_MATCH_THRESHOLD;
 
   // Confidence formula: scale 0..0.45 distance to 99..82 range for genuine match
   let confidencePercent = 0;

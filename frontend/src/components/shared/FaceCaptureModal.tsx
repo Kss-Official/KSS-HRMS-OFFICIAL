@@ -8,6 +8,7 @@ import {
   saveEmployeeDescriptor,
   extractDescriptorFromImageUrl,
   getEmployeeDescriptor,
+  verifyFaceAgainstEnrolled,
   drawFaceMeshOverVideo,
   ImageQualityMetrics,
   LivenessTracker,
@@ -433,6 +434,32 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             setFeedbackText(`Verifying biometrics via secure vector engine... (${progressPct}%)`);
           }
 
+          // 1. Fast Client-Side 1:1 Biometric Verification against enrolled descriptor / cloudDescriptor
+          if (cloudDescriptor || employeeId) {
+            const localResult = verifyFaceAgainstEnrolled(
+              scan.descriptor,
+              employeeId || employeeCode || '',
+              null,
+              cloudDescriptor
+            );
+
+            if (localResult.isMatch && active) {
+              consecutiveMatchesRef.current += 1;
+              const conf = Math.max(88, localResult.confidencePercent || 96);
+              setConfidencePercent(conf);
+              setStatusStep('VERIFIED');
+              setFeedbackText(`✓ Biometric Identity Confirmed (${conf}% Confidence)`);
+              triggerHaptic('success');
+              active = false;
+              if (actionTimerRef.current) clearTimeout(actionTimerRef.current);
+              actionTimerRef.current = setTimeout(() => {
+                onSuccess(Array.from(scan.descriptor));
+                onClose();
+              }, 250);
+              return;
+            }
+          }
+
           const now = Date.now();
           // Send verification request at most once every 350ms, and only if no request is in-flight
           if (!isVerifyingInFlight && (now - lastVerifyTime >= 350) && active) {
@@ -440,7 +467,7 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
             lastVerifyTime = now;
             const descArr = Array.from(scan.descriptor);
 
-            verifyFaceApi(descArr, 0.38, employeeId, employeeCode)
+            verifyFaceApi(descArr, 0.45, employeeId, employeeCode)
               .then((backendRes) => {
                 if (!active) return;
 
@@ -730,8 +757,10 @@ export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = ({
                   onClick={() => {
                     setErrorMsg(null);
                     if (isSecurity) {
-                      setStatusStep('SCANNING');
+                      setStatusStep('CENTER_FACE');
                       setFeedbackText('Position face within frame...');
+                      enrollmentSamplesRef.current = [];
+                      setEnrollmentProgress(0);
                     } else {
                       setStatusStep('LOADING_MODELS');
                       setFeedbackText(isModelError ? 'Downloading neural face models...' : 'Retrying camera access...');
