@@ -3370,6 +3370,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 employeeUid: empUid,
                 employeeId: empCode,
                 employeeCode: empCode,
+                employee_id: String(r.employee_id),
+                rawEmployeeId: String(r.employee_id),
                 employeeName: r.employee_name || matchedEmp?.fullName || '',
                 department: r.department || matchedEmp?.department || 'Engineering',
                 date: dateStr,

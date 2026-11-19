@@ -939,6 +939,8 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
         rec.employeeId === employee.employeeId ||
         rec.employeeCode === employee.employeeId || 
         rec.employeeCode === employee.id ||
+        (rec as any).employee_id === employee.id ||
+        (rec as any).rawEmployeeId === employee.id ||
         (!!empUid && (rec.employeeUid === empUid || rec.uid === empUid || rec.employeeId === empUid)) ||
         (!!employee.id && (rec.employeeUid === employee.id || rec.uid === employee.id)) ||
         (rec.employeeName && employee.fullName && rec.employeeName.trim().toLowerCase() === employee.fullName.trim().toLowerCase()) ||
