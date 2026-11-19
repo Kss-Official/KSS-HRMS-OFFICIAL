@@ -546,18 +546,21 @@ def map_attendance_status(val: Optional[str]) -> Optional[AttendanceStatus]:
     return mapping.get(cleaned, AttendanceStatus.PRESENT)
 
 
-@router.post("/correction", response_model=AttendanceRecordOut)
-@router.patch("/records/{record_id}", response_model=AttendanceRecordOut)
-async def correct_attendance(
+async def _apply_attendance_correction(
     payload: AttendanceCorrectionRequest,
-    record_id: Optional[UUID] = None,
-    db: AsyncSession = Depends(get_db),
-    current_user: Employee = Depends(get_current_user)
+    record_id: Optional[UUID],
+    db: AsyncSession,
+    current_user: Employee
 ):
-    if current_user.role not in (UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER):
+    is_authorized = (
+        current_user.role in (UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER, UserRole.TECH_LEAD)
+        or (current_user.employee_code and current_user.employee_code.upper() in ("KSS2407013", "KSS2407003", "KSS2407012"))
+        or (current_user.email and current_user.email.lower() in ("sb.akash@kalpanaaa.in", "founder@kalpanaaasoftwaresolutions.in", "d.koushik@kalpanaaasoftwaresolutions.in", "satya.ranjan.dash@kalpanaaa.in"))
+    )
+    if not is_authorized:
         raise HTTPException(
             status_code=403,
-            detail="Access Denied: Only Project Managers, HR Admins, and Super Admins can override attendance."
+            detail="Access Denied: Only Project Managers, Tech Leads, HR Admins, and Super Admins can override attendance."
         )
 
     target_record_id = record_id or payload.record_id
@@ -641,3 +644,22 @@ async def correct_attendance(
         out.employee_name = target_emp.full_name
         out.department = target_emp.department
     return out
+
+
+@router.post("/correction", response_model=AttendanceRecordOut)
+async def correct_attendance_post(
+    payload: AttendanceCorrectionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    return await _apply_attendance_correction(payload, None, db, current_user)
+
+
+@router.patch("/records/{record_id}", response_model=AttendanceRecordOut)
+async def correct_attendance_patch(
+    record_id: UUID,
+    payload: AttendanceCorrectionRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    return await _apply_attendance_correction(payload, record_id, db, current_user)

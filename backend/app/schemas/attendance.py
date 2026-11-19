@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 from uuid import UUID
-from datetime import date, datetime
+from datetime import date as date_type, datetime as datetime_type
 from typing import Optional, List
 from app.models.enums import AttendanceStatus, AttendanceMethod, BreakType
 
@@ -15,7 +15,7 @@ class CheckOutRequest(BaseModel):
     employee_code: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
-    check_out_at: Optional[datetime] = None
+    check_out_at: Optional[datetime_type] = None
     notes: Optional[str] = None
 
 class BreakActionRequest(BaseModel):
@@ -24,8 +24,8 @@ class BreakActionRequest(BaseModel):
 class AttendanceBreakOut(BaseModel):
     id: UUID
     type: BreakType
-    start_time: datetime
-    end_time: Optional[datetime] = None
+    start_time: datetime_type
+    end_time: Optional[datetime_type] = None
     duration_minutes: int
 
     class Config:
@@ -37,10 +37,10 @@ class AttendanceRecordOut(BaseModel):
     employee_code: Optional[str] = None
     employee_name: Optional[str] = None
     department: Optional[str] = None
-    date: date
+    date: date_type
     status: AttendanceStatus
-    check_in_at: Optional[datetime] = None
-    check_out_at: Optional[datetime] = None
+    check_in_at: Optional[datetime_type] = None
+    check_out_at: Optional[datetime_type] = None
     working_minutes: int
     is_wfh: bool
     location_verified: bool
@@ -49,8 +49,8 @@ class AttendanceRecordOut(BaseModel):
     attendance_method: Optional[AttendanceMethod] = None
     notes: Optional[str] = None
     breaks: List[AttendanceBreakOut] = []
-    created_at: datetime
-    updated_at: datetime
+    created_at: datetime_type
+    updated_at: datetime_type
 
     class Config:
         from_attributes = True
@@ -65,9 +65,9 @@ class AttendanceCorrectionRequest(BaseModel):
     record_id: Optional[UUID] = None
     employee_id: Optional[UUID] = None
     employee_code: Optional[str] = None
-    date: Optional[date] = None
-    check_in_at: Optional[datetime] = None
-    check_out_at: Optional[datetime] = None
+    date: Optional[date_type] = None
+    check_in_at: Optional[datetime_type] = None
+    check_out_at: Optional[datetime_type] = None
     status: Optional[str] = None
     working_minutes: Optional[int] = None
     notes: Optional[str] = None

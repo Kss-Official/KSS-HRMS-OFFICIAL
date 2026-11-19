@@ -3947,6 +3947,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (userCred.user) {
           setUser(userCred.user);
 
+          try {
+            const fbToken = await userCred.user.getIdToken().catch(() => null);
+            await syncFirebaseSessionApi(cleanEmail, userCred.user.uid, fbToken);
+          } catch (syncErr) {
+            console.warn('[Firebase Auth] Immediate syncFirebaseSessionApi note:', syncErr);
+          }
+
           const matched = employees.find(e => 
             e.email?.toLowerCase() === cleanEmail || 
             e.id === userCred.user.uid ||
@@ -6208,14 +6215,24 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     );
 
     // 100% NEON POSTGRESQL PRIMARY ATTENDANCE CORRECTION
+    let currentJwt = getAuthToken();
+    if (!currentJwt && auth.currentUser) {
+      try {
+        const fbToken = await auth.currentUser.getIdToken().catch(() => null);
+        const syncRes = await syncFirebaseSessionApi(auth.currentUser.email, auth.currentUser.uid, fbToken);
+        currentJwt = syncRes?.access_token || getAuthToken();
+      } catch (tokenErr) {
+        console.warn('[FastAPI] Fallback token sync failed:', tokenErr);
+      }
+    }
+
     if (getAuthToken()) {
       const empCode = emp?.employeeId || record.employeeCode;
       const empUuid = emp?.id && !emp.id.startsWith('emp-') ? emp.id : undefined;
-      const isSynthetic = Boolean(record.isSynthetic || !record.id || record.id.startsWith('synthetic_') || record.id.includes('_'));
       const isRealUuid = Boolean(record.id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(record.id));
 
       try {
-        await correctAttendanceApi({
+        const apiRes = await correctAttendanceApi({
           record_id: isRealUuid ? record.id : undefined,
           employee_id: empUuid,
           employee_code: empCode,
@@ -6226,14 +6243,31 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           working_minutes: updates.workingMinutes !== undefined ? updates.workingMinutes : record.workingMinutes,
           notes: updates.notes || record.notes
         });
-      } catch (e) {
-        console.warn('[FastAPI] correctAttendanceApi note:', e);
+
+        if (apiRes && apiRes.id) {
+          const freshMapped: AttendanceRecord = {
+            ...updatedRecord,
+            id: String(apiRes.id),
+            status: (updates.status || record.status) as AttendanceStatus,
+            checkInAt: updates.checkInAt !== undefined ? updates.checkInAt : record.checkInAt,
+            checkOutAt: updates.checkOutAt !== undefined ? updates.checkOutAt : record.checkOutAt,
+            workingMinutes: updates.workingMinutes !== undefined ? updates.workingMinutes : record.workingMinutes,
+            updatedAt: new Date().toISOString()
+          };
+          setAttendance(prev => [
+            freshMapped,
+            ...prev.filter(a => a.id !== String(apiRes.id) && !(a.date === record.date && (a.employeeId === record.employeeId || a.employeeCode === record.employeeCode)))
+          ]);
+        }
+      } catch (e: any) {
+        console.error('[FastAPI] correctAttendanceApi error:', e);
       }
     }
 
     if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
       try {
-        await setDoc(doc(db, 'attendance', targetId), payload, { merge: true });
+        const firestoreDocId = getAttendanceDocId(getCanonicalEmployeeUid(emp || record, undefined), record.date);
+        await setDoc(doc(db, 'attendance', firestoreDocId), payload, { merge: true });
       } catch (err: any) {
         console.warn(`[Firestore] Attendance correction note:`, err);
       }
