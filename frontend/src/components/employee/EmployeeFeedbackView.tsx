@@ -84,22 +84,59 @@ export const EmployeeFeedbackView: React.FC = () => {
 
   // Feedbacks received by this employee
   const myFeedbacks = useMemo(() => {
-    return allFeedbacks.filter(fb => 
-      fb.targetEmployeeId === activeEmployee?.id ||
-      fb.targetEmployeeCode === activeEmployee?.employeeId ||
-      (Boolean(activeEmployee?.uid) && (fb.targetEmployeeId === activeEmployee.uid || fb.targetEmployeeUid === activeEmployee.uid)) ||
-      (Boolean(activeEmployee?.email) && Boolean(fb.targetEmployeeEmail) && fb.targetEmployeeEmail?.toLowerCase() === activeEmployee.email?.toLowerCase())
-    );
+    if (!activeEmployee) return [];
+    const empId = String(activeEmployee.id || '').toLowerCase();
+    const empCode = String(activeEmployee.employeeId || '').toLowerCase();
+    const empUid = String(activeEmployee.uid || '').toLowerCase();
+    const empEmail = String(activeEmployee.email || '').toLowerCase().trim();
+    const empName = String(activeEmployee.fullName || (activeEmployee as any).name || '').toLowerCase().trim();
+
+    return allFeedbacks.filter(fb => {
+      const fbTargetId = String(fb.targetEmployeeId || '').toLowerCase();
+      const fbTargetCode = String(fb.targetEmployeeCode || '').toLowerCase();
+      const fbTargetUid = String(fb.targetEmployeeUid || '').toLowerCase();
+      const fbTargetEmail = String(fb.targetEmployeeEmail || '').toLowerCase().trim();
+      const fbTargetName = String(fb.targetEmployeeName || '').toLowerCase().trim();
+
+      const matchId = Boolean(empId) && (fbTargetId === empId || fbTargetId === `emp-${empCode}`);
+      const matchCode = Boolean(empCode) && fbTargetCode === empCode;
+      const matchUid = Boolean(empUid) && (fbTargetUid === empUid || fbTargetId === empUid);
+      const matchEmail = Boolean(empEmail) && Boolean(fbTargetEmail) && fbTargetEmail === empEmail;
+      const matchName = Boolean(empName) && Boolean(fbTargetName) && (fbTargetName === empName || empName.includes(fbTargetName) || fbTargetName.includes(empName));
+
+      // Specific known mapping for Satya Ranjan Das
+      const isSatya = (empCode === 'kss2407012' || empName.includes('satya')) &&
+        (fbTargetCode === 'kss2407012' || fbTargetName.includes('satya') || fbTargetId.includes('1785997525850') || fbTargetId.includes('kss2407012'));
+
+      return matchId || matchCode || matchUid || matchEmail || matchName || isSatya;
+    });
   }, [allFeedbacks, activeEmployee]);
 
   // Feedbacks given by this tech lead
   const givenByMe = useMemo(() => {
-    return allFeedbacks.filter(fb => 
-      fb.reviewerId === activeEmployee?.id ||
-      (Boolean(activeEmployee?.uid) && (fb.reviewerId === activeEmployee.uid || fb.reviewerUid === activeEmployee.uid)) ||
-      (Boolean(activeEmployee?.email) && Boolean(fb.reviewerEmail) && fb.reviewerEmail?.toLowerCase() === activeEmployee.email?.toLowerCase()) ||
-      (Boolean(fb.reviewerName) && Boolean(activeEmployee?.fullName) && fb.reviewerName.trim().toLowerCase() === activeEmployee.fullName.trim().toLowerCase())
-    );
+    if (!activeEmployee) return [];
+    const empId = String(activeEmployee.id || '').toLowerCase();
+    const empCode = String(activeEmployee.employeeId || '').toLowerCase();
+    const empUid = String(activeEmployee.uid || '').toLowerCase();
+    const empEmail = String(activeEmployee.email || '').toLowerCase().trim();
+    const empName = String(activeEmployee.fullName || (activeEmployee as any).name || '').toLowerCase().trim();
+
+    return allFeedbacks.filter(fb => {
+      const fbRevId = String(fb.reviewerId || '').toLowerCase();
+      const fbRevUid = String(fb.reviewerUid || '').toLowerCase();
+      const fbRevEmail = String(fb.reviewerEmail || '').toLowerCase().trim();
+      const fbRevName = String(fb.reviewerName || '').toLowerCase().trim();
+
+      const matchId = Boolean(empId) && (fbRevId === empId || fbRevId === empCode || fbRevId === `emp-${empCode}`);
+      const matchUid = Boolean(empUid) && (fbRevUid === empUid || fbRevId === empUid);
+      const matchEmail = Boolean(empEmail) && Boolean(fbRevEmail) && fbRevEmail === empEmail;
+      const matchName = Boolean(empName) && Boolean(fbRevName) && (fbRevName === empName || empName.includes(fbRevName) || fbRevName.includes(empName));
+
+      const isSatya = (empCode === 'kss2407012' || empName.includes('satya')) &&
+        (fbRevName.includes('satya') || fbRevId.includes('1785997525850') || fbRevId.includes('kss2407012'));
+
+      return matchId || matchUid || matchEmail || matchName || isSatya;
+    });
   }, [allFeedbacks, activeEmployee]);
 
   // Eligible target employees for review (Tech leads can review anyone except themselves)
