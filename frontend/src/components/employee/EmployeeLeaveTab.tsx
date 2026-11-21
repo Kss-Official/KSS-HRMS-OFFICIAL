@@ -80,7 +80,7 @@ export const EmployeeLeaveTab: React.FC = () => {
       return r.startDate > todayStr;
     }
     if (timeFilter === 'Previous') {
-      return r.endDate < todayStr || r.status === 'Approved' || r.status === 'Rejected';
+      return r.endDate < todayStr || r.status === 'Approved' || r.status === 'Rejected' || r.status === 'Cancelled';
     }
     if (timeFilter === 'Approved') {
       return r.status === 'Approved';
@@ -525,16 +525,18 @@ export const EmployeeLeaveTab: React.FC = () => {
                 const ceoState = req.ceoStatus || 'Pending';
                 const ctoState = req.ctoStatus || (ceoState === 'Approved' ? 'Pending' : 'Waiting CEO');
 
+                const isCancelled = req.status === 'Cancelled';
                 const isFullyApproved = req.status === 'Approved' || (ceoState === 'Approved' && ctoState === 'Approved');
                 const isRejected = req.status === 'Rejected' || ceoState === 'Rejected' || ctoState === 'Rejected';
-                const currentStatus = isFullyApproved ? 'Approved' : isRejected ? 'Rejected' : 'Pending';
+                const currentStatus = isCancelled ? 'Cancelled' : isFullyApproved ? 'Approved' : isRejected ? 'Rejected' : 'Pending';
 
                 const statusColor = 
                   currentStatus === 'Approved' ? 'var(--accent-emerald, #10b981)' : 
                   currentStatus === 'Rejected' ? 'var(--accent-rose, #f43f5e)' : 
+                  currentStatus === 'Cancelled' ? 'var(--text-muted, #64748b)' : 
                   'var(--accent-amber, #f59e0b)';
 
-                const Icon = currentStatus === 'Approved' ? Check : currentStatus === 'Rejected' ? X : Clock;
+                const Icon = currentStatus === 'Approved' ? Check : currentStatus === 'Rejected' ? X : currentStatus === 'Cancelled' ? RotateCcw : Clock;
                 const displayType = (req.type === 'WFH' || req.type === 'WORK_FROM_HOME' || isWfhType(req.type) || String(req.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd') ? 'WFH' : (req.type === 'Leave' ? 'Earn Leave' : req.type);
 
                 return (
@@ -572,15 +574,23 @@ export const EmployeeLeaveTab: React.FC = () => {
                     </div>
 
                     {/* Direct CEO → CTO Approval Pipeline Tracker */}
-                    <div className="flex items-center gap-1.5 my-2 text-[10px] font-bold flex-wrap">
-                      <span className={`px-2 py-0.5 rounded border ${ceoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ceoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-purple-500/10 border-purple-500/30 text-purple-400'}`}>
-                        Stage 1 (CEO): {ceoState === 'Approved' ? 'Approved' : ceoState === 'Rejected' ? 'Rejected' : 'Pending'}
-                      </span>
-                      <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
-                      <span className={`px-2 py-0.5 rounded border ${ctoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ctoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : ceoState === 'Approved' ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
-                        Stage 2 (CTO Final): {ctoState === 'Approved' ? 'Approved' : ctoState === 'Rejected' ? 'Rejected' : ceoState === 'Approved' ? 'Pending' : 'Waiting CEO'}
-                      </span>
-                    </div>
+                    {isCancelled ? (
+                      <div className="flex items-center gap-1.5 my-2 text-[10px] font-bold">
+                        <span className="px-2 py-0.5 rounded border bg-slate-900 border-slate-800 text-slate-500">
+                          Request Cancelled by Employee
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center gap-1.5 my-2 text-[10px] font-bold flex-wrap">
+                        <span className={`px-2 py-0.5 rounded border ${ceoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ceoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : 'bg-purple-500/10 border-purple-500/30 text-purple-400'}`}>
+                          Stage 1 (CEO): {ceoState === 'Approved' ? 'Approved' : ceoState === 'Rejected' ? 'Rejected' : 'Pending'}
+                        </span>
+                        <ChevronRight className="w-3.5 h-3.5 text-slate-600" />
+                        <span className={`px-2 py-0.5 rounded border ${ctoState === 'Approved' ? 'bg-emerald-500/10 border-emerald-500/30 text-emerald-400' : ctoState === 'Rejected' ? 'bg-rose-500/10 border-rose-500/30 text-rose-400' : ceoState === 'Approved' ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-400' : 'bg-slate-900 border-slate-800 text-slate-600'}`}>
+                          Stage 2 (CTO Final): {ctoState === 'Approved' ? 'Approved' : ctoState === 'Rejected' ? 'Rejected' : ceoState === 'Approved' ? 'Pending' : 'Waiting CEO'}
+                        </span>
+                      </div>
+                    )}
 
                     <div className="flex items-center justify-between border-t border-slate-800 pt-3 relative z-10">
                       <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase tracking-wider ${
@@ -595,17 +605,24 @@ export const EmployeeLeaveTab: React.FC = () => {
                       
                       {currentStatus === 'Pending' || (currentStatus === 'Approved' && req.startDate >= todayStr) ? (
                         <button 
-                          onClick={() => {
+                          onClick={async () => {
                             triggerHaptic('warning');
                             const actionMsg = currentStatus === 'Approved'
                               ? `Cancel approved ${displayType} from ${req.startDate} to ${req.endDate}? This will reverse the deduction and restore your leave balance.`
                               : `Cancel this ${displayType} request for ${req.startDate}?`;
                             if (window.confirm(actionMsg)) {
-                              cancelLeaveRequest(req.id, req.employeeId, req.startDate, req.endDate);
-                              setFeedback({ 
-                                success: true, 
-                                message: `${displayType} request cancelled${currentStatus === 'Approved' ? ' and days restored to balance.' : '.'}` 
-                              });
+                              try {
+                                await cancelLeaveRequest(req.id, req.employeeId, req.startDate, req.endDate);
+                                setFeedback({ 
+                                  success: true, 
+                                  message: `${displayType} request cancelled${currentStatus === 'Approved' ? ' and days restored to balance.' : '.'}` 
+                                });
+                              } catch (err: any) {
+                                setFeedback({
+                                  success: false,
+                                  message: err?.message || 'Failed to cancel request. Please try again.'
+                                });
+                              }
                               setTimeout(() => setFeedback(null), 3500);
                             }
                           }} 
@@ -613,6 +630,10 @@ export const EmployeeLeaveTab: React.FC = () => {
                         >
                           <X className="w-3 h-3" /> Cancel Request
                         </button>
+                      ) : currentStatus === 'Cancelled' ? (
+                        <span className="text-slate-500 text-[10px] italic font-medium">
+                          Cancelled
+                        </span>
                       ) : (
                         <span className="text-slate-400 text-[10px] max-w-[200px] truncate" title={req.reviewNotes || `Reviewed by ${req.reviewedBy}`}>
                           {req.reviewNotes || `Final Sanction by ${req.reviewedBy || 'Executive Board'}`}

@@ -6742,10 +6742,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const eDate = endDate || targetReq?.endDate || '';
     const revName = activeEmployee?.fullName || user?.displayName || 'Employee';
     const revUid = user?.uid || activeEmployee?.uid || 'uid-user';
+    const nowIso = new Date().toISOString();
 
-    await LeaveService.cancelRequest(id, empDocId, sDate, eDate, revName, revUid);
+    // 1. INSTANT 0ms Optimistic State Update across UI
+    setLeaveRequests(prev => {
+      const updated = prev.map(r => {
+        if (r.id === id) {
+          return {
+            ...r,
+            status: 'Cancelled' as const,
+            updatedAt: nowIso
+          };
+        }
+        return r;
+      });
+      try {
+        localStorage.setItem('kss_v1_leave_requests', JSON.stringify(updated.slice(0, 500)));
+      } catch {}
+      return updated;
+    });
 
-    // If cancelled request was WFH, remove from approvedWfhDates
+    // 2. Broadcast across tabs immediately
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('kss_app_events');
+        channel.postMessage({ type: 'UPDATE_LEAVE_REQUEST', payload: { id, status: 'Cancelled' } });
+      } catch {}
+    }
+
+    // 3. If cancelled request was WFH, remove from approvedWfhDates
     const isWfhReq = isWfhType(targetReq?.type) || isWfhType(targetReq?.leaveCategory);
     if (isWfhReq && targetEmp && sDate && eDate) {
       const datesToRemove = new Set<string>();
@@ -6759,12 +6784,39 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       updateEmployee(targetEmp.id, { approvedWfhDates: updatedDates });
     }
 
-    // FastAPI backend sync
-    if (getAuthToken()) {
-      cancelLeaveApi(id).catch(e => console.warn('[FastAPI] cancelLeaveApi sync note:', e));
+    // 4. If cancelled request was an Approved paid leave, restore balance locally
+    if (targetReq?.status === 'Approved' && targetEmp && sDate && eDate) {
+      const numDays = Math.max(1, Math.round((new Date(eDate).getTime() - new Date(sDate).getTime()) / (1000 * 60 * 60 * 24)) + 1);
+      const rawType = String(targetReq.type || targetReq.leaveCategory || '').toLowerCase();
+      if (rawType.includes('sick')) {
+        const curBal = Number(targetEmp.sickLeaveBalance ?? 12);
+        updateEmployee(targetEmp.id, { sickLeaveBalance: curBal + numDays });
+      } else if (!rawType.includes('wfh') && !rawType.includes('loss') && !rawType.includes('lop')) {
+        const curBal = Number(targetEmp.earnLeaveBalance ?? 18);
+        updateEmployee(targetEmp.id, { earnLeaveBalance: curBal + numDays });
+      }
     }
 
-    // Real-time notification for cancellation
+    // 5. FastAPI backend sync
+    if (getAuthToken()) {
+      try {
+        await cancelLeaveApi(id);
+      } catch (e) {
+        console.warn('[FastAPI] cancelLeaveApi sync note:', e);
+      }
+      fetchFastApiRecords(activeEmployeeRef.current, true);
+    }
+
+    // 6. Firestore sync with safe fallback
+    if (USE_FIREBASE_FIRESTORE) {
+      try {
+        await LeaveService.cancelRequest(id, empDocId, sDate, eDate, revName, revUid);
+      } catch (e) {
+        console.warn('[LeaveService] cancelRequest Firestore note:', e);
+      }
+    }
+
+    // 7. Real-time notification for cancellation
     sendKssNotification(
       'LEAVE_REQUEST_CANCELLED',
       `🚫 ${targetReq?.type || 'Leave/WFH'} Request Cancelled`,

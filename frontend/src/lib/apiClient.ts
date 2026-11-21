@@ -548,7 +548,7 @@ export async function reviewLeaveApi(
 }
 
 export async function cancelLeaveApi(leaveId: string): Promise<any> {
-  return apiRequest(`/leaves/${leaveId}/cancel`, {
+  return apiRequest(`/leaves/${encodeURIComponent(leaveId)}/cancel`, {
     method: 'PATCH'
   });
 }

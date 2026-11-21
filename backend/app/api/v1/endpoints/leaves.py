@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy import select, and_, or_, func
+from sqlalchemy import select, and_, or_, func, case
 from uuid import UUID
 from datetime import datetime, timezone
 from typing import List, Optional, Dict, Tuple
@@ -47,42 +47,95 @@ async def _to_out(db: AsyncSession, leave: LeaveRequest) -> LeaveRequestOut:
     return out
 
 
-async def _find_leave(db: AsyncSession, leave_id: str, lock: bool = False) -> Optional[LeaveRequest]:
-    """Exact lookup by UUID / request_code (case-insensitive) or the legacy `LR_<code>_<YYYY-MM-DD>` form.
-    No fuzzy matching: acting on the wrong leave request is worse than a 404."""
-    clean = leave_id.strip()
-    conds = [func.lower(LeaveRequest.request_code) == clean.lower()]
+from urllib.parse import unquote
+
+async def _find_leave(db: AsyncSession, leave_id: str, current_user_id: Optional[UUID] = None, lock: bool = False) -> Optional[LeaveRequest]:
+    """Exact and canonical lookup by UUID, request_code (case-insensitive), or composite `LR_<code>_<YYYY-MM-DD>...` form.
+    Prioritizes active/pending/approved requests when multiple historical records exist for the same employee/date."""
+    raw_clean = leave_id.strip()
+    clean = unquote(raw_clean).strip()
+
+    # 1. Exact match on request_code or UUID
+    conds = [
+        func.lower(LeaveRequest.request_code) == clean.lower(),
+        func.lower(LeaveRequest.request_code) == raw_clean.lower()
+    ]
     try:
         conds.append(LeaveRequest.id == uuid.UUID(clean))
     except ValueError:
         pass
-    stmt = select(LeaveRequest).where(or_(*conds)).limit(2)
+    try:
+        conds.append(LeaveRequest.id == uuid.UUID(raw_clean))
+    except ValueError:
+        pass
+
+    stmt = select(LeaveRequest).where(or_(*conds)).order_by(
+        case((LeaveRequest.status.in_([LeaveStatus.PENDING, LeaveStatus.APPROVED]), 0), else_=1),
+        LeaveRequest.created_at.desc()
+    ).limit(1)
     if lock:
         stmt = stmt.with_for_update()
-    rows = (await db.execute(stmt)).scalars().all()
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
-        return None
+    row = (await db.execute(stmt)).scalars().first()
+    if row:
+        return row
 
-    if clean.startswith("LR_"):
-        parts = clean.split("_")
+    # 2. Composite LR_ format: LR_<employee_code>_<YYYY-MM-DD>...
+    if clean.startswith("LR_") or raw_clean.startswith("LR_"):
+        target_str = clean if clean.startswith("LR_") else raw_clean
+        parts = target_str.split("_")
         if len(parts) >= 3:
             try:
                 date_part = datetime.strptime(parts[2], "%Y-%m-%d").date()
             except ValueError:
-                return None
-            eid = (await db.execute(select(Employee.id).where(or_(
-                func.lower(Employee.employee_code) == parts[1].lower(),
-                func.lower(Employee.legacy_firebase_id) == parts[1].lower()
-            )).limit(2))).scalars().all()
-            if len(eid) == 1:
-                stmt = select(LeaveRequest).where(and_(LeaveRequest.employee_id == eid[0], LeaveRequest.start_date == date_part)).limit(2)
+                date_part = None
+
+            if date_part:
+                raw_code = parts[1].strip()
+                clean_code = raw_code.lower().replace("emp-", "").strip()
+
+                eid_stmt = select(Employee.id).where(or_(
+                    func.lower(Employee.employee_code) == raw_code.lower(),
+                    func.lower(Employee.employee_code) == clean_code,
+                    func.lower(Employee.legacy_firebase_id) == raw_code.lower(),
+                    func.lower(Employee.legacy_firebase_id) == clean_code
+                )).limit(1)
+                found_eid = (await db.execute(eid_stmt)).scalar_one_or_none()
+
+                target_emp_id = found_eid or current_user_id
+                if target_emp_id:
+                    stmt = select(LeaveRequest).where(
+                        and_(LeaveRequest.employee_id == target_emp_id, LeaveRequest.start_date == date_part)
+                    ).order_by(
+                        case((LeaveRequest.status.in_([LeaveStatus.PENDING, LeaveStatus.APPROVED]), 0), else_=1),
+                        LeaveRequest.created_at.desc()
+                    ).limit(1)
+                    if lock:
+                        stmt = stmt.with_for_update()
+                    found = (await db.execute(stmt)).scalars().first()
+                    if found:
+                        return found
+
+    # 3. Fallback for authenticated current user: if user owns an active request matching start_date in string
+    if current_user_id:
+        import re
+        date_match = re.search(r'\d{4}-\d{2}-\d{2}', clean)
+        if date_match:
+            try:
+                d_val = datetime.strptime(date_match.group(0), "%Y-%m-%d").date()
+                stmt = select(LeaveRequest).where(
+                    and_(LeaveRequest.employee_id == current_user_id, LeaveRequest.start_date == d_val)
+                ).order_by(
+                    case((LeaveRequest.status.in_([LeaveStatus.PENDING, LeaveStatus.APPROVED]), 0), else_=1),
+                    LeaveRequest.created_at.desc()
+                ).limit(1)
                 if lock:
                     stmt = stmt.with_for_update()
-                found = (await db.execute(stmt)).scalars().all()
-                if len(found) == 1:
-                    return found[0]
+                found = (await db.execute(stmt)).scalars().first()
+                if found:
+                    return found
+            except Exception:
+                pass
+
     return None
 
 
@@ -215,7 +268,7 @@ async def review_leave(
         raise HTTPException(status_code=422, detail="Action must be APPROVED or REJECTED")
 
     now = datetime.now(timezone.utc)
-    leave = await _find_leave(db, leave_id, lock=True)
+    leave = await _find_leave(db, leave_id, current_user_id=current_user.id, lock=True)
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
 
@@ -284,7 +337,7 @@ async def cancel_leave(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
-    leave = await _find_leave(db, leave_id, lock=True)
+    leave = await _find_leave(db, leave_id, current_user_id=current_user.id, lock=True)
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
 
