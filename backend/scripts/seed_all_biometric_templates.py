@@ -31,17 +31,44 @@ def generate_unique_embedding(seed_str: str) -> list[float]:
         vec = [round(x / norm, 6) for x in vec]
     return vec
 
+EXEMPT_SUPER_ADMIN_CODES = {'KSS2407001', 'KSS2407002', 'KSS2407015', 'EXECe24e7834'}
+
 async def seed_templates():
     async with AsyncSessionLocal() as db:
-        res = await db.execute(text("SELECT id, employee_code, full_name, is_face_enrolled, (face_embedding IS NOT NULL) FROM employees WHERE is_active = true ORDER BY employee_code"))
+        res = await db.execute(text("""
+            SELECT id, employee_code, full_name, role, executive_tier, is_face_enrolled, (face_embedding IS NOT NULL) 
+            FROM employees 
+            WHERE is_active = true 
+            ORDER BY employee_code
+        """))
         employees = res.fetchall()
         print(f"Total active employees: {len(employees)}")
 
         updated_count = 0
+        exempt_count = 0
+
         for emp in employees:
-            emp_id, code, name, enrolled, has_emb = emp[0], emp[1], emp[2], emp[3], emp[4]
-            # Preserve existing Akash SB real template
-            if code == "KSS2407013" and has_emb:
+            emp_id, code, name, role, exec_tier, enrolled, has_emb = emp[0], emp[1], emp[2], emp[3], str(emp[4] or 'NONE'), emp[5], emp[6]
+            
+            # STRICT POLICY: Super Admins and Executive Leadership are strictly EXEMPT from biometric face check-in.
+            # Never store biometric face descriptors or embeddings for Super Admins / Executives.
+            if code in EXEMPT_SUPER_ADMIN_CODES or role == 'SUPER_ADMIN' or exec_tier in ('CEO', 'CTO'):
+                await db.execute(
+                    text("""
+                        UPDATE employees 
+                        SET face_descriptor = NULL,
+                            face_embedding = NULL,
+                            is_face_enrolled = false
+                        WHERE id = :id
+                    """),
+                    {"id": emp_id}
+                )
+                exempt_count += 1
+                print(f"[EXEMPT - CLEARED] {code}: {name} ({role} / {exec_tier}) - face biometrics strictly exempt")
+                continue
+
+            # Preserve existing Akash SB real template if already present
+            if code == "KSS2407013" and has_emb and enrolled:
                 print(f"[PRESERVED] {code}: {name} already has genuine verified biometric template")
                 continue
 
@@ -63,7 +90,7 @@ async def seed_templates():
             print(f"[SEEDED] {code}: {name} -> 128D unique biometric template registered")
 
         await db.commit()
-        print(f"\nSuccessfully seeded {updated_count} employee biometric templates in Neon Vector DB!")
+        print(f"\nCompleted: {updated_count} employees registered with biometric templates, {exempt_count} Super Admins/Executives confirmed strictly exempt.")
 
 if __name__ == "__main__":
     asyncio.run(seed_templates())

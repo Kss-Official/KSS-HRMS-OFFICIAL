@@ -42,7 +42,23 @@ export default defineConfig(({ command }) => {
           clientsClaim: true,
           cleanupOutdatedCaches: true,
           navigateFallback: null,
-          navigateFallbackDenylist: [/^\/assets\//, /^\/models\//, /\.[a-z0-9]+$/i]
+          navigateFallbackDenylist: [/^\/assets\//, /^\/models\//, /\.[a-z0-9]+$/i],
+          runtimeCaching: [
+            {
+              urlPattern: /.*\/models\/.*\.(json|bin)$/i,
+              handler: 'CacheFirst',
+              options: {
+                cacheName: 'face-recognition-models-v1',
+                expiration: {
+                  maxEntries: 20,
+                  maxAgeSeconds: 30 * 24 * 60 * 60 // 30 days offline cache
+                },
+                cacheableResponse: {
+                  statuses: [0, 200]
+                }
+              }
+            }
+          ]
         },
         manifest: {
           name: 'Kalpanaaa Software Solutions',

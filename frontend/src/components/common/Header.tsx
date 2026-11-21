@@ -14,7 +14,7 @@ import { toast } from 'sonner';
 import { UserRole } from '../../types';
 import { getEmployeeWorkDate, resolveAttendanceRecord, isExecutiveOrLeadership } from '../../lib/attendanceEngine';
 import { NotificationBell } from './NotificationBell';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
+import { FaceCaptureModal, preloadFaceCaptureEngine } from '../shared/LazyFaceCaptureModal';
 import { getEmployeeAvatar } from '../../lib/avatarHelper';
 
 interface HeaderProps {
@@ -40,6 +40,11 @@ export const Header: React.FC<HeaderProps> = ({
     : null;
 
   const [isHeaderFaceModalOpen, setIsHeaderFaceModalOpen] = useState(false);
+
+  // Background warm-up for face recognition models so check-in camera opens instantly
+  useEffect(() => {
+    preloadFaceCaptureEngine();
+  }, []);
 
   const executeHeaderCheckInProcess = async (descArr?: number[]) => {
     if (!activeEmployee) return;

@@ -195,6 +195,11 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     }
   };
 
+  // Proactively warm up the facial biometric engine and neural models in background on portal mount
+  useEffect(() => {
+    preloadFaceCaptureEngine();
+  }, []);
+
   // MANDATORY FIRST-TIME BIOMETRIC REGISTRATION GATE:
   // When an employee enters the portal, if their face is not registered yet,
   // automatically launch the Face Biometric Registration modal so they register their face first.

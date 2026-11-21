@@ -5,11 +5,10 @@
 import * as faceapi from '@vladmandic/face-api';
 
 const getModelUrls = (): string[] => {
-  const urls: string[] = [];
+  const urls: string[] = ['/models'];
   if (typeof window !== 'undefined' && window.location?.origin) {
     urls.push(`${window.location.origin}/models`);
   }
-  urls.push('/models');
   urls.push('https://kss-hrms-official.vercel.app/models');
   urls.push('https://kalpanaaa-employees-website.web.app/models');
   urls.push('https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model');
@@ -17,7 +16,7 @@ const getModelUrls = (): string[] => {
   return Array.from(new Set(urls));
 };
 
-// Check if URL is local/same-origin to allow generous timeout
+// Check if URL is local/same-origin
 const isLocalUrl = (url: string) => {
   if (url.startsWith('/') && !url.startsWith('//')) return true;
   if (typeof window !== 'undefined' && window.location?.origin && url.startsWith(window.location.origin)) return true;
@@ -45,9 +44,9 @@ const withTimeout = <T>(promise: Promise<T>, ms: number, desc: string): Promise<
   });
 };
 
-// Initialize and load lightweight face recognition models with multi-CDN fallback
+// Initialize and load lightweight face recognition models with multi-CDN fast fallback
 export const loadFaceModels = async (): Promise<void> => {
-  // If already loaded in memory, return immediately
+  // If already loaded in memory, return immediately (0ms)
   if (isModelsLoaded && faceapi.nets.tinyFaceDetector.isLoaded && faceapi.nets.faceLandmark68TinyNet.isLoaded && faceapi.nets.faceRecognitionNet.isLoaded) {
     return;
   }
@@ -57,19 +56,20 @@ export const loadFaceModels = async (): Promise<void> => {
     const candidateUrls = getModelUrls();
     for (const url of candidateUrls) {
       try {
-        console.log(`[FaceEngine] Attempting to load neural face models from: ${url}`);
         const local = isLocalUrl(url);
+        // Fast responsive timeouts: 4-7s for local, 6-10s for CDN mirrors to avoid long modal hangs
+        const timeoutSmall = local ? 4000 : 6000;
+        const timeoutLarge = local ? 7000 : 10000;
 
-        // Load all 3 networks in parallel with generous timeout
         await Promise.all([
           !faceapi.nets.tinyFaceDetector.isLoaded
-            ? withTimeout(faceapi.nets.tinyFaceDetector.loadFromUri(url), local ? 30000 : 12000, `tinyFaceDetector from ${url}`)
+            ? withTimeout(faceapi.nets.tinyFaceDetector.loadFromUri(url), timeoutSmall, `tinyFaceDetector from ${url}`)
             : Promise.resolve(),
           !faceapi.nets.faceLandmark68TinyNet.isLoaded
-            ? withTimeout(faceapi.nets.faceLandmark68TinyNet.loadFromUri(url), local ? 30000 : 12000, `faceLandmark68TinyNet from ${url}`)
+            ? withTimeout(faceapi.nets.faceLandmark68TinyNet.loadFromUri(url), timeoutSmall, `faceLandmark68TinyNet from ${url}`)
             : Promise.resolve(),
           !faceapi.nets.faceRecognitionNet.isLoaded
-            ? withTimeout(faceapi.nets.faceRecognitionNet.loadFromUri(url), local ? 60000 : 25000, `faceRecognitionNet from ${url}`)
+            ? withTimeout(faceapi.nets.faceRecognitionNet.loadFromUri(url), timeoutLarge, `faceRecognitionNet from ${url}`)
             : Promise.resolve()
         ]);
 
