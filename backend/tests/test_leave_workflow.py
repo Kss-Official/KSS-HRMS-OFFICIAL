@@ -32,13 +32,13 @@ async def test_leave_and_wfh_full_workflow():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as client:
         async with AsyncSessionLocal() as db:
-            # 1. Fetch test regular employee (Asbin T S - KSS2407004)
-            res_emp = await db.execute(text("SELECT id, employee_code, full_name, earn_leave_balance, sick_leave_balance FROM employees WHERE employee_code = 'KSS2407004'"))
+            # 1. Fetch test regular employee (Dedicated test user TEST23175 so real employees are never altered)
+            res_emp = await db.execute(text("SELECT id, employee_code, full_name, earn_leave_balance, sick_leave_balance FROM employees WHERE employee_code = 'TEST23175'"))
             emp = res_emp.fetchone()
-            assert emp is not None, "KSS2407004 must exist"
+            assert emp is not None, "TEST23175 must exist"
             emp_id = emp[0]
-            orig_el = float(emp[3] or 1.0)
-            orig_sl = float(emp[4] or 1.0)
+            orig_el = float(emp[3] or 0.0)
+            orig_sl = float(emp[4] or 0.0)
 
             # Ensure employee has 10 Earn Leave and 5 Sick Leave balance for testing
             await db.execute(text("UPDATE employees SET earn_leave_balance = 10.0, sick_leave_balance = 5.0 WHERE id = :id"), {"id": emp_id})

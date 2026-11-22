@@ -3496,7 +3496,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 reason: l.reason || '',
                 status: (l.status.charAt(0) + l.status.slice(1).toLowerCase()) as any,
                 ceoStatus: l.ceo_status === 'APPROVED' ? 'Approved' : (l.ceo_status === 'REJECTED' ? 'Rejected' : 'Pending'),
-                ctoStatus: l.cto_status === 'APPROVED' ? 'Approved' : (l.cto_status === 'REJECTED' ? 'Rejected' : 'Waiting CEO'),
+                ctoStatus: l.cto_status === 'APPROVED' ? 'Approved' : (l.cto_status === 'REJECTED' ? 'Rejected' : (l.cto_status === 'PENDING' ? 'Pending' : 'Waiting CEO')),
                 requestDate: l.created_at || l.start_date
               };
             });

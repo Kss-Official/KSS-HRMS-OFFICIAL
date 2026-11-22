@@ -9,8 +9,6 @@ const getModelUrls = (): string[] => {
   if (typeof window !== 'undefined' && window.location?.origin) {
     urls.push(`${window.location.origin}/models`);
   }
-  urls.push('https://kss-hrms-official.vercel.app/models');
-  urls.push('https://kalpanaaa-employees-website.web.app/models');
   urls.push('https://cdn.jsdelivr.net/npm/@vladmandic/face-api@1.7.15/model');
   urls.push('https://unpkg.com/@vladmandic/face-api@1.7.15/model');
   return Array.from(new Set(urls));
@@ -21,6 +19,94 @@ const isLocalUrl = (url: string) => {
   if (url.startsWith('/') && !url.startsWith('//')) return true;
   if (typeof window !== 'undefined' && window.location?.origin && url.startsWith(window.location.origin)) return true;
   return false;
+};
+
+let isBackendInitialized = false;
+let backendInitPromise: Promise<void> | null = null;
+
+// Ensure TensorFlow.js backend is properly initialized before any tensor operations or model loading
+export const initTensorFlowBackend = async (): Promise<void> => {
+  if (isBackendInitialized) return;
+  if (typeof window === 'undefined') return;
+  if (backendInitPromise) return backendInitPromise;
+
+  backendInitPromise = (async () => {
+    const tf = faceapi.tf as any;
+    if (!tf) {
+      isBackendInitialized = true;
+      return;
+    }
+
+    // Configure WASM paths if tfjs-backend-wasm is supported
+    if (typeof tf.setWasmPaths === 'function') {
+      try {
+        tf.setWasmPaths('/');
+      } catch {}
+    }
+
+    // 1. Attempt WebGL backend if supported by browser/device
+    try {
+      const hasWebGl = (() => {
+        try {
+          const c = document.createElement('canvas');
+          return !!(
+            window.WebGLRenderingContext &&
+            (c.getContext('webgl2') || c.getContext('webgl') || c.getContext('experimental-webgl'))
+          );
+        } catch {
+          return false;
+        }
+      })();
+
+      if (hasWebGl && typeof tf.setBackend === 'function') {
+        await tf.setBackend('webgl');
+        if (typeof tf.ready === 'function') await tf.ready();
+        if (typeof tf.getBackend === 'function' && tf.getBackend() === 'webgl') {
+          isBackendInitialized = true;
+          console.log('[FaceEngine] TensorFlow initialized with WebGL backend');
+          return;
+        }
+      }
+    } catch (webglErr) {
+      console.warn('[FaceEngine] WebGL initialization failed, attempting fallback...', webglErr);
+    }
+
+    // 2. Attempt WASM backend
+    try {
+      if (typeof tf.setBackend === 'function') {
+        await tf.setBackend('wasm');
+        if (typeof tf.ready === 'function') await tf.ready();
+        if (typeof tf.getBackend === 'function' && tf.getBackend() === 'wasm') {
+          isBackendInitialized = true;
+          console.log('[FaceEngine] TensorFlow initialized with WASM backend');
+          return;
+        }
+      }
+    } catch (wasmErr) {
+      console.warn('[FaceEngine] WASM initialization failed, falling back to CPU...', wasmErr);
+    }
+
+    // 3. Fallback to CPU backend (guaranteed universal fallback on all devices)
+    try {
+      if (typeof tf.setBackend === 'function') {
+        await tf.setBackend('cpu');
+      }
+      if (typeof tf.ready === 'function') {
+        await tf.ready();
+      }
+      isBackendInitialized = true;
+      console.log('[FaceEngine] TensorFlow initialized with CPU backend');
+      return;
+    } catch (cpuErr) {
+      console.warn('[FaceEngine] CPU backend init note:', cpuErr);
+      if (typeof tf.ready === 'function') {
+        await tf.ready();
+      }
+      isBackendInitialized = true;
+    }
+  })();
+
+  return backendInitPromise;
 };
 
 let isModelsLoaded = false;
@@ -53,6 +139,8 @@ export const loadFaceModels = async (): Promise<void> => {
   if (modelLoadingPromise) return modelLoadingPromise;
 
   modelLoadingPromise = (async () => {
+    await initTensorFlowBackend();
+
     const candidateUrls = getModelUrls();
     for (const url of candidateUrls) {
       try {
@@ -107,7 +195,9 @@ export const loadFaceModels = async (): Promise<void> => {
 // Automatic background preload on idle browser time so biometric modals open with 0ms delay
 if (typeof window !== 'undefined') {
   const idlePreload = () => {
-    loadFaceModels().catch(() => {});
+    initTensorFlowBackend()
+      .then(() => loadFaceModels())
+      .catch(() => {});
   };
   if ('requestIdleCallback' in window) {
     (window as any).requestIdleCallback(idlePreload, { timeout: 3000 });
