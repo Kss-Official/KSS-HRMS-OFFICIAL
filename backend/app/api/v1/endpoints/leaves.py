@@ -268,7 +268,7 @@ async def review_leave(
         raise HTTPException(status_code=422, detail="Action must be APPROVED or REJECTED")
 
     now = datetime.now(timezone.utc)
-    leave = await _find_leave(db, leave_id, current_user_id=current_user.id, lock=True)
+    leave = await _find_leave(db, leave_id, current_user_id=None, lock=True)
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
 

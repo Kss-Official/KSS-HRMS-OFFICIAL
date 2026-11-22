@@ -6472,8 +6472,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (leaveRes && leaveRes.id) {
           assignedId = String(leaveRes.id);
         }
-      } catch (e) {
+      } catch (e: any) {
         console.warn('[FastAPI] applyLeaveApi error:', e);
+        const errMsg = e?.message || e?.detail || 'Failed to submit leave request to server.';
+        throw new Error(errMsg);
       }
     }
 
@@ -6587,13 +6589,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: nowIso 
         };
 
+        const isSuperAdmin = activeEmployee?.role === 'SUPER_ADMIN' || role === 'SUPER_ADMIN';
+
         if (stage === 'CEO') {
           copy.ceoStatus = decision;
           copy.ceoReviewedBy = revUid;
           copy.ceoReviewedAt = nowIso;
           copy.ceoNotes = notes || '';
-          copy.ctoStatus = isApproved ? 'Pending' : 'Waiting CEO';
-          copy.status = isApproved ? 'Pending' : 'Rejected';
+          if (isSuperAdmin && isApproved) {
+            copy.ctoStatus = 'Approved';
+            copy.ctoReviewedBy = revUid;
+            copy.ctoReviewedAt = nowIso;
+            copy.ctoNotes = notes || '';
+            copy.status = 'Approved';
+          } else {
+            copy.ctoStatus = isApproved ? 'Pending' : 'Waiting CEO';
+            copy.status = isApproved ? 'Pending' : 'Rejected';
+          }
         } else if (stage === 'CTO') {
           copy.ctoStatus = decision;
           copy.ctoReviewedBy = revUid;

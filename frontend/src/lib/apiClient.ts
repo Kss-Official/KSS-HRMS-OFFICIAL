@@ -541,7 +541,7 @@ export async function reviewLeaveApi(
   action: 'APPROVED' | 'REJECTED', 
   notes?: string
 ): Promise<any> {
-  return apiRequest(`/leaves/${leaveId}/review`, {
+  return apiRequest(`/leaves/${encodeURIComponent(leaveId)}/review`, {
     method: 'PATCH',
     body: JSON.stringify({ action, notes })
   });

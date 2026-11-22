@@ -2,6 +2,9 @@ import sys, os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 import pytest
 import asyncio
+
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 import uuid
 from datetime import date, timedelta
 from sqlalchemy import text, select, delete
@@ -13,6 +16,15 @@ from app.models.employee import Employee
 from app.models.leave import LeaveRequest, LeaveLedger
 from app.core.security import create_access_token
 from app.models.enums import UserRole, ExecutiveTier, LeaveType, LeaveStatus, ApprovalStatus, LedgerTransactionType
+
+
+@pytest.fixture(scope="session")
+def event_loop():
+    if sys.platform == "win32":
+        asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    loop = asyncio.get_event_loop_policy().new_event_loop()
+    yield loop
+    loop.close()
 
 
 @pytest.mark.asyncio

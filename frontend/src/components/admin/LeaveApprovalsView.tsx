@@ -111,12 +111,15 @@ export const LeaveApprovalsView: React.FC = () => {
     const desig = (activeEmployee?.designation || '').toUpperCase();
     const name = (activeEmployee?.fullName || '').toLowerCase();
     const empId = activeEmployee?.employeeId || activeEmployee?.id || '';
+    const userRole = activeEmployee?.role || effectiveRole;
 
     let forcedStage = target;
     if (name.includes('gaurav') || hasTitle(desig, 'CTO') || empId === 'KSS2407001') {
       forcedStage = 'CTO';
     } else if (name.includes('akshit') || hasTitle(desig, 'CEO') || empId === 'KSS2407002') {
-      forcedStage = 'CEO';
+      forcedStage = req?.ceoStatus === 'Approved' ? 'CTO' : 'CEO';
+    } else if (userRole === 'SUPER_ADMIN') {
+      forcedStage = target || (req?.ceoStatus === 'Approved' ? 'CTO' : 'CEO');
     }
 
     updateLeaveRequestStatus(id, 'Approved', activeEmployee?.fullName || 'Executive', undefined, forcedStage);
@@ -130,12 +133,15 @@ export const LeaveApprovalsView: React.FC = () => {
     const desig = (activeEmployee?.designation || '').toUpperCase();
     const name = (activeEmployee?.fullName || '').toLowerCase();
     const empId = activeEmployee?.employeeId || activeEmployee?.id || '';
+    const userRole = activeEmployee?.role || effectiveRole;
 
     let forcedStage = target;
     if (name.includes('gaurav') || hasTitle(desig, 'CTO') || empId === 'KSS2407001') {
       forcedStage = 'CTO';
     } else if (name.includes('akshit') || hasTitle(desig, 'CEO') || empId === 'KSS2407002') {
-      forcedStage = 'CEO';
+      forcedStage = req?.ceoStatus === 'Approved' ? 'CTO' : 'CEO';
+    } else if (userRole === 'SUPER_ADMIN') {
+      forcedStage = target || (req?.ceoStatus === 'Approved' ? 'CTO' : 'CEO');
     }
 
     updateLeaveRequestStatus(id, 'Rejected', activeEmployee?.fullName || 'Executive', undefined, forcedStage);
