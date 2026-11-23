@@ -168,6 +168,18 @@ function tokenSubject(token: string | null): string {
     return 'anon';
   }
 }
+
+export function isTokenExpired(token: string | null): boolean {
+  if (!token) return true;
+  try {
+    const payload = JSON.parse(atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+    if (!payload.exp) return false;
+    return (payload.exp * 1000) <= (Date.now() + 15000); // 15-second buffer
+  } catch {
+    return true;
+  }
+}
+
 function ensureCacheBelongsToCurrentUser(token: string | null): void {
   if (typeof window === 'undefined') return;
   const owner = tokenSubject(token);
@@ -212,17 +224,21 @@ async function refreshAuthToken(): Promise<string | null> {
       try {
         const { auth } = await import('./firebase');
         const fbUser = auth.currentUser;
-        if (fbUser && (fbUser.email || fbUser.uid)) {
-          const fbToken = await Promise.race([
+        const cachedEmail = localStorage.getItem('kss_v1_session_email') || localStorage.getItem('kss_last_login_email');
+        const userEmail = fbUser?.email || cachedEmail;
+        const userUid = fbUser?.uid || localStorage.getItem('kss_v1_session') || null;
+
+        if (userEmail || userUid) {
+          const fbToken = fbUser ? await Promise.race([
             fbUser.getIdToken(false),
             new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
-          ]).catch(() => null);
+          ]).catch(() => null) : null;
 
           const cleanEndpoint = API_BASE_URL.endsWith('/api/v1') ? '' : '/api/v1';
           const syncRes = await fetch(`${API_BASE_URL}${cleanEndpoint}/auth/firebase-sync`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ email: fbUser.email, uid: fbUser.uid, firebase_token: fbToken })
+            body: JSON.stringify({ email: userEmail, uid: userUid, firebase_token: fbToken })
           });
           if (syncRes.ok) {
             const syncData = await syncRes.json();
@@ -254,7 +270,26 @@ export async function apiRequest<T>(
   options: RequestInit = {}
 ): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
+  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
+
   let token = getAuthToken();
+  if ((!token || isTokenExpired(token)) && !cleanEndpoint.startsWith('/auth/')) {
+    token = await refreshAuthToken();
+  }
+
+  // If still unauthenticated and calling protected resources, fail gracefully without 401 spam
+  if (!token && !cleanEndpoint.startsWith('/auth/')) {
+    if (method === 'GET') {
+      if (cleanEndpoint.startsWith('/employees') || cleanEndpoint.startsWith('/attendance') || cleanEndpoint.startsWith('/leaves')) {
+        return [] as any;
+      }
+      if (cleanEndpoint.startsWith('/settings')) {
+        return {} as any;
+      }
+    }
+    throw new Error('Unauthenticated session');
+  }
+
   const forceFresh = (options.headers as any)?.['X-Bypass-Cache'] === 'true';
   ensureCacheBelongsToCurrentUser(token);
 
@@ -267,7 +302,6 @@ export async function apiRequest<T>(
     headers['Authorization'] = `Bearer ${token}`;
   }
 
-  const cleanEndpoint = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
   const baseUrl = getBaseUrl();
   const url = `${baseUrl}${cleanEndpoint}`;
 

@@ -82,6 +82,7 @@ import {
   resetEmployeeFaceApi,
   enrollFaceApi,
   getAuthToken,
+  isTokenExpired,
   setAuthToken,
   removeAuthToken,
   clearApiCache,
@@ -1439,14 +1440,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             return a;
           }));
 
-          // 100% Neon PostgreSQL Primary Path via FastAPI
-          if (getAuthToken()) {
+          // 100% Neon PostgreSQL Primary Path via FastAPI (only for today's active shift)
+          if (getAuthToken() && record.date === todayStr && record.checkInAt) {
             checkOutApi({
               check_out_at: forceCheckOutTime,
               notes: updatedNotes
-            }).catch((apiErr) => {
-              console.warn('[FastAPI] Auto-checkout sync note:', apiErr);
-            });
+            }).catch(() => {});
           }
 
           if (auth.currentUser && USE_FIREBASE_FIRESTORE) {
@@ -3575,7 +3574,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ── High-Speed FastAPI Token Boot Validator (<100ms) ───────────────────────
   useEffect(() => {
     const token = getAuthToken();
-    if (token) {
+    if (token && !isTokenExpired(token)) {
       // Parallel execution: Hydrate data concurrently with profile validation
       fetchFastApiRecords(activeEmployee, true);
       getCurrentProfileApi().then((profile) => {

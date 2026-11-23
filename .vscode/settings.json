@@ -1,5 +1,14 @@
 {
   "explorer.compactFolders": false,
+  "python.defaultInterpreterPath": "C:\\Users\\HP\\AppData\\Local\\Programs\\Python\\Python311\\python.exe",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/backend",
+    "C:/Users/HP/AppData/Local/Programs/Python/Python311/Lib/site-packages"
+  ],
+  "python.autoComplete.extraPaths": [
+    "${workspaceFolder}/backend",
+    "C:/Users/HP/AppData/Local/Programs/Python/Python311/Lib/site-packages"
+  ],
   "files.exclude": {
     "**/.git": true,
     "**/.svn": true,

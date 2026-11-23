@@ -192,6 +192,14 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
     conds = []
     if email_clean:
         conds.append(func.lower(Employee.email) == email_clean)
+        # Handle known aliases / alternate emails
+        if email_clean == "abhinayav1919@kalpanaaa.in":
+            conds.append(func.lower(Employee.email) == "hr@kalpanaaa.in")
+            conds.append(func.lower(Employee.employee_code) == "kss2407011")
+        elif email_clean in ("sb.akash@kalpanaaa.in", "founder@kalpanaaasoftwaresolutions.in"):
+            conds.append(func.lower(Employee.employee_code) == "kss2407013")
+            conds.append(func.lower(Employee.email) == "sb.akash@kalpanaaa.in")
+            conds.append(func.lower(Employee.email) == "founder@kalpanaaasoftwaresolutions.in")
     if uid_clean:
         conds.append(Employee.legacy_firebase_id == uid_clean)
         clean_code = uid_clean.replace("emp-", "").replace("EMP-", "").strip().lower()
@@ -204,8 +212,49 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
 
     stmt = select(Employee).where(or_(*conds)).limit(1)
     emp = (await db.execute(stmt)).scalar_one_or_none()
+
+    # If employee is verified in Firebase Auth but missing from Neon PostgreSQL, auto-provision
     if not emp:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+        if email_clean:
+            from datetime import date
+            from app.models.enums import UserRole, ExecutiveTier
+            name_clean = email_clean.split("@")[0].replace(".", " ").title()
+            emp_code = "KSS" + str(abs(hash(email_clean)))[:7]
+            role = UserRole.EMPLOYEE
+            tier = ExecutiveTier.NONE
+            if any(k in email_clean for k in ("admin", "founder", "ceo", "director", "sb.akash")):
+                role = UserRole.SUPER_ADMIN
+                tier = ExecutiveTier.CEO
+            elif "hr" in email_clean:
+                role = UserRole.HR_ADMIN
+            elif any(k in email_clean for k in ("pm", "manager")):
+                role = UserRole.PROJECT_MANAGER
+
+            emp = Employee(
+                employee_code=emp_code,
+                email=email_clean,
+                password_hash=get_password_hash("Kalpanaaa@2026"),
+                full_name=name_clean,
+                role=role,
+                executive_tier=tier,
+                department="Management" if role == UserRole.SUPER_ADMIN else "Engineering",
+                designation="Executive Director" if role == UserRole.SUPER_ADMIN else "Software Engineer",
+                joining_date=date.today(),
+                legacy_firebase_id=uid_clean or None,
+                is_active=True
+            )
+            db.add(emp)
+            await db.commit()
+            await db.refresh(emp)
+        else:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
+
+    # If UID is provided and not linked yet, update legacy_firebase_id
+    if emp and uid_clean and emp.legacy_firebase_id != uid_clean:
+        emp.legacy_firebase_id = uid_clean
+        await db.commit()
+        await db.refresh(emp)
+
     if not emp.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
 

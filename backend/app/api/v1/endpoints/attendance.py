@@ -394,6 +394,8 @@ async def check_out(
     now = payload.check_out_at or datetime.now(timezone.utc)
     record = await _today_record(db, target_emp)
     if not record or not record.check_in_at:
+        if payload.notes and "Auto-checked out" in payload.notes and record:
+            return record
         raise HTTPException(status_code=400, detail="Cannot check out without checking in first")
 
     if record.check_out_at:

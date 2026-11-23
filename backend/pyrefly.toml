@@ -1,0 +1,7 @@
+# Pyrefly Configuration for Backend
+python-interpreter-path = "C:/Users/HP/AppData/Local/Programs/Python/Python311/python.exe"
+search-path = ["."]
+site-packages-path = [
+  "C:/Users/HP/AppData/Local/Programs/Python/Python311/Lib/site-packages"
+]
+check-unannotated-defs = false
