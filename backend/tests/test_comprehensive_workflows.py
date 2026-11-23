@@ -34,25 +34,32 @@ async def run_all_workflow_tests():
     test_password = "SecurePassword123!"
     hashed_pw = get_password_hash(test_password)
 
-    # Executive test user
+    # Executive test users (CEO and CTO)
     exec_id = str(uuid.uuid4())[:8]
     exec_code = f"EXEC{exec_id}"
     exec_email = f"exec_{exec_id}@kalpanaaa.in"
     exec_hashed_pw = get_password_hash(test_password)
 
+    cto_id = str(uuid.uuid4())[:8]
+    cto_code = f"CTO{cto_id}"
+    cto_email = f"cto_{cto_id}@kalpanaaa.in"
+    cto_hashed_pw = get_password_hash(test_password)
+
     test_emp_uuid = uuid.uuid4()
     exec_emp_uuid = uuid.uuid4()
+    cto_emp_uuid = uuid.uuid4()
 
     # Pre-clean any leftover test artifacts for clean idempotency
     async with AsyncSessionLocal() as session:
-        await session.execute(text("DELETE FROM leave_ledger WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'NEW%');"))
-        await session.execute(text("DELETE FROM leave_requests WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'NEW%');"))
-        await session.execute(text("DELETE FROM attendance_breaks WHERE attendance_id IN (SELECT id FROM attendance_records WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'NEW%'));"))
-        await session.execute(text("DELETE FROM attendance_records WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'NEW%');"))
-        await session.execute(text("DELETE FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'NEW%';"))
+        await session.execute(text("DELETE FROM audit_logs WHERE actor_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'CTO%' OR employee_code LIKE 'NEW%');"))
+        await session.execute(text("DELETE FROM leave_ledger WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'CTO%' OR employee_code LIKE 'NEW%');"))
+        await session.execute(text("DELETE FROM leave_requests WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'CTO%' OR employee_code LIKE 'NEW%');"))
+        await session.execute(text("DELETE FROM attendance_breaks WHERE attendance_id IN (SELECT id FROM attendance_records WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'CTO%' OR employee_code LIKE 'NEW%'));"))
+        await session.execute(text("DELETE FROM attendance_records WHERE employee_id IN (SELECT id FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'CTO%' OR employee_code LIKE 'NEW%');"))
+        await session.execute(text("DELETE FROM employees WHERE employee_code LIKE 'TEST%' OR employee_code LIKE 'EXEC%' OR employee_code LIKE 'CTO%' OR employee_code LIKE 'NEW%';"))
         await session.commit()
 
-    # Pre-seed 2 test employees into DB
+    # Pre-seed test employees into DB
     async with AsyncSessionLocal() as session:
         emp = Employee(
             id=test_emp_uuid,
@@ -88,10 +95,28 @@ async def run_all_workflow_tests():
             casual_leave_balance=10.0,
             is_active=True
         )
+        cto_exec = Employee(
+            id=cto_emp_uuid,
+            employee_code=cto_code,
+            email=cto_email,
+            password_hash=cto_hashed_pw,
+            full_name=f"Test CTO {cto_id}",
+            role=UserRole.SUPER_ADMIN,
+            executive_tier=ExecutiveTier.CTO,
+            employment_type=EmploymentType.FULL_TIME,
+            department="Executive",
+            designation="Chief Technology Officer",
+            joining_date=date.today(),
+            earn_leave_balance=25.0,
+            sick_leave_balance=12.0,
+            casual_leave_balance=10.0,
+            is_active=True
+        )
         session.add(emp)
         session.add(executive)
+        session.add(cto_exec)
         await session.commit()
-        print(f"Seeded test employee: {test_emp_code} and executive: {exec_code}")
+        print(f"Seeded test employee: {test_emp_code}, CEO: {exec_code}, CTO: {cto_code}")
 
     async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url="http://test") as client:
         # -------------------------------------------------------------
@@ -126,10 +151,14 @@ async def run_all_workflow_tests():
         res = await client.get("/api/v1/auth/me", headers={"Authorization": "Bearer fake.tampered.token"})
         record_result("AUTH", "Reject tampered JWT", res.status_code == 401, f"Status {res.status_code}")
 
-        # Login as executive for subsequent tests
+        # Login as executive (CEO and CTO) for subsequent tests
         res = await client.post("/api/v1/auth/login", json={"email": exec_email, "password": test_password})
         exec_token = res.json().get("access_token")
         exec_headers = {"Authorization": f"Bearer {exec_token}"}
+
+        res = await client.post("/api/v1/auth/login", json={"email": cto_email, "password": test_password})
+        cto_token = res.json().get("access_token")
+        cto_headers = {"Authorization": f"Bearer {cto_token}"}
 
         # -------------------------------------------------------------
         # WORKFLOW 2: ROLE-BASED ACCESS CONTROL (RBAC)
@@ -184,7 +213,8 @@ async def run_all_workflow_tests():
         start_t = datetime.now()
         res = await client.post(
             "/api/v1/attendance/verify-face",
-            json={"face_descriptor": normalized_vector, "threshold": 0.6}
+            json={"face_descriptor": normalized_vector, "threshold": 0.6, "employee_code": test_emp_code},
+            headers=headers
         )
         elapsed_ms = (datetime.now() - start_t).total_seconds() * 1000
         match_data = res.json()
@@ -200,7 +230,8 @@ async def run_all_workflow_tests():
         divergent_vector = [-x for x in normalized_vector] # opposite direction
         res = await client.post(
             "/api/v1/attendance/verify-face",
-            json={"face_descriptor": divergent_vector, "threshold": 0.5}
+            json={"face_descriptor": divergent_vector, "threshold": 0.5, "employee_code": test_emp_code},
+            headers=headers
         )
         neg_match = res.json()
         record_result("BIOMETRICS", "Reject divergent face vector", neg_match.get("matched") is False, f"Matched: {neg_match.get('matched')}")
@@ -210,10 +241,10 @@ async def run_all_workflow_tests():
         # -------------------------------------------------------------
         print("\n--- WORKFLOW 4: ATTENDANCE & GEOFENCE LOGIC ---")
 
-        # 4.1 Check-in INSIDE office geofence (lat 12.9121, lon 77.6446)
+        # 4.1 Check-in INSIDE office geofence (lat 13.014333, lon 77.646)
         res = await client.post(
             "/api/v1/attendance/check-in",
-            json={"latitude": 12.9121, "longitude": 77.6446, "is_wfh": False, "face_descriptor": normalized_vector},
+            json={"latitude": 13.014333, "longitude": 77.646, "is_wfh": False, "face_descriptor": normalized_vector},
             headers=headers
         )
         att_data = res.json()
@@ -223,7 +254,7 @@ async def run_all_workflow_tests():
         # 4.2 Re-checkin on the same day must be rejected
         res = await client.post(
             "/api/v1/attendance/check-in",
-            json={"latitude": 12.9121, "longitude": 77.6446},
+            json={"latitude": 13.014333, "longitude": 77.646},
             headers=headers
         )
         record_result("ATTENDANCE", "Prevent duplicate check-in today", res.status_code == 400, f"Status {res.status_code}")
@@ -287,16 +318,25 @@ async def run_all_workflow_tests():
         res = await client.patch(f"/api/v1/leaves/{leave_id}/review", json={"action": "APPROVED"}, headers=headers)
         record_result("LEAVES", "Forbid non-executive from reviewing leave", res.status_code == 403, f"Status {res.status_code}")
 
-        # 5.4 Executive approves leave (must trigger auto-deduction & ledger entry)
+        # 5.4 CEO approves leave (Tier 1)
         res = await client.patch(
             f"/api/v1/leaves/{leave_id}/review",
             json={"action": "APPROVED", "notes": "Approved by CEO"},
             headers=exec_headers
         )
-        approved_leave = res.json()
-        record_result("LEAVES", "Executive approves leave", res.status_code == 200 and approved_leave.get("status") == "APPROVED", f"Status: {approved_leave.get('status')}")
+        ceo_app = res.json()
+        record_result("LEAVES", "CEO approves leave (Tier 1)", res.status_code == 200 and ceo_app.get("ceo_status") == "APPROVED", f"CEO Status: {ceo_app.get('ceo_status')}")
 
-        # 5.5 Verify leave balance deduction in DB
+        # 5.5 CTO approves leave (Tier 2 Final - triggers balance deduction)
+        res = await client.patch(
+            f"/api/v1/leaves/{leave_id}/review",
+            json={"action": "APPROVED", "notes": "Approved by CTO"},
+            headers=cto_headers
+        )
+        approved_leave = res.json()
+        record_result("LEAVES", "CTO approves leave (Tier 2 Final)", res.status_code == 200 and approved_leave.get("status") == "APPROVED", f"Status: {approved_leave.get('status')}")
+
+        # 5.6 Verify leave balance deduction in DB
         async with AsyncSessionLocal() as session:
             emp_check = await session.execute(select(Employee).where(Employee.id == test_emp_uuid))
             updated_emp = emp_check.scalar_one()
@@ -327,11 +367,12 @@ async def run_all_workflow_tests():
 
     # Clean up test rows from Neon DB to leave the database clean
     async with AsyncSessionLocal() as session:
-        await session.execute(text("DELETE FROM leave_ledger WHERE employee_id IN (:e1, :e2);"), {"e1": test_emp_uuid, "e2": exec_emp_uuid})
-        await session.execute(text("DELETE FROM leave_requests WHERE employee_id IN (:e1, :e2);"), {"e1": test_emp_uuid, "e2": exec_emp_uuid})
-        await session.execute(text("DELETE FROM attendance_breaks WHERE attendance_id IN (SELECT id FROM attendance_records WHERE employee_id IN (:e1, :e2));"), {"e1": test_emp_uuid, "e2": exec_emp_uuid})
-        await session.execute(text("DELETE FROM attendance_records WHERE employee_id IN (:e1, :e2);"), {"e1": test_emp_uuid, "e2": exec_emp_uuid})
-        await session.execute(text("DELETE FROM employees WHERE employee_code IN (:c1, :c2, :c3);"), {"c1": test_emp_code, "c2": exec_code, "c3": new_emp_code})
+        await session.execute(text("DELETE FROM audit_logs WHERE actor_id IN (:e1, :e2, :e3) OR actor_id IN (SELECT id FROM employees WHERE employee_code = :c3);"), {"e1": test_emp_uuid, "e2": exec_emp_uuid, "e3": cto_emp_uuid, "c3": new_emp_code})
+        await session.execute(text("DELETE FROM leave_ledger WHERE employee_id IN (:e1, :e2, :e3);"), {"e1": test_emp_uuid, "e2": exec_emp_uuid, "e3": cto_emp_uuid})
+        await session.execute(text("DELETE FROM leave_requests WHERE employee_id IN (:e1, :e2, :e3);"), {"e1": test_emp_uuid, "e2": exec_emp_uuid, "e3": cto_emp_uuid})
+        await session.execute(text("DELETE FROM attendance_breaks WHERE attendance_id IN (SELECT id FROM attendance_records WHERE employee_id IN (:e1, :e2, :e3));"), {"e1": test_emp_uuid, "e2": exec_emp_uuid, "e3": cto_emp_uuid})
+        await session.execute(text("DELETE FROM attendance_records WHERE employee_id IN (:e1, :e2, :e3);"), {"e1": test_emp_uuid, "e2": exec_emp_uuid, "e3": cto_emp_uuid})
+        await session.execute(text("DELETE FROM employees WHERE employee_code IN (:c1, :c2, :c3, :c4);"), {"c1": test_emp_code, "c2": exec_code, "c3": new_emp_code, "c4": cto_code})
         await session.commit()
         print("\nCleaned up all temporary test rows from database.")
 

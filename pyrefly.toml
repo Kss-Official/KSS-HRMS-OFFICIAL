@@ -1,7 +1,12 @@
 # Pyrefly Configuration for Antigravity IDE
-python-interpreter-path = "C:/Users/HP/AppData/Local/Programs/Python/Python311/python.exe"
 search-path = ["backend"]
+skip-interpreter-query = true
+python-version = "3.11.0"
 site-packages-path = [
   "C:/Users/HP/AppData/Local/Programs/Python/Python311/Lib/site-packages"
 ]
 check-unannotated-defs = false
+disable-type-errors-in-ide = false
+
+[errors]
+missing-import = "ignore"

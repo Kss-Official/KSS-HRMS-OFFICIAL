@@ -193,12 +193,14 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
     if email_clean:
         conds.append(func.lower(Employee.email) == email_clean)
         # Handle known aliases / alternate emails
-        if email_clean == "abhinayav1919@kalpanaaa.in":
+        if email_clean in ("abhinayav1919@kalpanaaa.in", "hr@kalpanaaa.in"):
             conds.append(func.lower(Employee.email) == "hr@kalpanaaa.in")
-            conds.append(func.lower(Employee.employee_code) == "kss2407011")
-        elif email_clean in ("sb.akash@kalpanaaa.in", "founder@kalpanaaasoftwaresolutions.in"):
+            conds.append(func.lower(Employee.employee_code) == "kss-emp")
+        elif email_clean in ("sb.akash@kalpanaaa.in", "akash@kalpanaaa.in"):
             conds.append(func.lower(Employee.employee_code) == "kss2407013")
             conds.append(func.lower(Employee.email) == "sb.akash@kalpanaaa.in")
+        elif email_clean in ("founder@kalpanaaasoftwaresolutions.in", "founder@kalpanaaa.in"):
+            conds.append(func.lower(Employee.employee_code) == "kss2407001")
             conds.append(func.lower(Employee.email) == "founder@kalpanaaasoftwaresolutions.in")
     if uid_clean:
         conds.append(Employee.legacy_firebase_id == uid_clean)
@@ -249,11 +251,14 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
         else:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Employee not found")
 
-    # If UID is provided and not linked yet, update legacy_firebase_id
+    # If UID is provided and not linked yet, update legacy_firebase_id safely
     if emp and uid_clean and emp.legacy_firebase_id != uid_clean:
-        emp.legacy_firebase_id = uid_clean
-        await db.commit()
-        await db.refresh(emp)
+        try:
+            emp.legacy_firebase_id = uid_clean
+            await db.commit()
+            await db.refresh(emp)
+        except Exception:
+            await db.rollback()
 
     if not emp.is_active:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
@@ -268,6 +273,9 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
         "full_name": emp.full_name,
         "role": emp.role,
         "executive_tier": emp.executive_tier,
+        "earn_leave_balance": float(emp.earn_leave_balance or 0.0),
+        "sick_leave_balance": float(emp.sick_leave_balance or 0.0),
+        "casual_leave_balance": float(emp.casual_leave_balance or 0.0),
         "profile_photo_url": emp.profile_photo_url,
         "department": emp.department,
         "designation": emp.designation,

@@ -1,4 +1,5 @@
 // Centralized API Client for Kalpanaaa HRMS Python FastAPI & Neon PostgreSQL Backend
+import { safeGetString, safeSetString, safeRemoveItem } from './safeStorage';
 
 export const getBaseUrl = (): string => {
   let rawUrl = '';
@@ -46,24 +47,24 @@ export const getBaseUrl = (): string => {
 export const API_BASE_URL = getBaseUrl();
 
 export function getAuthToken(): string | null {
-  return localStorage.getItem('kalpanaaa_jwt_token');
+  return safeGetString('kalpanaaa_jwt_token');
 }
 
 export function setAuthToken(token: string): void {
-  localStorage.setItem('kalpanaaa_jwt_token', token);
+  safeSetString('kalpanaaa_jwt_token', token);
 }
 
 export function getRefreshToken(): string | null {
-  return localStorage.getItem('kalpanaaa_refresh_token');
+  return safeGetString('kalpanaaa_refresh_token');
 }
 
 export function setRefreshToken(token: string): void {
-  localStorage.setItem('kalpanaaa_refresh_token', token);
+  safeSetString('kalpanaaa_refresh_token', token);
 }
 
 export function removeAuthToken(): void {
-  localStorage.removeItem('kalpanaaa_jwt_token');
-  localStorage.removeItem('kalpanaaa_refresh_token');
+  safeRemoveItem('kalpanaaa_jwt_token');
+  safeRemoveItem('kalpanaaa_refresh_token');
   try { clearApiCache(); } catch {}
 }
 
@@ -183,11 +184,10 @@ export function isTokenExpired(token: string | null): boolean {
 function ensureCacheBelongsToCurrentUser(token: string | null): void {
   if (typeof window === 'undefined') return;
   const owner = tokenSubject(token);
-  let previous: string | null = null;
-  try { previous = localStorage.getItem(CACHE_OWNER_KEY); } catch {}
+  const previous = safeGetString(CACHE_OWNER_KEY);
   if (previous !== owner) {
     clearApiCache();
-    try { localStorage.setItem(CACHE_OWNER_KEY, owner); } catch {}
+    safeSetString(CACHE_OWNER_KEY, owner);
   }
 }
 
@@ -224,9 +224,9 @@ async function refreshAuthToken(): Promise<string | null> {
       try {
         const { auth } = await import('./firebase');
         const fbUser = auth.currentUser;
-        const cachedEmail = localStorage.getItem('kss_v1_session_email') || localStorage.getItem('kss_last_login_email');
+        const cachedEmail = safeGetString('kss_v1_session_email') || safeGetString('kss_last_login_email');
         const userEmail = fbUser?.email || cachedEmail;
-        const userUid = fbUser?.uid || localStorage.getItem('kss_v1_session') || null;
+        const userUid = fbUser?.uid || safeGetString('kss_v1_session') || null;
 
         if (userEmail || userUid) {
           const fbToken = fbUser ? await Promise.race([

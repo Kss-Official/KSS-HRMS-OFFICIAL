@@ -91,6 +91,7 @@ import {
 } from '../lib/apiClient';
 import { resetAllLocalFaceDescriptors, clearEmployeeDescriptor, saveEmployeeDescriptor, isFaceBiometricEnrolled } from '../lib/faceDescriptorStore';
 import { getEmployeeAvatar, LOCAL_AVATARS } from '../lib/avatarHelper';
+import { safeRemoveItem } from '../lib/safeStorage';
 
 // ── 100% NEON POSTGRESQL ARCHITECTURE ──────────────────────────────────────
 // Firebase Firestore DB is completely disabled in favor of Neon PostgreSQL (via FastAPI).
@@ -3806,6 +3807,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setRole(matched.role);
       setIsAuthenticated(true);
       setIsSessionReady(true);
+      fetchFastApiRecords(matched, true);
       localStorage.setItem('kss_v1_session', matched.id);
       if (matched.email) localStorage.setItem('kss_v1_session_email', matched.email.toLowerCase());
       localStorage.setItem('kss_v1_session_timestamp', Date.now().toString());
@@ -3964,6 +3966,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setIsSessionReady(true);
           setIsDemoMode(false);
 
+          // Purge any stale employee-scoped attendance cache so admin views always load full company roster
+          try {
+            localStorage.removeItem('kss_v1_attendance');
+          } catch {}
+          clearApiCache();
+
           localStorage.setItem('kss_v1_session', updatedMatched.id);
           localStorage.setItem('kss_v1_session_email', cleanEmail);
           localStorage.setItem('kss_v1_session_id', newSessionId);
@@ -4031,6 +4039,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             setRole(assignedRole);
             setIsAuthenticated(true);
             setIsSessionReady(true);
+
+            // Purge any stale employee-scoped attendance cache and fetch fresh records
+            try {
+              localStorage.removeItem('kss_v1_attendance');
+            } catch {}
+            clearApiCache();
+            fetchFastApiRecords(updatedMatched, true);
+
             localStorage.setItem('kss_v1_session', matched.id);
             localStorage.setItem('kss_v1_session_email', cleanEmail);
             localStorage.setItem('kss_v1_session_id', newSessionId);
@@ -4326,6 +4342,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // history, notifications and audit trail restored straight from localStorage — before
     // any authentication took place. All cached personal data is now purged.
     removeAuthToken();
+    clearApiCache();
     [
       'kss_v1_session',
       'kss_v1_session_email',
@@ -4343,6 +4360,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       'kss_v1_work_zone',
       'kss_v1_company_wfh_dates',
     ].forEach(key => {
+      safeRemoveItem(key);
       try { localStorage.removeItem(key); } catch {}
     });
   };
