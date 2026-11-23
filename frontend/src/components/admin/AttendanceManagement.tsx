@@ -42,8 +42,6 @@ import { isAuthorizedTechLead } from '../../lib/hierarchy';
 import { toast } from 'sonner';
 import { generateAndDownloadPayrollCycleExcel, getCyclePresetList } from '../../lib/payrollCycleExporter';
 import { computeLeaveLopSummary, LeaveLopFilterOption } from '../../lib/leaveLopSummaryService';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
-import { isFaceBiometricEnrolled, saveEmployeeDescriptor } from '../../lib/faceDescriptorStore';
 
 // ─── Dropdown Constants ────────────────────────────────────────────────────────
 
@@ -251,10 +249,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
     leaveRequests,
     role,
     activeEmployee,
-    applyAttendanceCorrection,
-    resetEmployeeBiometrics,
-    resetAllBiometrics,
-    enrollEmployeeBiometrics
+    applyAttendanceCorrection
   } = useAuth();
   const { triggerHaptic } = useHaptic();
 
@@ -272,10 +267,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
   const [leaveFilterPeriod, setLeaveFilterPeriod] = useState<LeaveLopFilterOption>('7d');
   const [sortField, setSortField] = useState<'default' | 'fullName' | 'lopDays' | 'elDays' | 'slDays' | 'totalLeaveDays'>('default');
   const [sortOrder, setSortOrder] = useState<'asc' | 'desc'>('desc');
-
-  // Biometric Management State
-  const [selectedBiometricEmp, setSelectedBiometricEmp] = useState<Employee | null>(null);
-  const [isResettingAllBiometrics, setIsResettingAllBiometrics] = useState(false);
 
   // Shift Editing Modal State
   const [editingShiftEmployee, setEditingShiftEmployee] = useState<Employee | null>(null);
@@ -319,55 +310,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
     });
     return map;
   }, [attendance, todayStr]);
-
-  // ─── Biometric Face Management Handlers ──────────────────────────────────────
-  const handleResetAllBiometrics = async () => {
-    triggerHaptic('medium');
-    const confirmed = window.confirm(
-      '⚠️ RESET ALL EMPLOYEE FACE BIOMETRICS\n\n' +
-      'Are you sure you want to permanently clear face biometrics for ALL employees?\n\n' +
-      '• Every employee will be flagged as Pending Re-Registration.\n' +
-      '• Each employee will be required to scan and register their face afresh before checking in.\n' +
-      '• This action updates the central database and is audit logged.'
-    );
-    if (!confirmed) return;
-
-    setIsResettingAllBiometrics(true);
-    const toastId = toast.loading('Purging all facial biometric registrations across database...');
-    try {
-      const res = await resetAllBiometrics();
-      if (res.success) {
-        toast.success(res.message, { id: toastId });
-      } else {
-        toast.error(res.message, { id: toastId });
-      }
-    } catch (err: any) {
-      toast.error('Failed to reset biometrics: ' + (err?.message || 'Unknown error'), { id: toastId });
-    } finally {
-      setIsResettingAllBiometrics(false);
-    }
-  };
-
-  const handleResetSingleEmployeeBiometrics = async (emp: Employee) => {
-    triggerHaptic('medium');
-    const confirmed = window.confirm(
-      `Reset facial biometrics for ${emp.fullName} (${emp.employeeId})?\n\n` +
-      `This employee will be required to re-register their facial template before checking in again.`
-    );
-    if (!confirmed) return;
-
-    const toastId = toast.loading(`Resetting face template for ${emp.fullName}...`);
-    try {
-      const res = await resetEmployeeBiometrics(emp.id);
-      if (res.success) {
-        toast.success(res.message, { id: toastId });
-      } else {
-        toast.error(res.message, { id: toastId });
-      }
-    } catch (err: any) {
-      toast.error('Failed to reset face: ' + (err?.message || 'Unknown error'), { id: toastId });
-    }
-  };
 
   // Compute all leave balances (EL + SL + CL) for a single employee
   const computeAllLeaves = (emp: Employee) => computeTotalLeaveBalances(emp, leaveRequests, new Date());
@@ -706,18 +648,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
               <span>{isSyncingAll ? 'Updating All...' : 'Sync All Shifts'}</span>
             </button>
           )}
-          {canEditShifts && (
-            <button
-              type="button"
-              onClick={handleResetAllBiometrics}
-              disabled={isResettingAllBiometrics}
-              className="flex items-center justify-center gap-2 px-3.5 py-2.5 bg-rose-950/50 hover:bg-rose-900/70 text-rose-300 border border-rose-500/40 text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-rose-950/50 disabled:opacity-50"
-              title="Purge all employee face templates and force everyone to re-register"
-            >
-              <RotateCcw className={`w-4 h-4 text-rose-400 ${isResettingAllBiometrics ? 'animate-spin' : ''}`} />
-              <span>{isResettingAllBiometrics ? 'Resetting All...' : 'Reset All Face Biometrics'}</span>
-            </button>
-          )}
           <button
             onClick={handleExportLedgerExcel}
             className="flex items-center justify-center gap-2 px-4 py-2.5 bg-emerald-700 hover:bg-emerald-600 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-emerald-900/40"
@@ -950,7 +880,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
                   </div>
                 </th>
 
-                <th className="py-3.5 px-3 text-center whitespace-nowrap">Face Biometric</th>
                 <th className="py-3.5 px-3 text-center whitespace-nowrap">Status</th>
                 <th className="py-3.5 px-4 text-center whitespace-nowrap">Actions</th>
               </tr>
@@ -958,7 +887,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
             <tbody className="divide-y divide-slate-800 text-xs">
               {sortedEmployees.length === 0 ? (
                 <tr>
-                  <td colSpan={13} className="py-14 text-center text-slate-500 font-medium">
+                  <td colSpan={12} className="py-14 text-center text-slate-500 font-medium">
                     No employees match your search criteria.
                   </td>
                 </tr>
@@ -1146,21 +1075,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
                         );
                       })()}
 
-                      {/* Face Biometric Registration Status */}
-                      <td className="py-3 px-3 text-center whitespace-nowrap">
-                        {isFaceBiometricEnrolled(emp) ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
-                            <Check className="w-3.5 h-3.5 text-emerald-400" />
-                            <span>Enrolled</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold bg-amber-500/10 text-amber-300 border-amber-500/30 animate-pulse">
-                            <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                            <span>Pending Register</span>
-                          </span>
-                        )}
-                      </td>
-
                       {/* 7. Status */}
                       <td className="py-3 px-3 text-center whitespace-nowrap">
                         <span className={`inline-flex items-center justify-center gap-1.5 px-2.5 py-1 rounded-lg border text-xs font-bold whitespace-nowrap ${statusBadge}`}>
@@ -1176,29 +1090,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
                       {/* 8. Actions */}
                       <td className="py-3 px-4 text-center whitespace-nowrap">
                         <div className="inline-flex items-center justify-center gap-1.5 whitespace-nowrap">
-
-                          {/* ── Register / Re-register Face Button ── */}
-                          <button
-                            type="button"
-                            onClick={() => setSelectedBiometricEmp(emp)}
-                            className="px-2.5 py-1.5 bg-purple-600/15 hover:bg-purple-600/30 text-purple-300 border border-purple-500/30 text-xs font-bold rounded-xl flex items-center gap-1.5 transition-all shadow-xs cursor-pointer whitespace-nowrap"
-                            title={`Register face biometrics for ${emp.fullName}`}
-                          >
-                            <Sparkles className="w-3.5 h-3.5 text-purple-400" />
-                            <span>Register Face</span>
-                          </button>
-
-                          {/* ── Reset Face Biometrics Button ── */}
-                          {isFaceBiometricEnrolled(emp) && canEditShifts && (
-                            <button
-                              type="button"
-                              onClick={() => handleResetSingleEmployeeBiometrics(emp)}
-                              className="p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 border border-slate-700/60 hover:border-rose-500/30 rounded-xl transition-colors cursor-pointer"
-                              title={`Reset biometric face template for ${emp.fullName}`}
-                            >
-                              <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-                            </button>
-                          )}
 
                           {/* ── Force Undo Checkout Button ── */}
                           {hasUndoableCheckout && todayRec && (
@@ -1495,32 +1386,6 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
         <EmployeeIdCardModal
           employee={idCardEmployee}
           onClose={() => setIdCardEmployee(null)}
-        />
-      )}
-
-      {/* Biometric Face Registration Modal */}
-      {selectedBiometricEmp && (
-        <FaceCaptureModal
-          isOpen={true}
-          onClose={() => setSelectedBiometricEmp(null)}
-          onSuccess={() => {
-            setSelectedBiometricEmp(null);
-          }}
-          onEnrollSuccess={async (descriptorArray) => {
-            const res = await enrollEmployeeBiometrics(selectedBiometricEmp.id, descriptorArray, true);
-            if (!res.success) {
-              toast.error(res.message);
-              throw new Error(res.message);
-            }
-            toast.success(`✓ Face biometric template successfully registered for ${selectedBiometricEmp.fullName}!`);
-          }}
-          employeeName={selectedBiometricEmp.fullName}
-          employeeId={selectedBiometricEmp.id}
-          employeeCode={selectedBiometricEmp.employeeId}
-          profilePhotoUrl={selectedBiometricEmp.profilePhotoUrl}
-          cloudDescriptor={selectedBiometricEmp.faceDescriptor}
-          isFaceEnrolled={selectedBiometricEmp.isFaceEnrolled}
-          isEnrollmentMode={true}
         />
       )}
 

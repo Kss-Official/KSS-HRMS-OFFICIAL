@@ -20,6 +20,7 @@ import {
   Unsubscribe,
 } from 'firebase/firestore';
 import { Employee } from '../types';
+import { updateEmployeeApi, getAuthToken } from './apiClient';
 
 // ─── Monthly WFH Allowance ────────────────────────────────────────────────────
 
@@ -141,17 +142,38 @@ export async function adjustLeaveBalance(
       : 'Casual Leave';
 
   try {
-    // 1. Update the employee document
-    await setDoc(
-      doc(db, 'employees', adjustment.employeeId),
-      cleanFirestorePayload({
-        [adjustment.field]: adjustment.newValue,
-        updatedAt: new Date().toISOString(),
-      }),
-      { merge: true }
-    );
+    // 1. Update Neon PostgreSQL via FastAPI if token present
+    const backendField = adjustment.field === 'earnLeaveBalance' 
+      ? 'earn_leave_balance' 
+      : adjustment.field === 'sickLeaveBalance' 
+        ? 'sick_leave_balance' 
+        : 'casual_leave_balance';
 
-    // 2. Write an audit log entry
+    if (getAuthToken()) {
+      try {
+        await updateEmployeeApi(adjustment.employeeCode || adjustment.employeeId, {
+          [backendField]: adjustment.newValue
+        });
+      } catch (apiErr) {
+        console.warn('[LeaveBalanceService] Backend sync note:', apiErr);
+      }
+    }
+
+    // 2. Update the employee document in Firestore (non-blocking fallback)
+    try {
+      await setDoc(
+        doc(db, 'employees', adjustment.employeeId),
+        cleanFirestorePayload({
+          [adjustment.field]: adjustment.newValue,
+          updatedAt: new Date().toISOString(),
+        }),
+        { merge: true }
+      );
+    } catch (fsErr) {
+      console.warn('[LeaveBalanceService] Firestore sync note:', fsErr);
+    }
+
+    // 3. Write an audit log entry
     const logId = `adj_${adjustment.employeeId}_${adjustment.field}_${Date.now()}`;
     const auditPayload = {
       id: logId,
@@ -168,11 +190,13 @@ export async function adjustLeaveBalance(
       targetEmployeeUid: adjustment.employeeId,
       role: 'PROJECT_MANAGER',
     };
-    await setDoc(
-      doc(db, 'auditLogs', logId),
-      cleanFirestorePayload(auditPayload),
-      { merge: true }
-    );
+    try {
+      await setDoc(
+        doc(db, 'auditLogs', logId),
+        cleanFirestorePayload(auditPayload),
+        { merge: true }
+      );
+    } catch { /* audit log error non-fatal */ }
 
     return { success: true, message: `${fieldLabel} balance updated to ${adjustment.newValue}.` };
   } catch (err: any) {

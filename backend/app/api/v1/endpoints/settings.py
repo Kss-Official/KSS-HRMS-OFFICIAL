@@ -96,4 +96,9 @@ async def update_settings(
     await db.commit()
     await db.refresh(settings_obj)
     invalidate_settings_cache()
+    try:
+        from app.api.v1.endpoints.attendance import invalidate_company_settings_cache
+        invalidate_company_settings_cache()
+    except Exception:
+        pass
     return settings_obj

@@ -16,39 +16,8 @@ const FaceCaptureModalInner = lazy(() =>
   import('./FaceCaptureModal').then((m) => ({ default: m.FaceCaptureModal }))
 );
 
-// Background preloader: when idle or after mount, load FaceCaptureModal chunk and models in background
-export const preloadFaceCaptureEngine = (): void => {
-  if (typeof window === 'undefined') return;
-  const load = () => {
-    import('./FaceCaptureModal').then((m: any) => {
-      if (typeof m.preloadBiometricModels === 'function') {
-        m.preloadBiometricModels();
-      }
-    }).catch(() => {});
-  };
-  if ('requestIdleCallback' in window) {
-    (window as any).requestIdleCallback(load, { timeout: 3000 });
-  } else {
-    setTimeout(load, 1200);
-  }
-};
-
-// Automatically initiate background preloading on browser idle so biometric verification is instantaneous
-if (typeof window !== 'undefined') {
-  const schedulePreload = () => {
-    if ('requestIdleCallback' in window) {
-      (window as any).requestIdleCallback(preloadFaceCaptureEngine, { timeout: 3500 });
-    } else {
-      setTimeout(preloadFaceCaptureEngine, 1500);
-    }
-  };
-
-  if (document.readyState === 'complete') {
-    schedulePreload();
-  } else {
-    window.addEventListener('load', schedulePreload, { once: true });
-  }
-}
+// Background preloader: inert no-op to eliminate background CPU/network drain
+export const preloadFaceCaptureEngine = (): void => {};
 
 export const FaceCaptureModal: React.FC<FaceCaptureModalProps> = (props) => {
   const [everOpened, setEverOpened] = useState<boolean>(!!props.isOpen);

@@ -179,12 +179,82 @@ function ensureCacheBelongsToCurrentUser(token: string | null): void {
   }
 }
 
+// In-flight shared promise to deduplicate token refresh across parallel requests
+let activeRefreshPromise: Promise<string | null> | null = null;
+
+async function refreshAuthToken(): Promise<string | null> {
+  if (activeRefreshPromise) return activeRefreshPromise;
+
+  activeRefreshPromise = (async () => {
+    // 1. Try FastAPI refresh token
+    const refreshToken = getRefreshToken();
+    if (refreshToken) {
+      try {
+        const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ refresh_token: refreshToken })
+        });
+        if (refreshRes.ok) {
+          const refreshData = await refreshRes.json();
+          if (refreshData.access_token) {
+            setAuthToken(refreshData.access_token);
+            return refreshData.access_token;
+          }
+        }
+      } catch (refreshErr) {
+        console.warn('[API] Automatic token refresh failed:', refreshErr);
+      }
+    }
+
+    // 2. Try Firebase session sync as fallback (works even if securetoken.googleapis.com is unreachable)
+    if (typeof window !== 'undefined') {
+      try {
+        const { auth } = await import('./firebase');
+        const fbUser = auth.currentUser;
+        if (fbUser && (fbUser.email || fbUser.uid)) {
+          const fbToken = await Promise.race([
+            fbUser.getIdToken(false),
+            new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
+          ]).catch(() => null);
+
+          const cleanEndpoint = API_BASE_URL.endsWith('/api/v1') ? '' : '/api/v1';
+          const syncRes = await fetch(`${API_BASE_URL}${cleanEndpoint}/auth/firebase-sync`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: fbUser.email, uid: fbUser.uid, firebase_token: fbToken })
+          });
+          if (syncRes.ok) {
+            const syncData = await syncRes.json();
+            if (syncData.access_token) {
+              setAuthToken(syncData.access_token);
+              if (syncData.refresh_token) setRefreshToken(syncData.refresh_token);
+              return syncData.access_token;
+            }
+          }
+        }
+      } catch (fbSyncErr) {
+        console.warn('[API] Firebase session recovery failed:', fbSyncErr);
+      }
+    }
+
+    // Both failed: unauthenticated session
+    removeAuthToken();
+    clearApiCache();
+    return null;
+  })().finally(() => {
+    activeRefreshPromise = null;
+  });
+
+  return activeRefreshPromise;
+}
+
 export async function apiRequest<T>(
   endpoint: string,
   options: RequestInit = {}
 ): Promise<T> {
   const method = (options.method || 'GET').toUpperCase();
-  const token = getAuthToken();
+  let token = getAuthToken();
   const forceFresh = (options.headers as any)?.['X-Bypass-Cache'] === 'true';
   ensureCacheBelongsToCurrentUser(token);
 
@@ -243,51 +313,26 @@ export async function apiRequest<T>(
 
   const fetchPromise = (async () => {
     try {
-      const response = await fetch(url, {
+      let response = await fetch(url, {
         ...options,
         headers,
       });
 
-      // 401 Session Handling with Automatic Refresh Token Recovery
-      if (response.status === 401 && token) {
-        const refreshToken = getRefreshToken();
-        if (refreshToken && !url.includes('/auth/refresh') && !url.includes('/auth/login')) {
-          try {
-            const refreshRes = await fetch(`${API_BASE_URL}/auth/refresh`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ refresh_token: refreshToken })
-            });
-            if (refreshRes.ok) {
-              const refreshData = await refreshRes.json();
-              if (refreshData.access_token) {
-                setAuthToken(refreshData.access_token);
-                // Seamlessly retry the original request with the fresh access token
-                const retryHeaders = {
-                  ...headers,
-                  'Authorization': `Bearer ${refreshData.access_token}`
-                };
-                const retryResponse = await fetch(url, {
-                  ...options,
-                  headers: retryHeaders
-                });
-                if (retryResponse.ok) {
-                  if (retryResponse.status === 204) return {} as T;
-                  const retryData = await retryResponse.json();
-                  if (method === 'GET') {
-                    apiCache.set(url, { data: retryData, expiresAt: Date.now() + CACHE_TTL_MS });
-                    setSessionCachedData(url, retryData, CACHE_TTL_MS);
-                  }
-                  return retryData as T;
-                }
-              }
-            }
-          } catch (refreshErr) {
-            console.warn('[API] Automatic token refresh failed:', refreshErr);
-          }
+      // 401 Session Handling with Automatic Refresh Token & Firebase Session Recovery
+      if (
+        response.status === 401 &&
+        !url.includes('/auth/refresh') &&
+        !url.includes('/auth/login') &&
+        !url.includes('/auth/firebase-sync')
+      ) {
+        const freshToken = await refreshAuthToken();
+        if (freshToken) {
+          headers['Authorization'] = `Bearer ${freshToken}`;
+          response = await fetch(url, {
+            ...options,
+            headers,
+          });
         }
-        removeAuthToken();
-        clearApiCache();
       }
 
       if (!response.ok) {

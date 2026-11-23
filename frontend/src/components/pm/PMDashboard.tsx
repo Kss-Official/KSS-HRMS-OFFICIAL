@@ -68,7 +68,6 @@ import { toISTTimeString, todayInIST } from '../../lib/absoluteTime';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
 import { useHaptic } from '../../hooks/useHaptic';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
 import { PMAttendanceCycleSection } from './PMAttendanceCycleSection';
 import { PMLeaveManagement } from './PMLeaveManagement';
 import { PMWorkSchedule } from './PMWorkSchedule';
@@ -123,7 +122,7 @@ const DEFAULT_PROJECTS: Project[] = [
 ];
 
 export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
-  const { employees, leaveRequests, attendance, activeEmployee, startBreak, endBreak, isAuthenticated, settings, companyWideWfhDates, applyAttendanceCorrection, checkIn, checkOut, updateEmployee, updateLeaveRequestStage, enrollEmployeeBiometrics } = useAuth();
+  const { employees, leaveRequests, attendance, activeEmployee, startBreak, endBreak, isAuthenticated, settings, companyWideWfhDates, applyAttendanceCorrection, checkIn, checkOut, updateEmployee, updateLeaveRequestStage } = useAuth();
   const { triggerHaptic } = useHaptic();
 
   const todayStr = getWorkDate(new Date());
@@ -532,12 +531,26 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
   const pmShiftCompleted = !!pmTodayRecord && isShiftComplete(pmTodayRecord);
   const activePmBreak = pmTodayRecord?.breaks?.find(b => !b.endAt && !(b as any).endTime);
   const [isBreakActionLoading, setIsBreakActionLoading] = useState(false);
-  const [isPmFaceModalOpen, setIsPmFaceModalOpen] = useState(false);
   const [isPmCheckInLoading, setIsPmCheckInLoading] = useState(false);
   const [isPmCheckOutLoading, setIsPmCheckOutLoading] = useState(false);
 
-  const handlePmSelfCheckIn = async (descArr?: number[]) => {
+  const handlePmSelfCheckIn = async () => {
     if (!activeEmployee) return;
+
+    const now = new Date();
+    const istParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+    const currentHourIST = Number(istParts.find(p => p.type === 'hour')?.value || 0);
+    const currentMinIST = Number(istParts.find(p => p.type === 'minute')?.value || 0);
+    if (currentHourIST * 60 + currentMinIST < 10 * 60) {
+      toast.error('Check-in opens after 10:00 AM IST. Please wait until 10:00 AM.');
+      return;
+    }
+
     setIsPmCheckInLoading(true);
     try {
       let fix: { lat: number; lon: number; accuracy: number } | null = null;
@@ -555,10 +568,7 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
         fix?.lat,
         fix?.lon,
         fix?.accuracy,
-        'Facial Recognition',
-        undefined,
-        undefined,
-        descArr
+        'Self Portal'
       );
       if (res.success) {
         toast.success(res.message || 'PM Duty Check-In recorded successfully! Shift active.');
@@ -975,10 +985,10 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
           <div className="flex items-center gap-2">
             {!isPmCheckedIn && !pmShiftCompleted && (
               <button
-                onClick={() => setIsPmFaceModalOpen(true)}
+                onClick={() => handlePmSelfCheckIn()}
                 disabled={isPmCheckInLoading}
                 className="px-4 py-2 bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-950/40 flex items-center gap-2 transition-all hover:scale-[1.02] cursor-pointer"
-                title="Mark Attendance & Start Shift with Face Recognition"
+                title="Mark Attendance & Start Shift (Location Verified)"
               >
                 {isPmCheckInLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4 text-emerald-200" />}
                 <span>Check In (Start Shift)</span>
@@ -2222,30 +2232,6 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
             </div>
           </div>
         </div>
-      )}
-
-      {/* Biometric Face Verification Modal for PM Check-In */}
-      {activeEmployee && (
-        <FaceCaptureModal
-          isOpen={isPmFaceModalOpen}
-          onClose={() => setIsPmFaceModalOpen(false)}
-          onSuccess={(descArr) => {
-            setIsPmFaceModalOpen(false);
-            handlePmSelfCheckIn(descArr);
-          }}
-          onEnrollSuccess={async (descriptorArray) => {
-            if (activeEmployee) {
-              const res = await enrollEmployeeBiometrics(activeEmployee.id, descriptorArray);
-              if (!res.success) throw new Error(res.message);
-            }
-          }}
-          employeeName={activeEmployee.fullName}
-          employeeId={activeEmployee.id}
-          employeeCode={activeEmployee.employeeId}
-          profilePhotoUrl={activeEmployee.profilePhotoUrl}
-          cloudDescriptor={activeEmployee.faceDescriptor}
-          isFaceEnrolled={activeEmployee.isFaceEnrolled}
-        />
       )}
 
     </div>

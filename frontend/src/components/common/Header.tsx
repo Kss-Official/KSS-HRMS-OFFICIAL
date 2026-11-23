@@ -14,7 +14,6 @@ import { toast } from 'sonner';
 import { UserRole } from '../../types';
 import { getEmployeeWorkDate, resolveAttendanceRecord, isExecutiveOrLeadership } from '../../lib/attendanceEngine';
 import { NotificationBell } from './NotificationBell';
-import { FaceCaptureModal, preloadFaceCaptureEngine } from '../shared/LazyFaceCaptureModal';
 import { getEmployeeAvatar } from '../../lib/avatarHelper';
 
 interface HeaderProps {
@@ -27,7 +26,7 @@ export const Header: React.FC<HeaderProps> = ({
   onToggleMobileSidebar, 
   isMobileSidebarOpen,
 }) => {
-  const { activeEmployee, attendance, checkIn, checkOut, role, logout, settings, updateEmployee, enrollEmployeeBiometrics } = useAuth();
+  const { activeEmployee, attendance, checkIn, checkOut, role, logout, settings, updateEmployee } = useAuth();
   const [timeStr, setTimeStr] = useState('');
   const [showUserDropdown, setShowUserDropdown] = useState(false);
   const [, setHeaderActionLoading] = useState(false);
@@ -39,24 +38,32 @@ export const Header: React.FC<HeaderProps> = ({
     ? resolveAttendanceRecord(attendance, activeEmployee, todayStr) ?? null
     : null;
 
-  const [isHeaderFaceModalOpen, setIsHeaderFaceModalOpen] = useState(false);
-
-  // Background warm-up for face recognition models so check-in camera opens instantly
-  useEffect(() => {
-    preloadFaceCaptureEngine();
-  }, []);
-
-  const executeHeaderCheckInProcess = async (descArr?: number[]) => {
+  const executeHeaderCheckInProcess = async () => {
     if (!activeEmployee) return;
+
+    // Check-in window validation (opens at 10:00 AM IST)
+    const now = new Date();
+    const istParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+    const currentHourIST = Number(istParts.find(p => p.type === 'hour')?.value || 0);
+    const currentMinIST = Number(istParts.find(p => p.type === 'minute')?.value || 0);
+    const totalMinutesIST = currentHourIST * 60 + currentMinIST;
+
+    if (totalMinutesIST < 10 * 60) {
+      toast.error('Check-in opens after 10:00 AM IST. Please wait until 10:00 AM to check in.');
+      return;
+    }
+
     setHeaderActionLoading(true);
 
     const submit = (lat?: number, lon?: number, accuracy: number = 10) =>
-      checkIn(activeEmployee.id, lat, lon, accuracy, 'Facial Recognition', undefined, undefined, descArr)
+      checkIn(activeEmployee.id, lat, lon, accuracy, 'Self Portal')
         .then(res => {
-          // The result used to be discarded (.finally only), so a REJECTED
-          // check-in looked identical to a successful one from the employee's
-          // side — they had no way to tell they had been blocked.
-          if (res.success) toast.success(res.message || 'Checked in.');
+          if (res.success) toast.success(res.message || 'Checked in successfully.');
           else toast.error(res.message || 'Check-In failed.');
         })
         .catch(err => toast.error(err?.message || 'Check-In failed.'))
@@ -206,15 +213,9 @@ export const Header: React.FC<HeaderProps> = ({
         {/* Quick Check-In Button for Current User */}
         {activeEmployee && !myTodayRecord?.checkInAt && (
           <button
-            onClick={() => {
-              if (isExecutiveOrLeadership(activeEmployee) || activeEmployee.role === 'SUPER_ADMIN') {
-                executeHeaderCheckInProcess();
-              } else {
-                setIsHeaderFaceModalOpen(true);
-              }
-            }}
+            onClick={() => executeHeaderCheckInProcess()}
             className="hidden md:flex items-center gap-1.5 px-3 py-1 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-[11px] font-bold text-white shadow-md cursor-pointer transition-all hover:scale-105"
-            title={isExecutiveOrLeadership(activeEmployee) || activeEmployee.role === 'SUPER_ADMIN' ? 'Executive 1-Click Check-In' : 'Biometric Face / GPS Check-In'}
+            title="Location Check-In (10:00 AM – 10:15 AM on-time)"
           >
             <UserCheck className="w-3.5 h-3.5 text-emerald-200" />
             <span>Check In</span>
@@ -298,28 +299,6 @@ export const Header: React.FC<HeaderProps> = ({
           )}
         </div>
       </div>
-
-      {/* Mandatory Face Biometric Verification Modal for Header Check-Ins */}
-      {activeEmployee && (
-        <FaceCaptureModal
-          isOpen={isHeaderFaceModalOpen}
-          onClose={() => setIsHeaderFaceModalOpen(false)}
-          onSuccess={(descArr) => {
-            setIsHeaderFaceModalOpen(false);
-            executeHeaderCheckInProcess(descArr);
-          }}
-          onEnrollSuccess={async (descriptorArray) => {
-            const res = await enrollEmployeeBiometrics(activeEmployee.id, descriptorArray);
-            if (!res.success) throw new Error(res.message);
-          }}
-          employeeName={activeEmployee.fullName}
-          employeeId={activeEmployee.id}
-          employeeCode={activeEmployee.employeeId}
-          profilePhotoUrl={activeEmployee.profilePhotoUrl}
-          cloudDescriptor={activeEmployee.faceDescriptor}
-          isFaceEnrolled={activeEmployee.isFaceEnrolled}
-        />
-      )}
     </header>
   );
 };

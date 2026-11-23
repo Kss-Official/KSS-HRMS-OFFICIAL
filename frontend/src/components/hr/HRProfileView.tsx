@@ -27,7 +27,6 @@ import {
   X
 } from 'lucide-react';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
 import { useHaptic } from '../../hooks/useHaptic';
 import { getEmployeeWorkDate, getAttendanceDocId, getCanonicalEmployeeUid, isAttendanceForEmployee, resolveAttendanceRecord, safeGetTimestampMillis, isShiftComplete, isApprovedWfhForEmployee } from '../../lib/attendanceEngine';
 
@@ -47,8 +46,7 @@ export const HRProfileView: React.FC = () => {
     cancelLeaveRequest,
     companyWorkZone,
     settings,
-    updateEmployee,
-    enrollEmployeeBiometrics
+    updateEmployee
   } = useAuth();
 
   const targetEmployee = activeEmployee || employees.find(e => e.role === 'HR_ADMIN' || e.department === 'Human Resources' || (e.designation || '').toLowerCase().includes('hr')) || employees[0];
@@ -101,19 +99,12 @@ export const HRProfileView: React.FC = () => {
     return `${String(hours).padStart(2, '0')}:${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
   };
 
-  const [isFaceModalOpen, setIsFaceModalOpen] = useState(false);
-
   // Actions
   const handleCheckIn = async () => {
-    if (!targetEmployee) {
-      toast.error('No employee record found for check-in.');
-      return;
-    }
-    setIsFaceModalOpen(true);
+    executeHrCheckInProcess();
   };
 
-  // Acquire a single live GPS fix. Resolves null when permission is denied, the
-  // device cannot report a position, or the request times out.
+  // Acquire a single live GPS fix.
   const getFixOrNull = (): Promise<{ lat: number; lon: number; accuracy: number } | null> =>
     new Promise(resolve => {
       if (typeof navigator === 'undefined' || !navigator.geolocation) return resolve(null);
@@ -128,16 +119,28 @@ export const HRProfileView: React.FC = () => {
       );
     });
 
-  const executeHrCheckInProcess = async (descArr?: number[]) => {
+  const executeHrCheckInProcess = async () => {
+    if (!targetEmployee) {
+      toast.error('No employee record found for check-in.');
+      return;
+    }
+
+    const now = new Date();
+    const istParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+    const currentHourIST = Number(istParts.find(p => p.type === 'hour')?.value || 0);
+    const currentMinIST = Number(istParts.find(p => p.type === 'minute')?.value || 0);
+    if (currentHourIST * 60 + currentMinIST < 10 * 60) {
+      toast.error('Check-in opens after 10:00 AM IST. Please wait until 10:00 AM.');
+      return;
+    }
+
     setLoading(true);
 
-    // ── GEOFENCE FIX ───────────────────────────────────────────────────────────
-    // This called checkIn(targetEmployee.id) with NO coordinates at all. Because
-    // targetEmployee falls back to activeEmployee (see above), for a logged-in HR
-    // user this was a SELF check-in that skipped the office geofence entirely.
-    // Now a live fix is acquired first, and a self check-in is refused outright
-    // when the geofence is on and no fix can be obtained. Checking somebody ELSE
-    // in stays coordinate-free — that is a legitimate admin correction.
     const isSelfCheckIn = !!activeEmployee && !!targetEmployee && targetEmployee.id === activeEmployee.id;
     const isWfhApproved = isApprovedWfhForEmployee(targetEmployee, getEmployeeWorkDate(new Date()), {
       leaveRequests,
@@ -157,9 +160,9 @@ export const HRProfileView: React.FC = () => {
     }
 
     try {
-      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Facial Recognition', undefined, undefined, descArr);
+      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Self Portal');
       if (res.success) {
-        toast.success(res.message || 'Check-In recorded successfully via Face Biometrics!');
+        toast.success(res.message || 'Check-In recorded successfully!');
       } else {
         toast.error(res.message || 'Check-In failed.');
       }
@@ -666,28 +669,6 @@ export const HRProfileView: React.FC = () => {
         <EmployeeMonthlyAttendanceModal
           employee={activeEmployee}
           onClose={() => setShowHistoryModal(false)}
-        />
-      )}
-
-      {/* Mandatory Face Biometric Verification Modal */}
-      {targetEmployee && (
-        <FaceCaptureModal
-          isOpen={isFaceModalOpen}
-          onClose={() => setIsFaceModalOpen(false)}
-          onSuccess={(descArr) => {
-            setIsFaceModalOpen(false);
-            executeHrCheckInProcess(descArr);
-          }}
-          onEnrollSuccess={async (descriptorArray) => {
-            const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray, true);
-            if (!res.success) throw new Error(res.message);
-          }}
-          employeeName={targetEmployee.fullName}
-          employeeId={targetEmployee.id}
-          employeeCode={targetEmployee.employeeId}
-          profilePhotoUrl={targetEmployee.profilePhotoUrl}
-          cloudDescriptor={targetEmployee.faceDescriptor}
-          isFaceEnrolled={targetEmployee.isFaceEnrolled}
         />
       )}
     </div>

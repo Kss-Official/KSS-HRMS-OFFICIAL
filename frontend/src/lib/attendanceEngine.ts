@@ -1459,20 +1459,20 @@ export function evaluateAttendanceScan(
     // Perform CHECK_IN
     const now = new Date();
 
-    // MORNING TIME WINDOW RULE: Check-in opens from 09:30 AM IST onwards.
+    // MORNING TIME WINDOW RULE: Check-in opens from 10:00 AM IST onwards.
     const currentHourIST = parseInt(new Intl.DateTimeFormat('en-US', { hour: 'numeric', hour12: false, timeZone: 'Asia/Kolkata' }).format(now), 10);
     const currentMinIST = parseInt(new Intl.DateTimeFormat('en-US', { minute: 'numeric', timeZone: 'Asia/Kolkata' }).format(now), 10);
     const totalMinutesIST = currentHourIST * 60 + currentMinIST;
 
-    if (totalMinutesIST < 9 * 60 + 30) {
-      const minRemaining = (9 * 60 + 30) - totalMinutesIST;
+    if (totalMinutesIST < 10 * 60) {
+      const minRemaining = (10 * 60) - totalMinutesIST;
       return {
         allowed: false,
         action: 'CHECK_IN',
         status: 'Present',
         locationVerified: false,
         distanceMeters: 0,
-        message: `Check-In Restricted: Morning check-in opens at 09:30 AM IST. Please wait until 09:30 AM to check in (${minRemaining} mins remaining).`
+        message: `Check-In Restricted: Morning check-in opens at 10:00 AM IST. Please wait until 10:00 AM to check in (${minRemaining} mins remaining).`
       };
     }
 

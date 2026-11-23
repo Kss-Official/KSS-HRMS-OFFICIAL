@@ -42,7 +42,6 @@ import {
 import { BreakType, Employee, LeaveCategory } from '../../types';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
 import { EmployeeIdCardModal } from '../admin/EmployeeIdCardModal';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
 import { useHaptic } from '../../hooks/useHaptic';
 import { 
   getEmployeeWorkDate, 
@@ -83,8 +82,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
     endBreak, 
     submitLeaveRequest,
     settings,
-    updateEmployee,
-    enrollEmployeeBiometrics
+    updateEmployee
   } = useAuth();
 
   // Active PM fallback
@@ -349,8 +347,23 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
       );
     });
 
-  const executePmCheckInProcess = async (descArr?: number[]) => {
+  const executePmCheckInProcess = async () => {
     if (!targetEmployee) return;
+
+    const now = new Date();
+    const istParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+    const currentHourIST = Number(istParts.find(p => p.type === 'hour')?.value || 0);
+    const currentMinIST = Number(istParts.find(p => p.type === 'minute')?.value || 0);
+    if (currentHourIST * 60 + currentMinIST < 10 * 60) {
+      toast.error('Check-in opens after 10:00 AM IST. Please wait until 10:00 AM.');
+      return;
+    }
+
     setLoading(true);
 
     const isWfhApproved = isApprovedWfhForEmployee(targetEmployee, getEmployeeWorkDate(new Date()), {
@@ -371,9 +384,9 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
     }
 
     try {
-      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Facial Recognition', undefined, undefined, descArr);
+      const res = await checkIn(targetEmployee.id, fix?.lat, fix?.lon, fix?.accuracy, 'Self Portal');
       if (res.success) {
-        toast.success(res.message || 'PM Duty Check-In recorded via Face Biometrics!');
+        toast.success(res.message || 'PM Duty Check-In recorded successfully!');
       } else {
         toast.error(res.message || 'Check-In failed.');
       }
@@ -769,12 +782,12 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
 
                 {!isCheckedIn ? (
                   <button
-                    onClick={() => setIsFaceModalOpen(true)}
+                    onClick={() => executePmCheckInProcess()}
                     disabled={loading || pmShiftComplete}
                     className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs rounded-xl shadow-lg shadow-emerald-900/40 transition-all flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
                   >
                     <LogIn className="w-4 h-4" />
-                    <span>{loading ? 'Verifying Face & GPS...' : 'Check In (Face Biometrics)'}</span>
+                    <span>{loading ? 'Verifying Location...' : 'Check In (Start Shift)'}</span>
                   </button>
                 ) : (
                   <div className="flex items-center gap-2 text-xs text-emerald-400 font-bold bg-emerald-500/20 px-3 py-2.5 rounded-xl border border-emerald-500/30">
@@ -1563,60 +1576,6 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
       )}
 
       {/* ── MODALS ── */}
-
-      {/* 1. Biometric Face Verification Modal for Check-In */}
-      {targetEmployee && (
-        <FaceCaptureModal
-          isOpen={isFaceModalOpen}
-          onClose={() => setIsFaceModalOpen(false)}
-          onSuccess={(descArr) => {
-            setIsFaceModalOpen(false);
-            executePmCheckInProcess(descArr);
-          }}
-          onEnrollSuccess={async (descriptorArray) => {
-            if (targetEmployee) {
-              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray, true);
-              if (!res.success) throw new Error(res.message);
-            }
-          }}
-          employeeName={targetEmployee.fullName}
-          employeeId={targetEmployee.id}
-          employeeCode={targetEmployee.employeeId}
-          profilePhotoUrl={profilePhoto || targetEmployee.profilePhotoUrl}
-          cloudDescriptor={targetEmployee.faceDescriptor}
-          isFaceEnrolled={targetEmployee.isFaceEnrolled}
-        />
-      )}
-
-      {/* 2. Biometric Face Template Enrollment Modal */}
-      {targetEmployee && (
-        <FaceCaptureModal
-          isOpen={isEnrollFaceModalOpen}
-          onClose={() => setIsEnrollFaceModalOpen(false)}
-          onSuccess={() => {
-            setIsEnrollFaceModalOpen(false);
-            toast.success('Face biometric template verified!');
-          }}
-          onEnrollSuccess={async (descriptorArray) => {
-            triggerHaptic('success');
-            if (targetEmployee) {
-              const res = await enrollEmployeeBiometrics(targetEmployee.id, descriptorArray, true);
-              if (!res.success) {
-                toast.error(res.message);
-                throw new Error(res.message);
-              }
-              toast.success('✓ Face biometric template successfully registered & enrolled!');
-            }
-            setIsEnrollFaceModalOpen(false);
-          }}
-          employeeName={targetEmployee.fullName}
-          employeeId={targetEmployee.id}
-          employeeCode={targetEmployee.employeeId}
-          profilePhotoUrl={profilePhoto || targetEmployee.profilePhotoUrl}
-          cloudDescriptor={targetEmployee.faceDescriptor}
-          isFaceEnrolled={targetEmployee.isFaceEnrolled}
-        />
-      )}
 
       {/* 3. 30-Day Monthly Attendance Ledger Modal */}
       {showHistoryModal && targetEmployee && (

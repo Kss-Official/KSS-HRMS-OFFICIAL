@@ -13,8 +13,6 @@ import { triggerHaptic } from '../../hooks/useHaptic';
 import { animations } from '../../lib/animations';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
 import { getEmployeeAvatar } from '../../lib/avatarHelper';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
-import { isFaceBiometricEnrolled, saveEmployeeDescriptor } from '../../lib/faceDescriptorStore';
 import { toast } from 'sonner';
 
 interface EmployeeProfileModalProps {
@@ -27,28 +25,10 @@ interface EmployeeProfileModalProps {
 export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
   employee, onClose, onOpenEdit, onOpenIdCard
 }) => {
-  const { attendance, auditLogs, regenerateQrToken, settings, updateEmployee, resetEmployeeBiometrics, enrollEmployeeBiometrics } = useAuth();
+  const { attendance, auditLogs, regenerateQrToken, settings, updateEmployee } = useAuth();
   const [activeTab, setActiveTab] = useState<'details' | 'qr' | 'attendance' | 'activity'>('details');
   const [qrDataUrl, setQrDataUrl] = useState<string>('');
   const [isMonthlyModalOpen, setIsMonthlyModalOpen] = useState(false);
-  const [isEnrollModalOpen, setIsEnrollModalOpen] = useState(false);
-
-  const handleResetBiometrics = async () => {
-    const confirmed = window.confirm(
-      `Reset facial biometrics for ${employee.fullName} (${employee.employeeId})?\n\nThis will clear their enrolled face template and require them to re-register.`
-    );
-    if (!confirmed) return;
-    try {
-      const res = await resetEmployeeBiometrics(employee.id);
-      if (res.success) {
-        toast.success(res.message);
-      } else {
-        toast.error(res.message);
-      }
-    } catch (err: any) {
-      toast.error('Failed to reset face: ' + (err?.message || 'Unknown error'));
-    }
-  };
 
   const [joiningDateValue, setJoiningDateValue] = useState(employee.joiningDate || '2026-07-27');
   const [isSavingJoiningDate, setIsSavingJoiningDate] = useState(false);
@@ -344,59 +324,6 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
                     </div>
                   </div>
                 </div>
-
-                {/* 3. AI Biometric Face Recognition Card */}
-                <div className="bg-[var(--bg-secondary)] rounded-2xl p-5 border border-[var(--border-subtle)] space-y-4 md:col-span-2">
-                  <div className="flex items-center justify-between flex-wrap gap-2">
-                    <h3 className="font-bold text-[var(--text-primary)] text-sm uppercase tracking-wider flex items-center gap-2 text-purple-400">
-                      <Sparkles className="w-4 h-4 text-purple-400" />
-                      Face Biometrics Profile
-                    </h3>
-                    <span className={`px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 border ${
-                      isFaceBiometricEnrolled(employee)
-                        ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                        : 'bg-amber-500/10 text-amber-400 border-amber-500/30'
-                    }`}>
-                      {isFaceBiometricEnrolled(employee) ? (
-                        <>
-                          <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                          <span>Biometrics Enrolled</span>
-                        </>
-                      ) : (
-                        <>
-                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400" />
-                          <span>Pending Re-Registration</span>
-                        </>
-                      )}
-                    </span>
-                  </div>
-
-                  <p className="text-xs text-[var(--text-secondary)] leading-relaxed">
-                    128-dimensional biometric facial embedding used for neural zero-touch camera verification.
-                  </p>
-
-                  <div className="flex flex-wrap items-center gap-3 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => setIsEnrollModalOpen(true)}
-                      className="px-4 py-2 bg-purple-600 hover:bg-purple-500 text-white font-extrabold text-xs rounded-xl flex items-center gap-2 cursor-pointer shadow-md transition-all active:scale-95"
-                    >
-                      <Sparkles className="w-3.5 h-3.5 text-purple-200" />
-                      <span>{isFaceBiometricEnrolled(employee) ? '📸 Re-Scan / Update Face' : '📸 Register Face Template'}</span>
-                    </button>
-
-                    {isFaceBiometricEnrolled(employee) && (
-                      <button
-                        type="button"
-                        onClick={handleResetBiometrics}
-                        className="px-4 py-2 bg-rose-600/15 hover:bg-rose-600/30 text-rose-300 border border-rose-500/30 font-bold text-xs rounded-xl flex items-center gap-2 cursor-pointer transition-all"
-                      >
-                        <RotateCcw className="w-3.5 h-3.5 text-rose-400" />
-                        <span>Purge &amp; Reset Biometrics</span>
-                      </button>
-                    )}
-                  </div>
-                </div>
               </motion.div>
             )}
 
@@ -515,32 +442,6 @@ export const EmployeeProfileModal: React.FC<EmployeeProfileModalProps> = ({
         <EmployeeMonthlyAttendanceModal
           employee={employee}
           onClose={() => setIsMonthlyModalOpen(false)}
-        />
-      )}
-
-      {/* Explicit Biometric Face Registration Modal */}
-      {isEnrollModalOpen && (
-        <FaceCaptureModal
-          isOpen={true}
-          onClose={() => setIsEnrollModalOpen(false)}
-          onSuccess={() => {
-            setIsEnrollModalOpen(false);
-          }}
-          onEnrollSuccess={async (descriptorArray) => {
-            const res = await enrollEmployeeBiometrics(employee.id, descriptorArray, true);
-            if (!res.success) {
-              toast.error(res.message);
-              throw new Error(res.message);
-            }
-            toast.success(`✓ Face biometric template registered for ${employee.fullName}!`);
-          }}
-          employeeName={employee.fullName}
-          employeeId={employee.id}
-          employeeCode={employee.employeeId}
-          profilePhotoUrl={employee.profilePhotoUrl}
-          cloudDescriptor={employee.faceDescriptor}
-          isFaceEnrolled={employee.isFaceEnrolled}
-          isEnrollmentMode={true}
         />
       )}
     </AnimatePresence>

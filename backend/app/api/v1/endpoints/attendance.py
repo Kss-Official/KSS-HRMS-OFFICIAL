@@ -35,7 +35,8 @@ _RECORDS_CACHE_MAX_KEYS = 128
 
 FACE_MATCH_THRESHOLD = 0.55           # Biometric verification threshold (Euclidean L2 <= 0.55, cosine sim >= 0.849)
 FACE_MAX_ACCEPTABLE_THRESHOLD = 0.58  # Maximum allowable threshold requested by clients
-LATE_CUTOFF_LOCAL = dt_time(10, 15)   # 10:00 shift start + 15 min grace, in COMPANY time
+CHECKIN_OPEN_LOCAL = dt_time(10, 0)   # 10:00 AM check-in opening time
+LATE_CUTOFF_LOCAL = dt_time(10, 15)   # 10:00 shift start + 15 min grace, in COMPANY time (marked Late after 10:15 AM)
 GEOFENCE_TOLERANCE_FACTOR = 1.5       # GPS jitter allowance (radius * 1.5 + 50m)
 GEOFENCE_TOLERANCE_EXTRA_M = 50.0
 PRIVILEGED_ADMINS = (UserRole.HR_ADMIN, UserRole.SUPER_ADMIN)
@@ -90,8 +91,23 @@ def company_now(tz_name: Optional[str] = None) -> datetime:
     return datetime.now(timezone.utc).astimezone(_company_tz(tz_name))
 
 
+_COMPANY_SETTINGS_CACHE: Optional[Tuple[float, CompanySettings]] = None
+
+
+def invalidate_company_settings_cache() -> None:
+    global _COMPANY_SETTINGS_CACHE
+    _COMPANY_SETTINGS_CACHE = None
+
+
 async def _load_company_settings(db: AsyncSession) -> Optional[CompanySettings]:
-    return (await db.execute(select(CompanySettings).limit(1))).scalar_one_or_none()
+    global _COMPANY_SETTINGS_CACHE
+    now = time.time()
+    if _COMPANY_SETTINGS_CACHE and _COMPANY_SETTINGS_CACHE[0] > now:
+        return _COMPANY_SETTINGS_CACHE[1]
+    res = (await db.execute(select(CompanySettings).limit(1))).scalar_one_or_none()
+    if res:
+        _COMPANY_SETTINGS_CACHE = (now + 60.0, res)
+    return res
 
 
 def _is_inside_geofence(lat: Optional[float], lon: Optional[float], cfg: Optional[CompanySettings]) -> Tuple[bool, Optional[float], float]:
@@ -293,6 +309,13 @@ async def check_in(
     if existing and existing.check_in_at:
         raise HTTPException(status_code=400, detail="Employee has already checked in today")
 
+    # Check-in time window: only permitted after 10:00 AM
+    if local_now.time() < CHECKIN_OPEN_LOCAL:
+        raise HTTPException(
+            status_code=400,
+            detail="Check-in is only permitted after 10:00 AM. Please wait until 10:00 AM to check in."
+        )
+
     # WFH must be backed by an approved request (or an allowed role): the client flag alone is not trusted.
     is_wfh = False
     if payload.is_wfh:
@@ -307,60 +330,18 @@ async def check_in(
         if dist_m is None:
             raise HTTPException(status_code=400, detail="Location is required to check in at the office")
         if dist_m > allowed_m:
-            raise HTTPException(status_code=403, detail=f"You are {int(dist_m)}m from the office. Check-in is only allowed on-site (or with an approved WFH).")
+            raise HTTPException(status_code=403, detail=f"You are {int(dist_m)}m from the office. Check-in is only allowed on-site within permitted location radius (or with an approved WFH).")
     location_ok = inside
 
+    # Status: On-time up to 10:15 AM; anyone after 10:15 AM is automatically marked Late.
     status = AttendanceStatus.PRESENT
     if is_wfh:
         status = AttendanceStatus.WORK_FROM_HOME
     elif local_now.time() > LATE_CUTOFF_LOCAL:
         status = AttendanceStatus.LATE
 
-    # CEO and CTO (Super Admins / Executives) are exempt from mandatory face biometric check-in.
-    is_face_exempt = (
-        target_emp.role == UserRole.SUPER_ADMIN
-        or target_emp.executive_tier in (ExecutiveTier.CEO, ExecutiveTier.CTO)
-        or any(title in (target_emp.designation or "").upper() for title in ("CEO", "CTO", "CHIEF EXECUTIVE", "FOUNDER", "MD"))
-    )
-
-    method = AttendanceMethod.PORTAL_1CLICK
-    if payload.face_descriptor and not is_face_exempt:
-        norm_vec = normalize_vector(validate_descriptor(payload.face_descriptor))
-        vector_str = "[" + ",".join(str(float(x)) for x in norm_vec) + "]"
-
-        has_embedding = (await db.execute(
-            text("SELECT (face_embedding IS NOT NULL) FROM employees WHERE id = :emp_id"), {"emp_id": target_emp.id}
-        )).scalar()
-        if not has_embedding:
-            raise HTTPException(status_code=400, detail="No registered face biometric template found. Please register your face first.")
-
-        dist_val = (await db.execute(
-            text("SELECT (face_embedding <-> CAST(:vec AS vector)) FROM employees WHERE id = :emp_id"),
-            {"vec": vector_str, "emp_id": target_emp.id}
-        )).scalar()
-        dist = float(dist_val) if dist_val is not None else 1.0
-
-        if dist > FACE_MATCH_THRESHOLD:
-            other = (await db.execute(text("""
-                SELECT (face_embedding <-> CAST(:vec AS vector)) as dist FROM employees
-                WHERE is_active = true AND face_embedding IS NOT NULL AND id != :target_id
-                ORDER BY dist ASC LIMIT 1
-            """), {"vec": vector_str, "target_id": target_emp.id})).fetchone()
-            if other and float(other[0]) <= FACE_MATCH_THRESHOLD:
-                raise HTTPException(status_code=403, detail="SECURITY REJECTION: Biometric identity mismatch. The scanned face belongs to a different employee. Cross-employee check-in is strictly forbidden.")
-            raise HTTPException(status_code=403, detail=f"Biometric mismatch: Scanned face does not match the registered profile for {target_emp.full_name}.")
-        method = AttendanceMethod.BIOMETRIC_FACE
-    elif not is_face_exempt:
-        # Face scan is mandatory for all standard on-site check-ins (only approved WFH or Executive/Super Admin is exempt).
-        if not is_wfh:
-            if not target_emp.is_face_enrolled:
-                raise HTTPException(status_code=400, detail=f"Biometric registration required: No face template registered for {target_emp.full_name}. Please register your facial biometrics first before checking in.")
-            raise HTTPException(status_code=400, detail=f"Biometric verification required: Face scan is mandatory for {target_emp.full_name} to check in.")
-        if location_ok:
-            method = AttendanceMethod.GEO_ATTENDANCE
-    else:
-        # Exempt executive / super admin 1-click check-in
-        method = AttendanceMethod.PORTAL_1CLICK
+    # Location-based check-in method (face biometric check-in removed for all employees)
+    method = AttendanceMethod.GEO_ATTENDANCE if location_ok else AttendanceMethod.PORTAL_1CLICK
 
     if existing:
         existing.status = status

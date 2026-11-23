@@ -18,7 +18,7 @@ class AttendanceRecord(Base):
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     employee_id = Column(UUID(as_uuid=True), ForeignKey("employees.id"), nullable=False, index=True)
     date = Column(Date, nullable=False, index=True)
-    status = Column(attendance_status_pg_enum, default=AttendanceStatus.PRESENT, nullable=False)
+    status = Column(attendance_status_pg_enum, default=AttendanceStatus.PRESENT, nullable=False, index=True)
     check_in_at = Column(DateTime(timezone=True), nullable=True)
     check_out_at = Column(DateTime(timezone=True), nullable=True)
     working_minutes = Column(Integer, default=0, nullable=False)

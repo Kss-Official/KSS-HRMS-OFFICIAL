@@ -1423,8 +1423,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ...(isOwnRecord && (auth.currentUser?.uid || user?.uid) ? { authUid: auth.currentUser?.uid || user?.uid } : {})
           });
 
-          if (auth.currentUser) {
-            updateDoc(doc(db, 'attendance', record.id), autoCheckoutPayload)
+          // Update local React state immediately so UI is always in sync
+          setAttendance(prev => prev.map(a => {
+            if (a.id === record.id || (a.date === record.date && (a.employeeId === record.employeeId || a.employeeCode === record.employeeCode))) {
+              return {
+                ...a,
+                checkOutAt: forceCheckOutTime,
+                workingMinutes: totalMins,
+                breaks: updatedBreaks,
+                totalBreakMinutes: totalBreakMins,
+                notes: updatedNotes,
+                updatedAt: forceCheckOutTime
+              };
+            }
+            return a;
+          }));
+
+          // 100% Neon PostgreSQL Primary Path via FastAPI
+          if (getAuthToken()) {
+            checkOutApi({
+              check_out_at: forceCheckOutTime,
+              notes: updatedNotes
+            }).catch((apiErr) => {
+              console.warn('[FastAPI] Auto-checkout sync note:', apiErr);
+            });
+          }
+
+          if (auth.currentUser && USE_FIREBASE_FIRESTORE) {
+            setDoc(doc(db, 'attendance', record.id), autoCheckoutPayload, { merge: true })
               .then(() => {
                 // Audit only on confirmed success (fix 3).
                 addAuditLogRef.current(
@@ -1437,8 +1463,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 // Bounded retry, and never retry a permanent authorization failure (fix 2).
                 const code = String(err?.code || '');
                 const errMsg = String(err?.message || '').toLowerCase();
-                const permanent = code === 'permission-denied' || code === 'unauthenticated' || code === 'invalid-argument' || code === '403' ||
-                  errMsg.includes('permission') || errMsg.includes('insufficient permissions') || errMsg.includes('permission-denied');
+                const permanent = code === 'permission-denied' || code === 'unauthenticated' || code === 'invalid-argument' || code === '403' || code === 'not-found' ||
+                  errMsg.includes('permission') || errMsg.includes('insufficient permissions') || errMsg.includes('permission-denied') || errMsg.includes('no document to update') || errMsg.includes('not found');
                 const attempts = (attemptCounts.get(record.id) || 0) + 1;
                 attemptCounts.set(record.id, attempts);
                 if (!permanent) {
@@ -1449,7 +1475,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
                 if (permanent) {
                   console.warn(
-                    `[AuthContext] Auto-checkout permanently denied or unauthorized for ${record.id} — stopping retries.`
+                    `[AuthContext] Auto-checkout permanently denied, not found, or unauthorized for ${record.id} — stopping retries.`
                   );
                 } else {
                   console.warn(
@@ -1459,7 +1485,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 }
               });
           } else {
-            // Unauthenticated session in Firebase: backend FastAPI owns the auto-checkout lifecycle.
             processedIds.add(record.id);
           }
         }
@@ -3653,7 +3678,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       setIsDemoMode(false);
       if (!getAuthToken() && (firebaseUser.email || firebaseUser.uid)) {
         try {
-          const fbToken = await firebaseUser.getIdToken().catch(() => null);
+          const fbToken = await Promise.race([
+            firebaseUser.getIdToken(false),
+            new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
+          ]).catch(() => null);
           await syncFirebaseSessionApi(firebaseUser.email, firebaseUser.uid, fbToken);
         } catch (syncErr) {
           console.warn('[AuthContext] syncFirebaseSessionApi failed:', syncErr);
@@ -3978,7 +4006,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           setUser(userCred.user);
 
           try {
-            const fbToken = await userCred.user.getIdToken().catch(() => null);
+            const fbToken = await Promise.race([
+              userCred.user.getIdToken(false),
+              new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
+            ]).catch(() => null);
             await syncFirebaseSessionApi(cleanEmail, userCred.user.uid, fbToken);
           } catch (syncErr) {
             console.warn('[Firebase Auth] Immediate syncFirebaseSessionApi note:', syncErr);
@@ -4622,6 +4653,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (fieldsToUpdate.linkedinUrl !== undefined) apiPayload.linkedin_url = fieldsToUpdate.linkedinUrl;
     if (callerIsAdminOrPM && fieldsToUpdate.department !== undefined) apiPayload.department = fieldsToUpdate.department;
     if (callerIsAdminOrPM && fieldsToUpdate.designation !== undefined) apiPayload.designation = fieldsToUpdate.designation;
+    if (callerIsAdminOrPM && fieldsToUpdate.earnLeaveBalance !== undefined) apiPayload.earn_leave_balance = Number(fieldsToUpdate.earnLeaveBalance);
+    if (callerIsAdminOrPM && fieldsToUpdate.sickLeaveBalance !== undefined) apiPayload.sick_leave_balance = Number(fieldsToUpdate.sickLeaveBalance);
+    if (callerIsAdminOrPM && fieldsToUpdate.casualLeaveBalance !== undefined) apiPayload.casual_leave_balance = Number(fieldsToUpdate.casualLeaveBalance);
 
     // Fallback: If upfront upload was somehow bypassed but a raw image is still in fieldsToUpdate
     if (targetIdentifier && fieldsToUpdate.profilePhotoUrl && typeof fieldsToUpdate.profilePhotoUrl === 'string' && !fieldsToUpdate.profilePhotoUrl.includes('res.cloudinary.com')) {
@@ -6249,7 +6283,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     let currentJwt = getAuthToken();
     if (!currentJwt && auth.currentUser) {
       try {
-        const fbToken = await auth.currentUser.getIdToken().catch(() => null);
+        const fbToken = await Promise.race([
+          auth.currentUser.getIdToken(false),
+          new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
+        ]).catch(() => null);
         const syncRes = await syncFirebaseSessionApi(auth.currentUser.email, auth.currentUser.uid, fbToken);
         currentJwt = syncRes?.access_token || getAuthToken();
       } catch (tokenErr) {

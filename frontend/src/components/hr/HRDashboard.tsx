@@ -1,16 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { 
-  Users, 
-  UserCheck, 
-  UserX, 
-  Clock, 
-  Palmtree, 
-  TrendingUp, 
-  AlertTriangle, 
-  CheckCircle2, 
-  FileText, 
-  ChevronRight, 
+import { toast } from 'sonner';
+import {
+  Users,
+  UserCheck,
+  UserX,
+  Clock,
+  Palmtree,
+  TrendingUp,
+  AlertTriangle,
+  CheckCircle2,
+  FileText,
+  ChevronRight,
   Calendar,
   Building2,
   LogIn,
@@ -18,15 +19,15 @@ import {
   Coffee,
   Banknote,
   ShieldCheck,
-  Home
+  Home,
+  X
 } from 'lucide-react';
-import { FaceCaptureModal } from '../shared/LazyFaceCaptureModal';
-import { 
-  getEmployeeWorkDate, 
-  getAttendanceDocId, 
-  getCanonicalEmployeeUid, 
-  isShiftComplete, 
-  resolveAttendanceRecord, 
+import {
+  getEmployeeWorkDate,
+  getAttendanceDocId,
+  getCanonicalEmployeeUid,
+  isShiftComplete,
+  resolveAttendanceRecord,
   isExecutiveOrLeadership,
   isAttendanceExempt,
   isHrEmployee,
@@ -42,17 +43,17 @@ interface HRDashboardProps {
 }
 
 export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
-  const { 
-    employees, 
-    attendance, 
-    leaveRequests, 
-    activeEmployee, 
-    checkIn, 
-    checkOut, 
-    startBreak, 
+  const {
+    employees,
+    attendance,
+    leaveRequests,
+    activeEmployee,
+    checkIn,
+    checkOut,
+    startBreak,
     endBreak,
     companyWideWfhDates,
-    settings 
+    settings
   } = useAuth();
 
   const todayStr = getEmployeeWorkDate(new Date());
@@ -86,10 +87,10 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
   // Map operational employees to their resolved today's attendance record (if any)
   const employeeTodayRecords = useMemo(() => {
     return operationalEmployees.map(emp => {
-      const rec = attendance.find(a => 
+      const rec = attendance.find(a =>
         a.date === todayStr && (
-          a.employeeId === emp.id || 
-          a.employeeCode === emp.employeeId || 
+          a.employeeId === emp.id ||
+          a.employeeCode === emp.employeeId ||
           (a.employeeName && emp.fullName && (
             a.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase() ||
             a.employeeName.replace(/\s+/g, '').toLowerCase() === emp.fullName.replace(/\s+/g, '').toLowerCase()
@@ -119,32 +120,32 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
   const onLeaveCount = employeeTodayRecords.filter(({ emp, rec, isWfh }) => {
     if (isWfh) return false;
     return rec?.status === 'On Leave' || rec?.status === 'Leave' ||
-      leaveRequests.some(r => 
-        !isWfhType(r.type) && !isWfhType(r.leaveCategory) && 
-        (r.status === 'Approved' || ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) && 
+      leaveRequests.some(r =>
+        !isWfhType(r.type) && !isWfhType(r.leaveCategory) &&
+        (r.status === 'Approved' || ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') && (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'))) &&
         ((!!r.employeeId && (r.employeeId === emp.id || r.employeeId === emp.employeeId)) ||
-         (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id)) ||
-         (!!r.employeeName && !!emp.fullName && (
-           r.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase() ||
-           r.employeeName.replace(/\s+/g, '').toLowerCase() === emp.fullName.replace(/\s+/g, '').toLowerCase()
-         ))) && 
-        todayStr >= (r.startDate || (r as any).fromDate) && 
+          (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id)) ||
+          (!!r.employeeName && !!emp.fullName && (
+            r.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase() ||
+            r.employeeName.replace(/\s+/g, '').toLowerCase() === emp.fullName.replace(/\s+/g, '').toLowerCase()
+          ))) &&
+        todayStr >= (r.startDate || (r as any).fromDate) &&
         todayStr <= (r.endDate || (r as any).toDate || r.startDate)
       );
   }).length;
 
   const presentCount = employeeTodayRecords.filter(({ emp, rec, isWfh }) => {
     if (isWfh) return false;
-    const hasApprovedLeave = leaveRequests.some(r => 
-      !isWfhType(r.type) && !isWfhType(r.leaveCategory) && 
-      r.status === 'Approved' && 
+    const hasApprovedLeave = leaveRequests.some(r =>
+      !isWfhType(r.type) && !isWfhType(r.leaveCategory) &&
+      r.status === 'Approved' &&
       ((!!r.employeeId && (r.employeeId === emp.id || r.employeeId === emp.employeeId)) ||
-       (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id)) ||
-       (!!r.employeeName && !!emp.fullName && (
-         r.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase() ||
-         r.employeeName.replace(/\s+/g, '').toLowerCase() === emp.fullName.replace(/\s+/g, '').toLowerCase()
-       ))) && 
-      todayStr >= (r.startDate || (r as any).fromDate) && 
+        (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id)) ||
+        (!!r.employeeName && !!emp.fullName && (
+          r.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase() ||
+          r.employeeName.replace(/\s+/g, '').toLowerCase() === emp.fullName.replace(/\s+/g, '').toLowerCase()
+        ))) &&
+      todayStr >= (r.startDate || (r as any).fromDate) &&
       todayStr <= (r.endDate || (r as any).toDate || r.startDate)
     );
     if (hasApprovedLeave) return false;
@@ -162,7 +163,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     try {
       const raw = localStorage.getItem(`kss_payroll_adjustments_${currentCycleKey}`);
       if (raw) adjustments = JSON.parse(raw);
-    } catch (e) {}
+    } catch (e) { }
 
     const getBenchmark = (emp: any): number => {
       if (emp.baseSalary && Number(emp.baseSalary) > 0) return Number(emp.baseSalary);
@@ -194,8 +195,8 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     }, 0);
   }, [operationalEmployees, attendance, leaveRequests]);
 
-  const executivePendingRequests = leaveRequests.filter(r => 
-    r.status === 'Pending' && 
+  const executivePendingRequests = leaveRequests.filter(r =>
+    r.status === 'Pending' &&
     (r.ceoStatus === 'Pending' || r.ctoStatus === 'Pending' || (!r.ceoStatus && r.status === 'Pending'))
   );
   const executivePendingCount = executivePendingRequests.length;
@@ -207,44 +208,9 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
 
   const [hrActionLoading, setHrActionLoading] = useState(false);
   const [hrStatusMessage, setHrStatusMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
-  const [isFaceModalOpen, setIsFaceModalOpen] = useState(false);
   const [pendingGps, setPendingGps] = useState<{ lat?: number; lon?: number; accuracy?: number } | null>(null);
 
-  const initiateHrCheckIn = async () => {
-    if (!targetEmployee) {
-      setHrStatusMessage({ type: 'error', text: 'No employee record found for check-in.' });
-      return;
-    }
-    setHrActionLoading(true);
-    setHrStatusMessage(null);
-
-    // 1. Pre-Check-In GPS Collection (Fixes H19 UX Gap)
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        pos => {
-          setPendingGps({
-            lat: pos.coords.latitude,
-            lon: pos.coords.longitude,
-            accuracy: pos.coords.accuracy
-          });
-          setHrActionLoading(false);
-          setIsFaceModalOpen(true); // Open Face Modal after GPS acquired
-        },
-        err => {
-          console.warn('[HRDashboard] Geolocation denied/failed', err);
-          setPendingGps(null);
-          setHrActionLoading(false);
-          setIsFaceModalOpen(true); // Open Face Modal even if GPS denied
-        },
-        { enableHighAccuracy: true, timeout: 5000 }
-      );
-    } else {
-      setHrActionLoading(false);
-      setIsFaceModalOpen(true);
-    }
-  };
-
-  const executeHrCheckInProcess = async (descArr?: number[]) => {
+  const executeHrCheckInProcess = async (lat?: number, lon?: number, accuracy?: number) => {
     if (!targetEmployee) return;
     setHrActionLoading(true);
     setHrStatusMessage(null);
@@ -252,24 +218,65 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     try {
       const res = await checkIn(
         targetEmployee.id,
-        pendingGps?.lat,
-        pendingGps?.lon,
-        pendingGps?.accuracy,
-        'Facial Recognition',
-        undefined,
-        undefined,
-        descArr
+        lat,
+        lon,
+        accuracy,
+        'Self Portal'
       );
       if (res.success) {
-        setHrStatusMessage({ type: 'success', text: res.message || '✓ HR Biometric Check-In & GPS Verified!' });
+        toast.success(res.message || '✓ HR Check-In & Location Verified!');
+        setHrStatusMessage({ type: 'success', text: res.message || '✓ HR Check-In & Location Verified!' });
       } else {
-        setHrStatusMessage({ type: 'error', text: res.message || 'Check-In failed.' });
+        toast.error(res.message || 'Check-in failed.');
+        setHrStatusMessage({ type: 'error', text: res.message || 'Check-in failed.' });
       }
     } catch (err: any) {
-      setHrStatusMessage({ type: 'error', text: err?.message || 'Check-In failed.' });
+      toast.error(err?.message || 'Check-in failed.');
+      setHrStatusMessage({ type: 'error', text: err?.message || 'Check-in failed.' });
     } finally {
       setHrActionLoading(false);
-      setPendingGps(null);
+    }
+  };
+
+  const initiateHrCheckIn = async () => {
+    if (!targetEmployee) {
+      toast.error('No employee record found for check-in.');
+      setHrStatusMessage({ type: 'error', text: 'No employee record found for check-in.' });
+      return;
+    }
+
+    const now = new Date();
+    const istParts = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: 'numeric',
+      minute: 'numeric',
+      hour12: false
+    }).formatToParts(now);
+    const currentHourIST = Number(istParts.find(p => p.type === 'hour')?.value || 0);
+    const currentMinIST = Number(istParts.find(p => p.type === 'minute')?.value || 0);
+    if (currentHourIST * 60 + currentMinIST < 10 * 60) {
+      const msg = 'Check-in opens after 10:00 AM IST. Please wait until 10:00 AM.';
+      toast.error(msg);
+      setHrStatusMessage({ type: 'error', text: msg });
+      return;
+    }
+
+    setHrActionLoading(true);
+    setHrStatusMessage(null);
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(
+        pos => {
+          executeHrCheckInProcess(pos.coords.latitude, pos.coords.longitude, pos.coords.accuracy);
+        },
+        err => {
+          console.warn('[HRDashboard] Geolocation denied/failed', err);
+          executeHrCheckInProcess();
+        },
+        { enableHighAccuracy: true, timeout: 5000 }
+      );
+    } else {
+      executeHrCheckInProcess();
     }
   };
 
@@ -281,11 +288,14 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     try {
       const res = await checkOut(targetEmployee.id);
       if (res.success) {
+        toast.success(res.message || 'HR Check-Out recorded successfully!');
         setHrStatusMessage({ type: 'success', text: res.message || 'HR Check-Out recorded successfully!' });
       } else {
+        toast.error(res.message || 'Check-Out failed.');
         setHrStatusMessage({ type: 'error', text: res.message || 'Check-Out failed.' });
       }
     } catch (err: any) {
+      toast.error(err?.message || 'Check-Out failed.');
       setHrStatusMessage({ type: 'error', text: err?.message || 'Check-Out failed.' });
     } finally {
       setHrActionLoading(false);
@@ -300,12 +310,15 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
     try {
       if (hrActiveBreak) {
         const res = await endBreak(targetEmployee.id);
+        toast.success(res.message || 'Break ended. Welcome back to work!');
         setHrStatusMessage({ type: 'success', text: res.message || 'Break ended. Welcome back to work!' });
       } else {
         const res = await startBreak(targetEmployee.id, 'Meal Break');
+        toast.success(res.message || 'Meal Break started.');
         setHrStatusMessage({ type: 'success', text: res.message || 'Meal Break started.' });
       }
     } catch (err: any) {
+      toast.error(err?.message || 'Break action failed.');
       setHrStatusMessage({ type: 'error', text: err?.message || 'Break action failed.' });
     } finally {
       setHrActionLoading(false);
@@ -314,7 +327,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
 
   return (
     <div className="space-y-6 animate-in fade-in zoom-in-95 duration-300">
-      
+
       {/* Zone 1: Action Bar (Top) */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-6">
         <div>
@@ -351,11 +364,10 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
               <button
                 onClick={handleHrBreakToggle}
                 disabled={hrActionLoading}
-                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${
-                  hrActiveBreak 
-                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 hover:bg-amber-500/30 animate-pulse' 
+                className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold border transition-all cursor-pointer ${hrActiveBreak
+                    ? 'bg-amber-500/20 text-amber-300 border-amber-500/30 hover:bg-amber-500/30 animate-pulse'
                     : 'bg-slate-800 text-slate-200 border-slate-700 hover:bg-slate-700'
-                }`}
+                  }`}
               >
                 <Coffee className="w-3.5 h-3.5" />
                 <span>{hrActiveBreak ? 'End Break' : 'Tea / Lunch Break'}</span>
@@ -384,11 +396,34 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         </div>
       </div>
 
+      {hrStatusMessage && (
+        <div className={`p-4 rounded-2xl border flex items-center justify-between gap-3 text-xs font-bold transition-all ${
+          hrStatusMessage.type === 'success'
+            ? 'bg-emerald-500/10 text-emerald-300 border-emerald-500/30'
+            : 'bg-rose-500/10 text-rose-300 border-rose-500/30'
+        }`}>
+          <div className="flex items-center gap-2">
+            {hrStatusMessage.type === 'success' ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+            ) : (
+              <AlertTriangle className="w-4 h-4 text-rose-400 shrink-0" />
+            )}
+            <span>{hrStatusMessage.text}</span>
+          </div>
+          <button
+            onClick={() => setHrStatusMessage(null)}
+            className="p-1 rounded-lg hover:bg-white/10 text-slate-400 hover:text-white transition-colors cursor-pointer"
+          >
+            <X className="w-3.5 h-3.5" />
+          </button>
+        </div>
+      )}
+
       {/* Zone 2: Stripe-Style KPI Summary Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-        
+
         {/* Card 1: Present Today */}
-        <div 
+        <div
           onClick={() => onNavigateTab('attendance', { dateFilter: 'today', statusFilter: 'ALL' })}
           className="bg-slate-900/90 border border-slate-800 hover:border-emerald-500/50 p-5 rounded-2xl shadow-md transition-all cursor-pointer group space-y-3"
         >
@@ -407,7 +442,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         </div>
 
         {/* Card 2: Late Arrivals */}
-        <div 
+        <div
           onClick={() => onNavigateTab('attendance', { dateFilter: 'today', statusFilter: 'Late' })}
           className="bg-slate-900/90 border border-slate-800 hover:border-amber-500/50 p-5 rounded-2xl shadow-md transition-all cursor-pointer group space-y-3"
         >
@@ -426,7 +461,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         </div>
 
         {/* Card 3: Work From Home */}
-        <div 
+        <div
           onClick={() => onNavigateTab('attendance', { dateFilter: 'today', statusFilter: 'Work From Home' })}
           className="bg-slate-900/90 border border-slate-800 hover:border-blue-500/50 p-5 rounded-2xl shadow-md transition-all cursor-pointer group space-y-3"
         >
@@ -445,7 +480,7 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         </div>
 
         {/* Card 4: Monthly Salary Run (Redirects to Salary Disbursement hr_payroll) */}
-        <div 
+        <div
           onClick={() => onNavigateTab('hr_payroll')}
           className="bg-slate-900/90 border border-slate-800 hover:border-purple-500/50 p-5 rounded-2xl shadow-md transition-all cursor-pointer group space-y-3"
         >
@@ -467,14 +502,14 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
 
       {/* Zone 3: Split View — Pending Approvals Inbox & Today's Attendance Feed */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-        
+
         {/* Left: Executive Leave Pipeline Ledger (60%) */}
         <div className="lg:col-span-7 bg-slate-900/90 border border-slate-800 rounded-3xl p-6 shadow-md flex flex-col justify-between">
           <div className="flex items-center justify-between pb-4 border-b border-slate-800">
             <h3 className="text-sm font-bold text-white flex items-center gap-2">
               <Clock className="w-4 h-4 text-purple-400" /> Executive Leave &amp; WFH Pipeline (CEO → CTO)
             </h3>
-            <button 
+            <button
               onClick={() => onNavigateTab('leave_approvals')}
               className="text-xs font-bold text-purple-400 hover:text-purple-300 transition-colors cursor-pointer"
             >
@@ -496,14 +531,12 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
                     <div>
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-xs font-bold text-white">{req.employeeName}</span>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
-                          req.type === 'Leave' || req.type === 'Earn Leave' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
-                        }`}>
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${req.type === 'Leave' || req.type === 'Earn Leave' ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                          }`}>
                           {req.type}
                         </span>
-                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${
-                          ceoDone ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
-                        }`}>
+                        <span className={`text-[9px] font-bold px-2 py-0.5 rounded-md border ${ceoDone ? 'bg-cyan-500/20 text-cyan-300 border-cyan-500/30' : 'bg-purple-500/20 text-purple-300 border-purple-500/30'
+                          }`}>
                           {ceoDone ? 'Awaiting CTO Final' : 'Awaiting CEO'}
                         </span>
                       </div>
@@ -575,25 +608,6 @@ export const HRDashboard: React.FC<HRDashboardProps> = ({ onNavigateTab }) => {
         </div>
 
       </div>
-
-
-      {/* Face Capture Biometric Verification Modal for HR Check-In (Fixes H18 & H19 Security Requirements) */}
-      {targetEmployee && (
-        <FaceCaptureModal
-          isOpen={isFaceModalOpen}
-          onClose={() => setIsFaceModalOpen(false)}
-          onSuccess={(descArr) => {
-            setIsFaceModalOpen(false);
-            executeHrCheckInProcess(descArr);
-          }}
-          employeeName={targetEmployee.fullName}
-          employeeId={targetEmployee.id}
-          employeeCode={targetEmployee.employeeId}
-          profilePhotoUrl={targetEmployee.profilePhotoUrl}
-          cloudDescriptor={targetEmployee.faceDescriptor}
-          isFaceEnrolled={targetEmployee.isFaceEnrolled}
-        />
-      )}
     </div>
   );
 };

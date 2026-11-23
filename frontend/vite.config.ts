@@ -96,9 +96,9 @@ export default defineConfig(({ command }) => {
             'vendor-react': ['react', 'react-dom'],
             'vendor-icons': ['lucide-react'],
             'vendor-motion': ['framer-motion', 'motion'],
-            'vendor-faceapi': ['@vladmandic/face-api'],
             'vendor-pdf': ['jspdf', 'jspdf-autotable'],
-            'vendor-excel': ['exceljs']
+            'vendor-excel': ['exceljs'],
+            'vendor-firebase': ['firebase/app', 'firebase/auth', 'firebase/firestore']
           }
         }
       }

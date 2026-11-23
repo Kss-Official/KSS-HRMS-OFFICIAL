@@ -66,6 +66,7 @@ export const PMLeaveManagement: React.FC = () => {
     employees,
     leaveRequests,
     activeEmployee,
+    updateEmployee,
   } = useAuth();
 
   // Operational employees visible to PM
@@ -203,6 +204,9 @@ export const PMLeaveManagement: React.FC = () => {
       });
 
       if (result.success) {
+        if (updateEmployee) {
+          await updateEmployee(emp.id, { [editingLeave.field]: newVal });
+        }
         toast.success(result.message);
         setEditingLeave(null);
       } else {
@@ -251,6 +255,24 @@ export const PMLeaveManagement: React.FC = () => {
       });
 
       if (result.success) {
+        setWfhRecords(prev => ({
+          ...prev,
+          [emp.id]: {
+            ...prev[emp.id],
+            [editingWfh.monthKey]: {
+              employeeId: emp.id,
+              employeeCode: emp.employeeId,
+              employeeName: emp.fullName,
+              monthKey: editingWfh.monthKey,
+              allowance: newVal,
+              usedApproved,
+              remaining: Math.max(0, newVal - usedApproved),
+              updatedAt: new Date().toISOString(),
+              updatedBy: activeEmployee.id,
+              updatedByName: activeEmployee.fullName,
+            }
+          }
+        }));
         toast.success(result.message);
         setEditingWfh(null);
       } else {
