@@ -1501,8 +1501,8 @@ export function evaluateAttendanceScan(
     if (userLat === undefined || userLon === undefined) {
       locationVerified = false;
     } else {
-      const officeLat = settings.officeLatitude || 13.014333;
-      const officeLon = settings.officeLongitude || 77.646000;
+      const officeLat = settings.officeLatitude || 13.014361;
+      const officeLon = settings.officeLongitude || 77.645888;
       distanceMeters = calculateGpsDistanceMeters(userLat, userLon, officeLat, officeLon);
       const allowedRadius = Math.max(settings.allowedRadiusMeters || 500, 500);
       if (distanceMeters > allowedRadius) {

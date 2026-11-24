@@ -9,8 +9,8 @@ export const INITIAL_COMPANY_SETTINGS: CompanySettings = {
   companyEmail: 'hr@kalpanaaa.in',
   
   officeName: 'Kalpanaaa Software Solutions HQ',
-  officeLatitude: 13.014333,
-  officeLongitude: 77.646000,
+  officeLatitude: 13.014361,
+  officeLongitude: 77.645888,
   gpsRequired: true,
   allowedRadiusMeters: 500,
   workStartTime: '08:00',

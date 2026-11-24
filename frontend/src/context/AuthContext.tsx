@@ -974,8 +974,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     return {
       name: 'Kalpanaaa Software Solutions HQ',
-      latitude: INITIAL_COMPANY_SETTINGS.officeLatitude || 13.014333,
-      longitude: INITIAL_COMPANY_SETTINGS.officeLongitude || 77.646000,
+      latitude: INITIAL_COMPANY_SETTINGS.officeLatitude || 13.014361,
+      longitude: INITIAL_COMPANY_SETTINGS.officeLongitude || 77.645888,
       radiusMeters: Math.max(INITIAL_COMPANY_SETTINGS.allowedRadiusMeters || 500, 500),
       active: true,
       updatedBy: 'System Init',
@@ -2944,8 +2944,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             // instead of an unbounded write from every client on every snapshot.
             let needsUpdate = false;
             if (fetchedZone.latitude === 13.014316 && fetchedZone.longitude === 77.64052) {
-              fetchedZone.latitude = 13.014333;
-              fetchedZone.longitude = 77.646000;
+              fetchedZone.latitude = 13.014361;
+              fetchedZone.longitude = 77.645888;
               needsUpdate = true;
             }
 
@@ -2973,9 +2973,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } else {
             const defaultZone: WorkZone = {
               name: 'Kalpanaaa Software Solutions HQ',
-              latitude: 13.014333,
-              longitude: 77.646000,
-              radiusMeters: 300,
+              latitude: 13.014361,
+              longitude: 77.645888,
+              radiusMeters: 500,
               active: true,
               updatedBy: 'System Init',
               updatedAt: new Date().toISOString()
@@ -5641,8 +5641,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const effectiveSettings: CompanySettings = {
       ...settings,
-      officeLatitude: companyWorkZone.latitude || 13.014333,
-      officeLongitude: companyWorkZone.longitude || 77.646000,
+      officeLatitude: companyWorkZone.latitude || 13.014361,
+      officeLongitude: companyWorkZone.longitude || 77.645888,
       allowedRadiusMeters: Math.max(companyWorkZone.radiusMeters || 500, settings.allowedRadiusMeters || 500, 500),
       gpsRequired: !isAdminCheckIn && settings.gpsRequired !== false
     };
@@ -7506,9 +7506,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setSettings(INITIAL_COMPANY_SETTINGS);
     const defaultZone: WorkZone = {
       name: 'Kalpanaaa Software Solutions HQ',
-      latitude: 13.014333,
-      longitude: 77.646000,
-      radiusMeters: 100,
+      latitude: 13.014361,
+      longitude: 77.645888,
+      radiusMeters: 500,
       active: true,
       updatedBy: 'System Init',
       updatedAt: new Date().toISOString()
