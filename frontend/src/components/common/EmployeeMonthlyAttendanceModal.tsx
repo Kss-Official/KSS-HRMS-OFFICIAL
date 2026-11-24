@@ -53,7 +53,7 @@ const LeaveBalanceKpiBox: React.FC<{
   onOpen: () => void;
 }> = ({ employee, leaveRequests, year, month, onOpen }) => {
   const [open, setOpen] = React.useState(false);
-  const [tab, setTab] = React.useState<'All' | 'Earn Leave' | 'Sick Leave' | 'Casual Leave' | 'WFH'>('All');
+  const [tab, setTab] = React.useState<'All' | 'Earn Leave' | 'Sick Leave' | 'Casual Leave' | 'Loss of Pay' | 'WFH'>('All');
   const [isUpdatingLeave, setIsUpdatingLeave] = React.useState<string | null>(null);
   const [editingField, setEditingField] = React.useState<'earnLeaveBalance' | 'sickLeaveBalance' | 'casualLeaveBalance' | null>(null);
   const [editingValue, setEditingValue] = React.useState<string>('');
@@ -727,7 +727,7 @@ const LeaveBalanceKpiBox: React.FC<{
                       <h3 className="text-xs font-bold text-white uppercase tracking-wider">Applied Leaves & Approval Status</h3>
                     </div>
                     <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-xl border border-slate-800 text-[11px] font-bold overflow-x-auto shrink-0">
-                      {(['All', 'Earn Leave', 'Sick Leave', 'Casual Leave', 'WFH'] as const).map(t => (
+                      {(['All', 'Earn Leave', 'Sick Leave', 'Casual Leave', 'Loss of Pay', 'WFH'] as const).map(t => (
                         <button key={t} onClick={() => setTab(t)}
                           className={`px-3 py-1 rounded-lg transition-all cursor-pointer whitespace-nowrap ${tab === t ? 'bg-blue-600 text-white' : 'text-slate-400 hover:text-white'}`}>
                           {t}
@@ -739,9 +739,13 @@ const LeaveBalanceKpiBox: React.FC<{
                   {(() => {
                     const filtered = allReqs.filter((req: any) => {
                       if (tab === 'All') return true;
-                      const t = req.type || req.leaveCategory || '';
-                      if (tab === 'Earn Leave') return t === 'Earn Leave' || t === 'Leave';
-                      return t === tab;
+                      const t = (req.type || req.leaveCategory || '').toLowerCase();
+                      if (tab === 'Earn Leave') return t === 'earn leave' || t === 'leave' || t === 'el';
+                      if (tab === 'Sick Leave') return t === 'sick leave' || t === 'sl';
+                      if (tab === 'Casual Leave') return t === 'casual leave' || t === 'cl';
+                      if (tab === 'Loss of Pay') return t === 'loss of pay' || t === 'lop' || t.includes('loss');
+                      if (tab === 'WFH') return isWfhType(t);
+                      return t === tab.toLowerCase();
                     });
                     if (!filtered.length) return (
                       <div className="py-10 text-center text-slate-500 text-xs">
@@ -872,7 +876,7 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
 
   // Leave Balance Details Modal State
   const [isLeaveBalanceModalOpen, setIsLeaveBalanceModalOpen] = useState(false);
-  const [leaveCategoryTab, setLeaveCategoryTab] = useState<'All' | 'Earn Leave' | 'Sick Leave' | 'Casual Leave' | 'WFH'>('All');
+  const [leaveCategoryTab, setLeaveCategoryTab] = useState<'All' | 'Earn Leave' | 'Sick Leave' | 'Casual Leave' | 'Loss of Pay' | 'WFH'>('All');
 
   // KPI Click → Calendar Highlight
   const calendarRef = useRef<HTMLDivElement>(null);

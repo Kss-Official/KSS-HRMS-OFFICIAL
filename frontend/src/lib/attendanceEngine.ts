@@ -224,11 +224,11 @@ export function computeEmployeeLeaveBalance(
   const hasTakenEarnLeave = approvedLeavesTaken > 0 || isKnownEarnLeaveTaker || (!isExcludedFromEarnLeaveZero && emp.earnLeaveBalance === 0);
 
   if (hasTakenEarnLeave) {
-    const taken = Math.min(1, Math.max(1, approvedLeavesTaken));
+    const taken = Math.max(1, approvedLeavesTaken);
     return {
       credited: creditedAcrossMonths,
       taken: taken,
-      balance: 0,
+      balance: Math.max(0, creditedAcrossMonths - taken),
       history
     };
   }
@@ -1677,7 +1677,7 @@ export function isNonWorkingDay(
  * Leave types that excuse an employee from attending.
  */
 export const EXCUSED_LEAVE_TYPES = [
-  'Leave', 'LEAVE', 'leave', 'Earn Leave', 'Earned Leave', 'Paid Leave', 'Sick Leave', 'Casual Leave', 'Comp Off', 'Maternity', 'Paternity', 'Personal Leave', 'Festival Leave', 'Vacation'
+  'Leave', 'LEAVE', 'leave', 'Earn Leave', 'Earned Leave', 'Paid Leave', 'Sick Leave', 'Casual Leave', 'Comp Off', 'Maternity', 'Paternity', 'Personal Leave', 'Festival Leave', 'Vacation', 'Loss of Pay', 'Loss Of Pay', 'LOSS_OF_PAY', 'LOP', 'Unpaid Leave'
 ] as const;
 
 /**

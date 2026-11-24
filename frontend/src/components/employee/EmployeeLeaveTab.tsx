@@ -65,8 +65,10 @@ export const EmployeeLeaveTab: React.FC = () => {
   });
 
   const filteredMyRequests = myRequests.filter(r => {
-    // Normalise legacy 'Leave' type to 'Earn Leave' and ensure WFH is correctly recognized
-    const normalisedType = (r.type === 'WFH' || r.type === 'WORK_FROM_HOME' || isWfhType(r.type) || String(r.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd') ? 'WFH' : (r.type === 'Leave' ? 'Earn Leave' : r.type);
+    // Normalise legacy 'Leave' type to 'Earn Leave', Loss of Pay, and ensure WFH is correctly recognized
+    const isWfh = r.type === 'WFH' || r.type === 'WORK_FROM_HOME' || isWfhType(r.type) || String(r.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd';
+    const isLop = r.type === 'Loss of Pay' || r.type === 'LOP' || r.type === 'LOSS_OF_PAY' || r.leaveCategory === 'Loss of Pay' || r.leaveCategory === 'LOP' || r.leaveCategory === 'LOSS_OF_PAY';
+    const normalisedType = isWfh ? 'WFH' : isLop ? 'Loss of Pay' : (r.type === 'Leave' ? 'Earn Leave' : r.type);
 
     if (filterType !== 'All' && normalisedType !== filterType) {
       return false;
@@ -163,6 +165,29 @@ export const EmployeeLeaveTab: React.FC = () => {
   const earnLeaveHistory = computeEarnLeaveMonthlyCreditHistory(activeEmployee as any);
   const sickLeaveHistory = computeSickLeaveCreditHistory(activeEmployee as any);
 
+  // Approved Loss of Pay (LOP) Days taken
+  const myLopDays = useMemo(() => {
+    let count = 0;
+    myRequests.forEach(r => {
+      const t = (r.type || '').toLowerCase();
+      const cat = ((r as any).leaveCategory || '').toLowerCase();
+      const isLop = t === 'loss of pay' || t === 'lop' || cat === 'loss of pay' || cat === 'lop';
+      const isApproved = r.status === 'Approved' || (r.ceoStatus === 'Approved' && r.ctoStatus === 'Approved');
+      if (isLop && isApproved && r.startDate) {
+        const start = new Date(r.startDate);
+        const end = new Date(r.endDate || r.startDate);
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+          let days = 0;
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            if (d.getDay() !== 0) days++; // Skip Sundays
+          }
+          count += Math.max(1, days);
+        }
+      }
+    });
+    return count;
+  }, [myRequests]);
+
   return (
     <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-4 sm:p-8 shadow-2xl w-full space-y-6 backdrop-blur-md">
       {/* Header Bar */}
@@ -173,10 +198,10 @@ export const EmployeeLeaveTab: React.FC = () => {
             <span>My Leave &amp; WFH Requests</span>
           </h2>
           <p className="text-slate-400 text-xs mt-1 leading-relaxed">
-            Submit Earn Leave, Sick Leave, or WFH requests and track your direct CEO → CTO approval status.
+            Submit Earn Leave, Sick Leave, Loss of Pay (LOP), or WFH requests and track your direct CEO → CTO approval status.
           </p>
         </div>
-        <div className="grid grid-cols-3 gap-2 w-full sm:w-auto shrink-0">
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 w-full sm:w-auto shrink-0">
           <button
             onClick={() => { triggerHaptic(); setType('WFH'); setShowForm(true); setFeedback(null); }}
             className={`flex items-center justify-center gap-1 px-3 py-2.5 ${showForm && type === 'WFH' ? 'bg-purple-600 text-white' : 'bg-slate-800 text-slate-300'} hover:bg-purple-500 hover:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer w-full`}
@@ -197,6 +222,13 @@ export const EmployeeLeaveTab: React.FC = () => {
           >
             <Plus className="w-3.5 h-3.5" />
             <span>Sick Leave</span>
+          </button>
+          <button
+            onClick={() => { triggerHaptic(); setType('Loss of Pay'); setShowForm(true); setFeedback(null); }}
+            className={`flex items-center justify-center gap-1 px-3 py-2.5 ${showForm && type === 'Loss of Pay' ? 'bg-red-600 text-white' : 'bg-slate-800 text-slate-300'} hover:bg-red-500 hover:text-white font-bold text-xs rounded-xl transition-colors cursor-pointer w-full`}
+          >
+            <Plus className="w-3.5 h-3.5" />
+            <span>Loss of Pay</span>
           </button>
         </div>
       </div>
@@ -271,10 +303,10 @@ export const EmployeeLeaveTab: React.FC = () => {
             <div>
               <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">Total Leaves Taken</span>
               <span className="text-sm sm:text-base font-black text-amber-300 font-mono block mt-0.5">
-                {myEarnLeave.taken + mySickLeave.taken} Days Taken
+                {myEarnLeave.taken + mySickLeave.taken + myLopDays} Days Taken
               </span>
               <span className="text-[10px] text-slate-400 font-medium block mt-0.5">
-                EL: {myEarnLeave.taken} • SL: {mySickLeave.taken}
+                EL: {myEarnLeave.taken} • SL: {mySickLeave.taken} • LOP: {myLopDays}
               </span>
             </div>
           </div>
@@ -537,7 +569,8 @@ export const EmployeeLeaveTab: React.FC = () => {
                   'var(--accent-amber, #f59e0b)';
 
                 const Icon = currentStatus === 'Approved' ? Check : currentStatus === 'Rejected' ? X : currentStatus === 'Cancelled' ? RotateCcw : Clock;
-                const displayType = (req.type === 'WFH' || req.type === 'WORK_FROM_HOME' || isWfhType(req.type) || String(req.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd') ? 'WFH' : (req.type === 'Leave' ? 'Earn Leave' : req.type);
+                const isLopReq = req.type === 'Loss of Pay' || req.type === 'LOP' || req.type === 'LOSS_OF_PAY' || req.leaveCategory === 'Loss of Pay' || req.leaveCategory === 'LOP' || req.leaveCategory === 'LOSS_OF_PAY';
+                const displayType = (req.type === 'WFH' || req.type === 'WORK_FROM_HOME' || isWfhType(req.type) || String(req.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd') ? 'WFH' : isLopReq ? 'Loss of Pay' : (req.type === 'Leave' ? 'Earn Leave' : req.type);
 
                 return (
                   <motion.div 
@@ -598,9 +631,11 @@ export const EmployeeLeaveTab: React.FC = () => {
                           ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' 
                           : displayType === 'Sick Leave'
                           ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
+                          : (displayType === 'Loss of Pay' || displayType === 'LOP')
+                          ? 'bg-red-500/10 text-red-400 border border-red-500/20'
                           : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                       }`}>
-                        {displayType}
+                        {displayType === 'Loss of Pay' ? 'Loss of Pay (LOP)' : displayType}
                       </span>
                       
                       {currentStatus === 'Pending' || (currentStatus === 'Approved' && req.startDate >= todayStr) ? (

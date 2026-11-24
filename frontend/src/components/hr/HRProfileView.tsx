@@ -55,7 +55,7 @@ export const HRProfileView: React.FC = () => {
   const [showHistoryModal, setShowHistoryModal] = useState(false);
 
   // WFH / Leave Request Form State
-  const [reqType, setReqType] = useState<'WFH' | 'Leave'>('WFH');
+  const [reqType, setReqType] = useState<'WFH' | 'Leave' | 'Loss of Pay'>('WFH');
   const [startDate, setStartDate] = useState(getEmployeeWorkDate(new Date()));
   const [endDate, setEndDate] = useState(getEmployeeWorkDate(new Date()));
   const [reason, setReason] = useState('');
@@ -231,6 +231,7 @@ export const HRProfileView: React.FC = () => {
       employeeName: targetEmployee.fullName,
       department: targetEmployee.department || 'Human Resources',
       type: reqType,
+      leaveCategory: reqType === 'Loss of Pay' ? 'Loss of Pay' : (reqType === 'WFH' ? 'WFH' : 'Earn Leave'),
       startDate,
       endDate,
       reason
@@ -539,11 +540,12 @@ export const HRProfileView: React.FC = () => {
                 <label className="block text-xs font-bold text-slate-300 mb-1.5">Request Type</label>
                 <select
                   value={reqType}
-                  onChange={e => setReqType(e.target.value as 'WFH' | 'Leave')}
+                  onChange={e => setReqType(e.target.value as 'WFH' | 'Leave' | 'Loss of Pay')}
                   className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-xs text-white font-bold focus:outline-none"
                 >
                   <option value="WFH">Work From Home (WFH)</option>
                   <option value="Leave">Casual / Sick Leave</option>
+                  <option value="Loss of Pay">Loss of Pay (LOP)</option>
                 </select>
               </div>
 

@@ -213,7 +213,7 @@ export const LeaveApprovalsView: React.FC = () => {
     });
   };
 
-  const [filterType, setFilterType] = useState<'All' | 'Leave' | 'WFH'>('All');
+  const [filterType, setFilterType] = useState<'All' | 'Leave' | 'WFH' | 'Loss of Pay'>('All');
 
   const isRequestFullyApproved = (req: LeaveRequest) => {
     if (req.status === 'Approved') return true;
@@ -232,10 +232,17 @@ export const LeaveApprovalsView: React.FC = () => {
     return t === 'wfh' || t.includes('home') || c === 'wfh' || c.includes('home');
   };
 
+  const isLopType = (type?: string, category?: string) => {
+    const t = (type || '').toLowerCase();
+    const c = (category || '').toLowerCase();
+    return t.includes('loss') || t.includes('lop') || c.includes('loss') || c.includes('lop');
+  };
+
   const matchesTypeFilter = (req: LeaveRequest) => {
     if (filterType === 'All') return true;
     if (filterType === 'WFH') return isWfhType(req.type, req.leaveCategory);
-    if (filterType === 'Leave') return !isWfhType(req.type, req.leaveCategory);
+    if (filterType === 'Loss of Pay') return isLopType(req.type, req.leaveCategory);
+    if (filterType === 'Leave') return !isWfhType(req.type, req.leaveCategory) && !isLopType(req.type, req.leaveCategory);
     return req.type === filterType;
   };
 
@@ -336,7 +343,8 @@ export const LeaveApprovalsView: React.FC = () => {
               className="bg-slate-900 border border-slate-800 text-white text-xs font-bold rounded-lg px-2.5 py-1 focus:border-blue-500 focus:outline-hidden cursor-pointer w-full sm:w-auto"
             >
               <option value="All">All Request Types</option>
-              <option value="Leave">Leave Requests Only</option>
+              <option value="Leave">Earn Leave &amp; Sick Leave</option>
+              <option value="Loss of Pay">Loss of Pay (LOP) Only</option>
               <option value="WFH">WFH Requests Only</option>
             </select>
           </div>
@@ -517,6 +525,7 @@ export const LeaveApprovalsView: React.FC = () => {
           {(activeTab === 'pending' ? pendingRequests : activeTab === 'rejected' ? rejectedRequests : historyRequests).map((req, i) => {
             const emp = employees.find(e => e.id === req.employeeId || e.employeeId === req.employeeId);
             const isWfh = isWfhType(req.type) || isWfhType(req.leaveCategory);
+            const isLop = isLopType(req.type, req.leaveCategory);
             const statusColor = req.status === 'Approved' ? 'var(--accent-emerald)' : req.status === 'Rejected' ? 'var(--accent-rose)' : 'var(--accent-amber)';
 
             const displayCeoStatus = req.ceoStatus === 'Approved' ? 'Approved' :
@@ -603,9 +612,13 @@ export const LeaveApprovalsView: React.FC = () => {
                       <span className={`px-3 py-1.5 rounded-lg text-[10px] font-black uppercase tracking-widest border ${
                         isWfh 
                           ? 'bg-[var(--accent-violet)]/10 text-[var(--accent-violet)] border-[var(--accent-violet)]/20' 
+                          : isLop
+                          ? 'bg-rose-500/10 text-rose-400 border-rose-500/30'
+                          : req.type === 'Sick Leave'
+                          ? 'bg-purple-500/10 text-purple-400 border-purple-500/30'
                           : 'bg-[var(--accent-amber)]/10 text-[var(--accent-amber)] border-[var(--accent-amber)]/20'
                       }`}>
-                        {req.type}
+                        {isLop ? 'Loss of Pay (LOP)' : req.type}
                       </span>
                       <div className="flex flex-wrap items-center gap-1.5 text-[10px] font-bold">
                         <span className={`px-2 py-0.5 rounded-md border ${

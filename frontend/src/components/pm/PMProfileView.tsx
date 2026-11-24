@@ -473,7 +473,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
   // ══════════════════════════════════════════════════════════════
   // LEAVE / WFH FORM STATE
   // ══════════════════════════════════════════════════════════════
-  const [reqType, setReqType] = useState<'WFH' | 'Leave' | 'Sick Leave' | 'Earn Leave'>('WFH');
+  const [reqType, setReqType] = useState<'WFH' | 'Leave' | 'Sick Leave' | 'Earn Leave' | 'Loss of Pay'>('WFH');
   const [startDate, setStartDate] = useState(getEmployeeWorkDate(new Date()));
   const [endDate, setEndDate] = useState(getEmployeeWorkDate(new Date()));
   const [reason, setReason] = useState('');
@@ -487,6 +487,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
     const leaveCategory: LeaveCategory | undefined =
       reqType === 'WFH' ? 'WFH' :
       reqType === 'Sick Leave' ? 'Sick Leave' :
+      reqType === 'Loss of Pay' ? 'Loss of Pay' :
       (reqType === 'Earn Leave' || reqType === 'Leave') ? 'Earn Leave' :
       undefined;
 
@@ -1456,6 +1457,7 @@ export const PMProfileView: React.FC<PMProfileViewProps> = ({ onOpenIdCard }) =>
                     <option value="Leave">🌴 Personal Leave</option>
                     <option value="Sick Leave">🤒 Sick Leave</option>
                     <option value="Earn Leave">🏖️ Earn Leave</option>
+                    <option value="Loss of Pay">💰 Loss of Pay (LOP)</option>
                   </select>
                 </div>
 

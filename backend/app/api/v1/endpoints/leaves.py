@@ -264,8 +264,8 @@ async def review_leave(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(require_executive()),
 ):
-    if payload.action not in (ApprovalStatus.APPROVED, ApprovalStatus.REJECTED):
-        raise HTTPException(status_code=422, detail="Action must be APPROVED or REJECTED")
+    if payload.action not in (ApprovalStatus.APPROVED, ApprovalStatus.REJECTED, ApprovalStatus.WAITING_CEO):
+        raise HTTPException(status_code=422, detail="Action must be APPROVED, REJECTED, or WAITING_CEO")
 
     now = datetime.now(timezone.utc)
     leave = await _find_leave(db, leave_id, current_user_id=None, lock=True)

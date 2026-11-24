@@ -23,7 +23,7 @@ import { LeaveHistorySummarySection } from '../admin/LeaveHistorySummarySection'
 
 export const HRLeaveWfhApprovals: React.FC = () => {
   const { leaveRequests, updateLeaveRequestStage, updateLeaveRequestStatus, activeEmployee, settings, assignCompanyWideWfh, removeCompanyWideWfh } = useAuth();
-  const [filterType, setFilterType] = useState<'All' | 'Leave' | 'WFH'>('All');
+  const [filterType, setFilterType] = useState<'All' | 'Leave' | 'WFH' | 'Loss of Pay'>('All');
   const [filterStatus, setFilterStatus] = useState<'All' | 'Pending' | 'Approved' | 'Rejected'>('Pending');
   const [searchTerm, setSearchTerm] = useState('');
   
@@ -56,10 +56,12 @@ export const HRLeaveWfhApprovals: React.FC = () => {
 
   const filteredRequests = leaveRequests.filter(req => {
     const isWfh = req.type === 'WFH' || (req.type || '').toLowerCase().includes('home') || ((req as any).leaveCategory || '').toLowerCase().includes('home');
+    const isLop = (req.type || '').toLowerCase().includes('loss') || (req.type || '').toLowerCase().includes('lop') || ((req as any).leaveCategory || '').toLowerCase().includes('loss');
     const matchesType = 
       filterType === 'All' ? true :
       filterType === 'WFH' ? isWfh :
-      !isWfh;
+      filterType === 'Loss of Pay' ? isLop :
+      !isWfh && !isLop;
     const matchesStatus = filterStatus === 'All' || req.status === filterStatus;
     const matchesSearch = (req.employeeName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
                           (req.reason || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -169,7 +171,8 @@ export const HRLeaveWfhApprovals: React.FC = () => {
               className="bg-transparent text-white font-bold text-xs focus:outline-none cursor-pointer w-full"
             >
               <option value="All">All Types</option>
-              <option value="Leave">Leave Only</option>
+              <option value="Leave">Earn &amp; Sick Leave</option>
+              <option value="Loss of Pay">Loss of Pay (LOP)</option>
               <option value="WFH">WFH Only</option>
             </select>
           </div>
@@ -190,7 +193,7 @@ export const HRLeaveWfhApprovals: React.FC = () => {
 
         {/* Desktop Pills (>=640px) */}
         <div className="hidden sm:flex items-center gap-2">
-          {['All', 'Leave', 'WFH'].map(type => (
+          {['All', 'Leave', 'Loss of Pay', 'WFH'].map(type => (
             <button
               key={type}
               onClick={() => setFilterType(type as any)}
@@ -260,9 +263,12 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                     </div>
 
                     <span className={`px-2.5 py-0.5 rounded-md text-[10px] font-mono font-extrabold border shrink-0 ${
-                      req.type === 'WFH' ? 'bg-purple-500/10 text-purple-300 border-purple-500/30' : 'bg-amber-500/10 text-amber-300 border-amber-500/30'
+                      req.type === 'WFH' ? 'bg-purple-500/10 text-purple-300 border-purple-500/30' :
+                      (req.type || '').toLowerCase().includes('loss') || (req.type || '').toLowerCase().includes('lop') ? 'bg-rose-500/10 text-rose-300 border-rose-500/30' :
+                      req.type === 'Sick Leave' ? 'bg-purple-500/10 text-purple-300 border-purple-500/30' :
+                      'bg-amber-500/10 text-amber-300 border-amber-500/30'
                     }`}>
-                      {req.type}
+                      {(req.type || '').toLowerCase().includes('loss') ? 'Loss of Pay (LOP)' : req.type}
                     </span>
                   </div>
 
@@ -355,9 +361,12 @@ export const HRLeaveWfhApprovals: React.FC = () => {
 
                       <td className="py-3.5 px-4 whitespace-nowrap">
                         <span className={`px-2.5 py-0.5 rounded text-[10px] font-bold uppercase ${
-                          req.type === 'WFH' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' : 'bg-amber-500/10 text-amber-400 border border-amber-500/20'
+                          req.type === 'WFH' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
+                          (req.type || '').toLowerCase().includes('loss') || (req.type || '').toLowerCase().includes('lop') ? 'bg-rose-500/10 text-rose-400 border border-rose-500/20' :
+                          req.type === 'Sick Leave' ? 'bg-purple-500/10 text-purple-400 border border-purple-500/20' :
+                          'bg-amber-500/10 text-amber-400 border border-amber-500/20'
                         }`}>
-                          {req.type}
+                          {(req.type || '').toLowerCase().includes('loss') ? 'Loss of Pay (LOP)' : req.type}
                         </span>
                       </td>
 
