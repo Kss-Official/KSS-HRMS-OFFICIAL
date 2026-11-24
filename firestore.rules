@@ -665,7 +665,10 @@ service cloud.firestore {
       function callerTier() {
         return isSuperAdmin() ? 5 : (isHrAdmin() ? 3 : (isProjectManager() ? 2 : 1));
       }
-      allow read: if isConfigAdmin() || isSubject() || isAuthor() || isAuthorizedTechLead() ||
+      // list = collection query (resource is null, cannot reference resource.data)
+      allow list: if isConfigAdmin() || isProjectManager() || isAuthorizedTechLead() || isHrAdmin();
+      // get = single document read (resource.data is available)
+      allow get: if isConfigAdmin() || isSubject() || isAuthor() || isAuthorizedTechLead() ||
         (isProjectManager() && resource.data.subjectTier == 1);
       allow create: if (isConfigAdmin() || isProjectManager() || isAuthorizedTechLead()) &&
         request.resource.data.reviewerId is string &&

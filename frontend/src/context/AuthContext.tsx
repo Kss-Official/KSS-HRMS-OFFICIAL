@@ -2618,11 +2618,14 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (existing.id === canonicalDocId) return existing.breaks || [];
                 // No canonical in this pair — prefer more entries, then prefer
                 // the set that contains an open (in-progress) break.
+                // NEVER prefer an open break if either record has already checked out —
+                // checkout closes all breaks server-side.
                 const rBreaks = richer.breaks || [];
                 const pBreaks = poorer.breaks || [];
                 if (rBreaks.length !== pBreaks.length) return rBreaks.length > pBreaks.length ? rBreaks : pBreaks;
-                const rHasOpen = rBreaks.some((b: any) => !b.endAt && !(b as any).endTime);
-                const pHasOpen = pBreaks.some((b: any) => !b.endAt && !(b as any).endTime);
+                const isCheckedOut = !!(richer.checkOutAt || poorer.checkOutAt);
+                const rHasOpen = !isCheckedOut && rBreaks.some((b: any) => !b.endAt && !(b as any).endTime);
+                const pHasOpen = !isCheckedOut && pBreaks.some((b: any) => !b.endAt && !(b as any).endTime);
                 if (rHasOpen && !pHasOpen) return rBreaks;
                 if (pHasOpen && !rHasOpen) return pBreaks;
                 return rBreaks;
@@ -3704,8 +3707,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 if (prevRec && Array.isArray(prevRec.breaks)) {
                   const prevOpenBreak = prevRec.breaks.find((b: any) => !b.endAt && !b.endTime);
                   const freshOpenBreak = (freshRec.breaks || []).find((b: any) => !b.endAt && !b.endTime);
-                  // If prev had an open break that fresh doesn't have yet, keep it!
-                  if (prevOpenBreak && !freshOpenBreak) {
+                  // If prev had an open break that fresh doesn't have yet, keep it —
+                  // BUT ONLY if the fresh record is not already checked out.
+                  // After checkout, all breaks are closed server-side; never re-inject
+                  // a stale open break that would make the UI show "Shift Active" again.
+                  if (prevOpenBreak && !freshOpenBreak && !freshRec.checkOutAt) {
                     const freshBreaks = freshRec.breaks || [];
                     return {
                       ...freshRec,
