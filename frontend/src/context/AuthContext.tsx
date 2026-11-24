@@ -555,17 +555,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
         const email = payload.email?.toLowerCase()?.trim();
         const code = payload.employee_code || (payload.sub && payload.sub.startsWith('KSS') ? payload.sub : undefined);
-        const isCto = code === 'KSS2407001' || code === 'CTO001' || email?.includes('founder') || email?.includes('gaurav') || email === 'cto@kalpanaaa.in';
-        const isCeo = code === 'KSS2407002' || code === 'CEO001' || email?.includes('akshit') || email === 'ceo@kalpanaaa.in';
-        return {
-          email,
-          uid: payload.sub,
-          employeeCode: code,
-          role: (isCto || isCeo) ? 'SUPER_ADMIN' : (payload.role as UserRole),
-          isCtoOrCeo: isCto || isCeo,
-          isCto,
-          isCeo
-        };
+        const isCto = code === 'KSS2407001' || code === 'CTO001' || email?.includes('founder') || email?.includes('gaurav') || email === 'cto@kalpanaaa.in' || email === 'cto@kalpanaaasoftwaresolutions.in';
+        const isCeo = code === 'KSS2407002' || code === 'CEO001' || email?.includes('akshit') || email === 'ceo@kalpanaaa.in' || email === 'ceo@kalpanaaasoftwaresolutions.in';
+        
+        // Strict stale check: if kss_v1_session_email exists and contradicts JWT, JWT is stale from another user!
+        const savedSessionEmail = (localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
+        if (savedSessionEmail && email && savedSessionEmail !== email) {
+          console.warn('[Auth] Stale JWT token detected (mismatches session email). Purging stale token.');
+          localStorage.removeItem('kalpanaaa_jwt_token');
+          localStorage.removeItem('kalpanaaa_refresh_token');
+        } else {
+          return {
+            email,
+            uid: payload.sub,
+            employeeCode: code,
+            role: (isCto || isCeo) ? 'SUPER_ADMIN' : (payload.role as UserRole),
+            isCtoOrCeo: isCto || isCeo,
+            isCto,
+            isCeo
+          };
+        }
       }
     } catch {}
 
@@ -579,8 +588,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             const fbData = JSON.parse(raw);
             if (fbData && (fbData.email || fbData.uid)) {
               const email = fbData.email?.toLowerCase()?.trim();
-              const isCto = email?.includes('founder') || email?.includes('gaurav') || email === 'cto@kalpanaaa.in';
-              const isCeo = email?.includes('akshit') || email === 'ceo@kalpanaaa.in';
+              const isCto = email?.includes('founder') || email?.includes('gaurav') || email === 'cto@kalpanaaa.in' || email === 'cto@kalpanaaasoftwaresolutions.in';
+              const isCeo = email?.includes('akshit') || email === 'ceo@kalpanaaa.in' || email === 'ceo@kalpanaaasoftwaresolutions.in';
               return {
                 email,
                 uid: fbData.uid,
@@ -595,18 +604,22 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
     } catch {}
 
-    // 3. Fallback to kss_v1_session_email
+    // 3. Fallback to kss_v1_session_email ONLY for verified executive identities
+    // Non-executive emails stored as raw strings in localStorage MUST wait for Firebase Auth verification
+    // to prevent any cross-device cached identity from ever leaking or flashing.
     const savedEmail = (localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
     if (savedEmail) {
-      const isCto = savedEmail.includes('founder') || savedEmail.includes('gaurav') || savedEmail === 'cto@kalpanaaa.in';
-      const isCeo = savedEmail.includes('akshit') || savedEmail === 'ceo@kalpanaaa.in';
-      return {
-        email: savedEmail,
-        role: (isCto || isCeo) ? 'SUPER_ADMIN' : undefined,
-        isCtoOrCeo: isCto || isCeo,
-        isCto,
-        isCeo
-      };
+      const isCto = savedEmail.includes('founder') || savedEmail.includes('gaurav') || savedEmail === 'cto@kalpanaaa.in' || savedEmail === 'cto@kalpanaaasoftwaresolutions.in';
+      const isCeo = savedEmail.includes('akshit') || savedEmail === 'ceo@kalpanaaa.in' || savedEmail === 'ceo@kalpanaaasoftwaresolutions.in';
+      if (isCto || isCeo) {
+        return {
+          email: savedEmail,
+          role: 'SUPER_ADMIN',
+          isCtoOrCeo: true,
+          isCto,
+          isCeo
+        };
+      }
     }
 
     return null;
@@ -634,8 +647,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [activeEmployee, setActiveEmployee] = useState<Employee | null>(() => {
     if (!isSessionValidOnBoot()) return null;
     const authIdentity = getActiveAuthIdentityOnBoot();
+    if (!authIdentity) {
+      // Identity pending asynchronous verification (e.g. Firebase Auth IndexedDB token resolution)
+      // Do not restore an unverified employee into active state to prevent wrong portal flashing
+      return null;
+    }
     const savedSessionId = localStorage.getItem('kss_v1_session');
-    const savedEmail = (authIdentity?.email || localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
+    const savedEmail = (authIdentity.email || '').toLowerCase().trim();
 
     // 0. SPECIALIZED EXECUTIVE BOOT: If active authenticated identity is CTO (Gaurav Kumar Tripathi),
     // immediately restore CTO profile at 0ms and purge any stale non-CTO cache (e.g. Akash SB)
@@ -768,11 +786,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [role, setRole] = useState<UserRole>(() => {
     if (!isSessionValidOnBoot()) return 'EMPLOYEE';
     const authIdentity = getActiveAuthIdentityOnBoot();
-    if (authIdentity?.role) return authIdentity.role;
-    if (authIdentity?.isCtoOrCeo) return 'SUPER_ADMIN';
+    if (!authIdentity) return 'EMPLOYEE';
+    if (authIdentity.role) return authIdentity.role;
+    if (authIdentity.isCtoOrCeo) return 'SUPER_ADMIN';
 
-    const savedEmail = (authIdentity?.email || localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
-    if (savedEmail.includes('founder') || savedEmail.includes('gaurav') || savedEmail === 'cto@kalpanaaa.in' || savedEmail.includes('akshit') || savedEmail === 'ceo@kalpanaaa.in') {
+    const savedEmail = (authIdentity.email || '').toLowerCase().trim();
+    if (savedEmail.includes('founder') || savedEmail.includes('gaurav') || savedEmail === 'cto@kalpanaaa.in' || savedEmail === 'cto@kalpanaaasoftwaresolutions.in' || savedEmail.includes('akshit') || savedEmail === 'ceo@kalpanaaa.in' || savedEmail === 'ceo@kalpanaaasoftwaresolutions.in') {
       return 'SUPER_ADMIN';
     }
 
@@ -786,7 +805,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (cachedActive) {
       try {
         const parsed = JSON.parse(cachedActive) as Employee;
-        if (parsed?.role) {
+        if (parsed?.role && (!authIdentity.email || (parsed.email && parsed.email.toLowerCase() === authIdentity.email))) {
           if (parsed.employeeId === 'CEO001' || parsed.employeeId === 'CTO001' || parsed.employeeId === 'KSS2407001' || parsed.employeeId === 'KSS2407002') return 'SUPER_ADMIN';
           return parsed.role;
         }
@@ -798,9 +817,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(savedEmps) as Employee[];
         const found = parsed.find(e =>
+          (authIdentity.email && e.email?.toLowerCase() === authIdentity.email) ||
           e.id === savedSessionId ||
-          e.employeeId === savedSessionId ||
-          (savedEmail && e.email?.toLowerCase() === savedEmail)
+          e.employeeId === savedSessionId
         );
         if (found) {
           if (found.employeeId === 'CEO001' || found.employeeId === 'CTO001' || found.employeeId === 'KSS2407001' || found.employeeId === 'KSS2407002') return 'SUPER_ADMIN';
@@ -821,13 +840,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Ready immediately if verified session exists on boot and matches identity; otherwise waits for auth to resolve
   const [isSessionReady, setIsSessionReady] = useState<boolean>(() => {
     const valid = isSessionValidOnBoot();
-    if (!valid) return true; // not logged in, ready to render AuthView
+    if (!valid) return true; // not logged in, ready to render AuthView immediately
     const authIdentity = getActiveAuthIdentityOnBoot();
+    if (!authIdentity) {
+      // Session exists in localStorage but auth identity is pending verification (e.g. Firebase Auth in IndexedDB)
+      // Hold clean loader so no stale or wrong employee can ever flash!
+      return false;
+    }
     const cachedActive = localStorage.getItem('kss_v1_cached_active_employee');
     if (cachedActive) {
       try {
         const parsed = JSON.parse(cachedActive);
-        if (parsed && authIdentity?.email && parsed.email?.toLowerCase() !== authIdentity.email) {
+        if (parsed && authIdentity.email && parsed.email?.toLowerCase() !== authIdentity.email) {
           // Identity mismatch in cache: hold clean loader until verified auth completes!
           return false;
         }
@@ -1442,34 +1466,45 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // ROOT-LEVEL ROLE & SESSION SYNC: Continuously sync activeEmployee and role whenever employees state updates
   useEffect(() => {
     if (!activeEmployee) {
-      // Try to restore from localStorage if session token exists but activeEmployee is null
-      const savedSessionId = localStorage.getItem('kss_v1_session');
-      const savedEmail = localStorage.getItem('kss_v1_session_email');
-      if (savedSessionId || savedEmail) {
+      // Only restore if user is verified by Firebase Auth or has a verified cryptographic JWT.
+      // Never blindly restore unauthenticated localStorage strings which could belong to another user on a shared machine!
+      if (auth.currentUser?.email) {
+        const cleanAuthEmail = auth.currentUser.email.toLowerCase().trim();
         const matched = employees.find(e =>
-          e.id === savedSessionId ||
-          e.employeeId === savedSessionId ||
-          (savedEmail && e.email?.toLowerCase() === savedEmail.toLowerCase())
+          (e.email && e.email.toLowerCase() === cleanAuthEmail) ||
+          e.id === auth.currentUser?.uid ||
+          (cleanAuthEmail.includes('founder') || cleanAuthEmail.includes('gaurav') || cleanAuthEmail.startsWith('cto@') ? (e.employeeId === 'KSS2407001' || e.employeeId === 'CTO001') : false) ||
+          (cleanAuthEmail.includes('akshit') || cleanAuthEmail.startsWith('ceo@') ? (e.employeeId === 'KSS2407002' || e.employeeId === 'CEO001') : false)
         ) || INITIAL_EMPLOYEES.find(e =>
-          e.id === savedSessionId ||
-          e.employeeId === savedSessionId ||
-          (savedEmail && e.email?.toLowerCase() === savedEmail.toLowerCase())
+          (e.email && e.email.toLowerCase() === cleanAuthEmail) ||
+          e.id === auth.currentUser?.uid ||
+          (cleanAuthEmail.includes('founder') || cleanAuthEmail.includes('gaurav') || cleanAuthEmail.startsWith('cto@') ? (e.employeeId === 'KSS2407001' || e.employeeId === 'CTO001') : false) ||
+          (cleanAuthEmail.includes('akshit') || cleanAuthEmail.startsWith('ceo@') ? (e.employeeId === 'KSS2407002' || e.employeeId === 'CEO001') : false)
         );
 
         if (matched) {
           setActiveEmployee(matched);
-          let assignedRole = matched.role;
-          if (matched.employeeId === 'CEO001' || matched.employeeId === 'CTO001') assignedRole = 'SUPER_ADMIN';
+          const assignedRole = (matched.employeeId === 'CEO001' || matched.employeeId === 'CTO001' || matched.employeeId === 'KSS2407001' || matched.employeeId === 'KSS2407002') ? 'SUPER_ADMIN' : matched.role;
           setRole(assignedRole);
           setIsAuthenticated(true);
-        } else if (employees.length > 0) {
-          // Stale session that could not be matched — purge invalid session
-          localStorage.removeItem('kss_v1_session');
-          localStorage.removeItem('kss_v1_session_email');
-          setIsAuthenticated(false);
         }
       } else {
-        setIsAuthenticated(false);
+        const authIdentity = getActiveAuthIdentityOnBoot();
+        if (authIdentity?.email) {
+          const matched = employees.find(e =>
+            (e.email && e.email.toLowerCase() === authIdentity.email) ||
+            (authIdentity.employeeCode && (e.employeeId === authIdentity.employeeCode || e.id === authIdentity.employeeCode))
+          ) || INITIAL_EMPLOYEES.find(e =>
+            (e.email && e.email.toLowerCase() === authIdentity.email) ||
+            (authIdentity.employeeCode && (e.employeeId === authIdentity.employeeCode || e.id === authIdentity.employeeCode))
+          );
+          if (matched) {
+            setActiveEmployee(matched);
+            const assignedRole = (matched.employeeId === 'CEO001' || matched.employeeId === 'CTO001' || matched.employeeId === 'KSS2407001' || matched.employeeId === 'KSS2407002') ? 'SUPER_ADMIN' : (authIdentity.role || matched.role);
+            setRole(assignedRole);
+            setIsAuthenticated(true);
+          }
+        }
       }
       return;
     }
@@ -3893,17 +3928,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       }
       setUser(firebaseUser);
       setIsDemoMode(false);
-      if (!getAuthToken() && (firebaseUser.email || firebaseUser.uid)) {
-        try {
-          const fbToken = await Promise.race([
-            firebaseUser.getIdToken(false),
-            new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
-          ]).catch(() => null);
-          await syncFirebaseSessionApi(firebaseUser.email, firebaseUser.uid, fbToken);
-        } catch (syncErr) {
-          console.warn('[AuthContext] syncFirebaseSessionApi failed:', syncErr);
-        }
-      }
       const cleanEmail = firebaseUser.email?.trim().toLowerCase();
       const isCtoEmail = !!cleanEmail && (
         cleanEmail.includes('founder') ||
@@ -3919,6 +3943,34 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         cleanEmail.startsWith('ceo@')
       );
 
+      // Verify whether existing FastAPI JWT token belongs to this authenticated Firebase user
+      const currentJwt = getAuthToken();
+      let jwtMatchesUser = false;
+      if (currentJwt && !isTokenExpired(currentJwt)) {
+        try {
+          const payload = JSON.parse(atob(currentJwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+          if (payload.email && cleanEmail && payload.email.toLowerCase() === cleanEmail) {
+            jwtMatchesUser = true;
+          }
+        } catch {}
+      }
+      if (!jwtMatchesUser && currentJwt) {
+        console.warn('[Auth] Mismatched JWT token detected for Firebase user. Purging stale JWT.');
+        removeAuthToken();
+      }
+
+      if (!jwtMatchesUser && (firebaseUser.email || firebaseUser.uid)) {
+        try {
+          const fbToken = await Promise.race([
+            firebaseUser.getIdToken(false),
+            new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
+          ]).catch(() => null);
+          await syncFirebaseSessionApi(firebaseUser.email, firebaseUser.uid, fbToken);
+        } catch (syncErr) {
+          console.warn('[AuthContext] syncFirebaseSessionApi failed:', syncErr);
+        }
+      }
+
       // Check for cross-user account switch on shared devices (e.g. CTO refreshing on Akash's machine)
       const previousSessionEmail = (localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
       const isAccountSwitch = !!cleanEmail && !!previousSessionEmail && cleanEmail !== previousSessionEmail;
@@ -3928,6 +3980,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         localStorage.removeItem('kss_v1_attendance');
         localStorage.removeItem('kss_v1_leave_requests');
         localStorage.removeItem('kss_v1_session');
+        localStorage.removeItem('kalpanaaa_jwt_token');
+        localStorage.removeItem('kalpanaaa_refresh_token');
+        removeAuthToken();
+        clearApiCache();
         if (isCtoEmail || isCeoEmail) {
           localStorage.setItem('kss_active_tab', 'dashboard');
         }

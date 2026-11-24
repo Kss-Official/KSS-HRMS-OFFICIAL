@@ -138,16 +138,12 @@ const MainLayout: React.FC = () => {
     }
   }, [activeTab]);
 
-  // Dismiss the HTML splash as soon as component mounts or session state is resolved
+  // Dismiss the HTML splash ONLY when session state is confirmed ready
   useEffect(() => {
-    dismissHtmlSplash();
+    if (isSessionReady) {
+      dismissHtmlSplash();
+    }
   }, [isSessionReady]);
-
-  useEffect(() => {
-    dismissHtmlSplash();
-    const timer = setTimeout(dismissHtmlSplash, 50);
-    return () => clearTimeout(timer);
-  }, []);
 
   // Auto-transition to app view when authenticated
   useEffect(() => {
