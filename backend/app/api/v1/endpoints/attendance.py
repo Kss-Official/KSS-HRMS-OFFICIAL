@@ -431,7 +431,28 @@ async def start_break(
     now = datetime.now(timezone.utc)
     att = await _today_record(db, current_user)
     if not att or not att.check_in_at or att.check_out_at:
-        raise HTTPException(status_code=400, detail="Active check-in required to take a break")
+        if att and att.check_out_at:
+            raise HTTPException(status_code=400, detail="Cannot take a break after checking out")
+        # Auto-provision/heal today attendance record if shift was started via Firebase
+        if not att:
+            cfg = await _load_company_settings(db)
+            today = company_now(cfg.timezone if cfg and cfg.timezone else None).date()
+            att = AttendanceRecord(
+                id=uuid.uuid4(),
+                employee_id=current_user.id,
+                date=today,
+                check_in_at=now,
+                status=AttendanceStatus.PRESENT,
+                location_verified=True,
+                attendance_method=AttendanceMethod.PORTAL_1CLICK
+            )
+            db.add(att)
+            await db.commit()
+            await db.refresh(att)
+        elif not att.check_in_at:
+            att.check_in_at = now
+            await db.commit()
+            await db.refresh(att)
 
     active_rows = (await db.execute(select(AttendanceBreak).where(
         and_(AttendanceBreak.attendance_id == att.id, AttendanceBreak.end_time.is_(None))))).scalars().all()

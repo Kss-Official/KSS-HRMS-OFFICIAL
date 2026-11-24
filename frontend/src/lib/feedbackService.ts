@@ -366,7 +366,16 @@ export function subscribeToFeedbacks(
         buckets[i] = rows;
         emit();
       },
-      onError
+      (err: any) => {
+        // Granular sub-query boundary: If one specific disjunct is denied
+        // (e.g. employee has never authored a review), suppress noisy listener console errors
+        // and allow other valid disjuncts to deliver feedbacks smoothly.
+        if (err?.code === 'permission-denied') {
+          buckets[i] = [];
+          return;
+        }
+        onError?.(err);
+      }
     )
   );
 

@@ -640,7 +640,7 @@ service cloud.firestore {
           resource.data.targetEmployeeId == request.auth.uid ||
           resource.data.get('targetEmployeeUid', '') == request.auth.uid ||
           (getEmployeeDocId() != null && (resource.data.targetEmployeeId == getEmployeeDocId() || resource.data.get('targetEmployeeDocId', '~') == getEmployeeDocId())) ||
-          (getEmployeeId() != null && (resource.data.targetEmployeeCode == getEmployeeId() || resource.data.targetEmployeeId == getEmployeeId())) ||
+          (getEmployeeId() != null && (resource.data.targetEmployeeCode == getEmployeeId() || resource.data.targetEmployeeId == getEmployeeId() || resource.data.targetEmployeeId == ('emp-' + getEmployeeId()))) ||
           (hasEmail() && (
             (resource.data.get('targetEmployeeEmail', '') != '' && (resource.data.get('targetEmployeeEmail', '') == userEmail() || resource.data.get('targetEmployeeEmail', '').lower() == userEmail())) ||
             (resource.data.get('email', '') != '' && (resource.data.get('email', '') == userEmail() || resource.data.get('email', '').lower() == userEmail()))
@@ -665,10 +665,7 @@ service cloud.firestore {
       function callerTier() {
         return isSuperAdmin() ? 5 : (isHrAdmin() ? 3 : (isProjectManager() ? 2 : 1));
       }
-      // list = collection query (resource is null, cannot reference resource.data)
-      allow list: if isConfigAdmin() || isProjectManager() || isAuthorizedTechLead() || isHrAdmin();
-      // get = single document read (resource.data is available)
-      allow get: if isConfigAdmin() || isSubject() || isAuthor() || isAuthorizedTechLead() ||
+      allow read: if isConfigAdmin() || isSubject() || isAuthor() || isAuthorizedTechLead() ||
         (isProjectManager() && resource.data.subjectTier == 1);
       allow create: if (isConfigAdmin() || isProjectManager() || isAuthorizedTechLead()) &&
         request.resource.data.reviewerId is string &&
