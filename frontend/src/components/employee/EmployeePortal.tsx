@@ -1418,7 +1418,9 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                           ? 'border-purple-500/60 bg-gradient-to-b from-purple-950/40 to-slate-900 text-purple-300 shadow-purple-950/50'
                           : checkInEligibility.reason === 'OFFICIAL_HOLIDAY'
                             ? 'border-amber-500/60 bg-gradient-to-b from-amber-950/40 to-slate-900 text-amber-300 shadow-amber-950/50'
-                            : 'border-blue-500/60 bg-gradient-to-b from-blue-950/40 to-slate-900 text-blue-300 shadow-blue-950/50'
+                            : checkInEligibility.reason === 'EXEMPT'
+                              ? 'border-purple-500/60 bg-gradient-to-b from-purple-950/40 to-slate-900 text-purple-300 shadow-purple-950/50'
+                              : 'border-blue-500/60 bg-gradient-to-b from-blue-950/40 to-slate-900 text-blue-300 shadow-blue-950/50'
                           }`}>
                           {checkInEligibility.reason === 'ON_LEAVE' ? (
                             <>
@@ -1436,6 +1438,14 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                                 {checkInEligibility.holidayName || 'Official Holiday'}
                               </span>
                             </>
+                          ) : checkInEligibility.reason === 'EXEMPT' ? (
+                            <>
+                              <ShieldCheck className="w-10 h-10 mb-1.5 text-purple-400" />
+                              <span className="font-extrabold text-sm tracking-wide text-white">Admin Operations</span>
+                              <span className="text-[10px] font-bold text-purple-300 mt-1 bg-purple-500/20 px-2.5 py-0.5 rounded-full border border-purple-500/30">
+                                Check-In Exempt
+                              </span>
+                            </>
                           ) : (
                             <>
                               <Calendar className="w-10 h-10 mb-1.5 text-blue-400" />
@@ -1450,7 +1460,9 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                           ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
                           : checkInEligibility.reason === 'OFFICIAL_HOLIDAY'
                             ? 'bg-amber-500/10 border-amber-500/30 text-amber-300'
-                            : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
+                            : checkInEligibility.reason === 'EXEMPT'
+                              ? 'bg-purple-500/10 border-purple-500/30 text-purple-300'
+                              : 'bg-blue-500/10 border-blue-500/30 text-blue-300'
                           }`}>
                           {checkInEligibility.message}
                         </div>
