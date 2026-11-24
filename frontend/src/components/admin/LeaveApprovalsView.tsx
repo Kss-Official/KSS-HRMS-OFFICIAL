@@ -149,7 +149,7 @@ export const LeaveApprovalsView: React.FC = () => {
         triggerHaptic('medium');
 
         await markLeaveRequestCeoApprovalNeeded(req.id);
-        toast.info(`📋 Status updated to "CEO Approval Needed" for ${req.employeeName}. Slide again within 10s to directly Approve & bypass CEO.`, {
+        toast.info(`📋 Status updated to "CEO Approval Needed" for ${req.employeeName}. Swipe again to directly Approve & bypass CEO.`, {
           duration: 6000,
         });
       }
@@ -576,11 +576,7 @@ export const LeaveApprovalsView: React.FC = () => {
                     <div className="absolute top-4 right-4 flex items-center gap-2 opacity-75 hidden md:flex">
                       <ChevronLeft className="w-4 h-4 text-[var(--accent-rose)]" />
                       <span className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">
-                        {isCto
-                          ? (req.ctoStatus === 'CEO Approval Needed' || ctoPendingSlideId[req.id]
-                              ? 'Slide again to Approve (Bypass CEO)'
-                              : 'Slide once: CEO Approval Needed • Double slide: Direct Approve')
-                          : 'Swipe to action'}
+                        Swipe to action
                       </span>
                       <ChevronRight className="w-4 h-4 text-[var(--accent-emerald)]" />
                     </div>
@@ -664,10 +660,10 @@ export const LeaveApprovalsView: React.FC = () => {
                   {canPerformStageAction(req) ? (
                     <div className="flex items-center gap-3 mt-2">
                       <button
-                        onClick={() => handleReject(req.id, getActivePendingStage(req))}
+                        onClick={() => handleReject(req.id, isCto ? 'CTO' : getActivePendingStage(req))}
                         className="flex-1 py-3 bg-[var(--accent-rose)]/10 text-[var(--accent-rose)] border border-[var(--accent-rose)]/20 rounded-xl font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-all hover:bg-[var(--accent-rose)]/20 cursor-pointer"
                       >
-                        <X className="w-4 h-4" /> Reject ({getActivePendingStage(req)} Stage)
+                        <X className="w-4 h-4" /> Reject ({isCto ? 'CTO' : getActivePendingStage(req)} Stage)
                       </button>
                       <button
                         onClick={() => {
@@ -683,7 +679,7 @@ export const LeaveApprovalsView: React.FC = () => {
                           isCto
                             ? (req.ctoStatus === 'CEO Approval Needed' || ctoPendingSlideId[req.id]
                                 ? 'Approve (Bypass CEO)'
-                                : 'Slide 1: CEO Approval Needed')
+                                : 'Approve (CTO Stage)')
                             : `Approve (${getActivePendingStage(req)} Stage)`
                         }
                       </button>
