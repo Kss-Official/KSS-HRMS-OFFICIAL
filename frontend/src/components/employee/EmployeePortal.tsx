@@ -804,8 +804,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     ? calculateGpsDistanceMeters(gpsLocation.lat, gpsLocation.lon, companyWorkZone.latitude, companyWorkZone.longitude)
     : null;
 
+  const allowedRadiusMeters = Math.max(companyWorkZone?.radiusMeters || 500, settings?.allowedRadiusMeters || 500, 500);
+
   const isVerifiedLocation = liveDistanceMeters !== null
-    ? liveDistanceMeters <= companyWorkZone.radiusMeters
+    ? liveDistanceMeters <= allowedRadiusMeters
     : false;
 
   // GPS location verification is enforced for check-in, check-out AND every break
@@ -894,7 +896,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
       if (liveDistanceMeters !== null && !isVerifiedLocation) {
         triggerHaptic('error');
-        const msg = `Check-In Blocked: You are ${liveDistanceMeters}m away from the office (Allowed limit: ${companyWorkZone.radiusMeters}m). You must check in at the company office location.`;
+        const msg = `Check-In Blocked: You are ${liveDistanceMeters}m away from the office (Allowed limit: ${allowedRadiusMeters}m). You must check in at the company office location.`;
         toast.error(msg);
         setActionFeedback({
           success: false,
@@ -2472,13 +2474,13 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                       Location-Based Attendance Verification
                     </h3>
                     <p className="text-[11px] text-slate-400 mt-0.5">
-                      Check-in is verified using GPS within the permitted {companyWorkZone.radiusMeters}m office radius.
+                      Check-in is verified using GPS within the permitted {allowedRadiusMeters}m office radius.
                     </p>
                   </div>
 
                   <span className="px-3 py-1 rounded-full text-xs font-extrabold flex items-center gap-1.5 border bg-emerald-500/10 text-emerald-400 border-emerald-500/30">
                     <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" />
-                    <span>GPS Radius Active ({companyWorkZone.radiusMeters}m)</span>
+                    <span>GPS Radius Active ({allowedRadiusMeters}m)</span>
                   </span>
                 </div>
 
