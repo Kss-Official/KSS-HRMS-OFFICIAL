@@ -717,6 +717,7 @@ export function isShiftComplete(
   nowMs: number = Date.now()
 ): boolean {
   if (!rec || !rec.checkInAt || !rec.checkOutAt) return false;
+  if (isFabricatedCheckoutOnly(rec.checkOutAt)) return false;
   const outMs = safeGetTimestampMillis(rec.checkOutAt);
   // Allow 60s tolerance for server timestamp clock skew
   return outMs !== null && outMs <= (nowMs + 60000);
@@ -967,6 +968,16 @@ export function formatTimestampToISO(val: any): string | null {
   if (val instanceof Date && !isNaN(val.getTime())) {
     return val.toISOString();
   }
+  // Support Firestore FieldValue.serverTimestamp() / transform sentinels before server round-trip
+  if (val && typeof val === 'object') {
+    if (
+      val._methodName === 'serverTimestamp' ||
+      (val.constructor && (val.constructor.name === 'ServerTimestampTransform' || val.constructor.name === 'FieldValue')) ||
+      (typeof val.isEqual === 'function' && !('seconds' in val))
+    ) {
+      return new Date().toISOString();
+    }
+  }
   return null;
 }
 
@@ -979,6 +990,16 @@ export function safeGetTimestampMillis(val: any): number | null {
   if (typeof val === 'number') {
     if (isNaN(val) || val <= 0) return null;
     return val < 1e11 ? val * 1000 : val;
+  }
+  // Support Firestore FieldValue.serverTimestamp() sentinels
+  if (val && typeof val === 'object') {
+    if (
+      val._methodName === 'serverTimestamp' ||
+      (val.constructor && (val.constructor.name === 'ServerTimestampTransform' || val.constructor.name === 'FieldValue')) ||
+      (typeof val.isEqual === 'function' && !('seconds' in val))
+    ) {
+      return Date.now();
+    }
   }
   const iso = formatTimestampToISO(val);
   if (!iso) return null;
@@ -1480,10 +1501,10 @@ export function evaluateAttendanceScan(
     if (userLat === undefined || userLon === undefined) {
       locationVerified = false;
     } else {
-      const officeLat = settings.officeLatitude || 12.915000;
+      const officeLat = settings.officeLatitude || 13.014333;
       const officeLon = settings.officeLongitude || 77.646000;
       distanceMeters = calculateGpsDistanceMeters(userLat, userLon, officeLat, officeLon);
-      const allowedRadius = settings.allowedRadiusMeters || 300;
+      const allowedRadius = Math.max(settings.allowedRadiusMeters || 500, 500);
       if (distanceMeters > allowedRadius) {
         locationVerified = false;
       }
@@ -1551,7 +1572,7 @@ export function evaluateAttendanceScan(
         };
       }
 
-      const radius = settings.allowedRadiusMeters || 300;
+      const radius = Math.max(settings.allowedRadiusMeters || 500, 500);
       return {
         allowed: false,
         action: 'CHECK_IN',

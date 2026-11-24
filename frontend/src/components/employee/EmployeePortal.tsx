@@ -262,14 +262,35 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
 
   // Canonical Work-day date in employee timezone
   const todayStr = getEmployeeWorkDate(new Date());
+
+  // Latch for immediate, zero-flicker checkout completion in the current browser session
+  const [sessionCheckedOutDate, setSessionCheckedOutDate] = useState<string | null>(() => {
+    try {
+      return localStorage.getItem(`kss_checked_out_${activeEmployee?.id}_${todayStr}`) === 'true' ? todayStr : null;
+    } catch {
+      return null;
+    }
+  });
+
   // ROOT-CAUSE FIX: canonical resolver — prefers the Firestore doc the backend
   // transactions actually write to ({uid}_{date}) and any duplicate that has a real
   // checkInAt, so the UI can never render a stale blank duplicate after check-in.
-  const todayRecord = resolveAttendanceRecord(attendance, activeEmployee, todayStr);
+  const rawTodayRecord = resolveAttendanceRecord(attendance, activeEmployee, todayStr);
+  const todayRecord = React.useMemo(() => {
+    if (sessionCheckedOutDate === todayStr && rawTodayRecord && !rawTodayRecord.checkOutAt) {
+      const coIso = new Date().toISOString();
+      return {
+        ...rawTodayRecord,
+        checkOutAt: coIso,
+        breaks: (rawTodayRecord.breaks || []).map((b: any) => (!b.endAt && !b.endTime ? { ...b, endAt: coIso, endTime: coIso } : b))
+      };
+    }
+    return rawTodayRecord;
+  }, [rawTodayRecord, sessionCheckedOutDate, todayStr]);
 
   // P0 FIX: SHIFT_COMPLETE only when today's checkout exists AND is not in the
   // future (a pre-written/fabricated checkout must never complete a shift).
-  const shiftComplete = isShiftComplete(todayRecord);
+  const shiftComplete = isShiftComplete(todayRecord) || (sessionCheckedOutDate === todayStr && !!todayRecord?.checkInAt);
 
   const rawHistory = attendance.filter(a => isAttendanceForEmployee(a, activeEmployee));
 
@@ -963,6 +984,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
       toast.success(res.message || 'Checked out successfully.');
       setActiveBreak(null);
       lastBreakActionRef.current = null;
+      setSessionCheckedOutDate(todayStr);
+      try {
+        localStorage.setItem(`kss_checked_out_${activeEmployee?.id}_${todayStr}`, 'true');
+      } catch {}
     } else {
       triggerHaptic('error');
       toast.error(res.message || 'Check-Out failed.');

@@ -47,7 +47,8 @@ import {
   COMPANY_TIMEZONE,
   COMPANY_START_DATE,
   isWfhType,
-  isExecutiveOrLeadership
+  isExecutiveOrLeadership,
+  isFabricatedCheckoutOnly
 } from '../lib/attendanceEngine';
 import { runAttendanceMigration } from '../lib/attendanceMigration';
 import { classifyError, shouldFallbackToLocalLogin } from '../lib/errors';
@@ -973,9 +974,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     return {
       name: 'Kalpanaaa Software Solutions HQ',
-      latitude: INITIAL_COMPANY_SETTINGS.officeLatitude || 13.014316,
-      longitude: INITIAL_COMPANY_SETTINGS.officeLongitude || 77.64052,
-      radiusMeters: INITIAL_COMPANY_SETTINGS.allowedRadiusMeters || 100,
+      latitude: INITIAL_COMPANY_SETTINGS.officeLatitude || 13.014333,
+      longitude: INITIAL_COMPANY_SETTINGS.officeLongitude || 77.646000,
+      radiusMeters: Math.max(INITIAL_COMPANY_SETTINGS.allowedRadiusMeters || 500, 500),
       active: true,
       updatedBy: 'System Init',
       updatedAt: new Date().toISOString()
@@ -2631,15 +2632,37 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 return rBreaks;
               })();
 
-              // CHECKOUT ROOT FIX: The canonical doc is authoritative for checkOutAt.
-              // When an admin undos checkout (checkOutAt = null), we MUST NOT fall back
-              // to a stale checkOutAt from a duplicate document via `richer || poorer`.
-              const finalCheckOutAt = canonicalRec && canonicalRec.checkInAt !== undefined
-                ? (canonicalRec.checkOutAt || null)
-                : (richer.checkOutAt || null);
+              // CHECKOUT PRESERVATION FIX: A real, confirmed checkout timestamp must NEVER
+              // be erased by a lagging duplicate or un-updated canonical document.
+              const anyValidCheckout = (canonicalRec?.checkOutAt && !isFabricatedCheckoutOnly(canonicalRec.checkOutAt))
+                ? canonicalRec.checkOutAt
+                : (rec.checkOutAt && !isFabricatedCheckoutOnly(rec.checkOutAt))
+                  ? rec.checkOutAt
+                  : (existing.checkOutAt && !isFabricatedCheckoutOnly(existing.checkOutAt))
+                    ? existing.checkOutAt
+                    : (richer.checkOutAt && !isFabricatedCheckoutOnly(richer.checkOutAt))
+                      ? richer.checkOutAt
+                      : (poorer.checkOutAt && !isFabricatedCheckoutOnly(poorer.checkOutAt))
+                        ? poorer.checkOutAt
+                        : null;
+
+              const finalCheckOutAt = anyValidCheckout;
 
               const finalStatus = canonicalRec?.status || richer.status || poorer.status || 'Present';
               const finalCheckInAt = canonicalRec?.checkInAt || richer.checkInAt || poorer.checkInAt;
+
+              // Ensure all breaks are closed if checked out
+              const sanitizedBreaks = finalCheckOutAt
+                ? canonicalBreaks.map((b: any) => {
+                    if (!b.endAt && !b.endTime) {
+                      const coIso = formatTimestampToISO(finalCheckOutAt) || new Date().toISOString();
+                      const startIso = formatTimestampToISO(b.startAt || b.startTime) || coIso;
+                      const dur = Math.max(1, Math.round((new Date(coIso).getTime() - new Date(startIso).getTime()) / 60000));
+                      return { ...b, endAt: coIso, endTime: coIso, durationMinutes: dur };
+                    }
+                    return b;
+                  })
+                : canonicalBreaks;
 
               const merged: AttendanceRecord = {
                 ...poorer,
@@ -2648,7 +2671,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 checkInAt: finalCheckInAt,
                 checkOutAt: finalCheckOutAt,
                 status: finalStatus,
-                breaks: canonicalBreaks,
+                breaks: sanitizedBreaks,
                 workingMinutes: finalCheckOutAt ? Math.max(existing.workingMinutes || 0, rec.workingMinutes || 0) : (canonicalRec?.workingMinutes ?? 0),
                 totalBreakMinutes: Math.max(existing.totalBreakMinutes || 0, rec.totalBreakMinutes || 0)
               };
@@ -5618,9 +5641,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const effectiveSettings: CompanySettings = {
       ...settings,
-      officeLatitude: companyWorkZone.latitude,
-      officeLongitude: companyWorkZone.longitude,
-      allowedRadiusMeters: isPmOrLeadership ? Math.max(companyWorkZone.radiusMeters, 500) : companyWorkZone.radiusMeters,
+      officeLatitude: companyWorkZone.latitude || 13.014333,
+      officeLongitude: companyWorkZone.longitude || 77.646000,
+      allowedRadiusMeters: Math.max(companyWorkZone.radiusMeters || 500, settings.allowedRadiusMeters || 500, 500),
       gpsRequired: !isAdminCheckIn && settings.gpsRequired !== false
     };
 
@@ -5934,7 +5957,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const isApprovedWfh = isApprovedWfhToday(emp, todayStr);
 
     let coords = (lat !== undefined && lon !== undefined) ? { lat, lon } : null;
-    if (!coords && !isApprovedWfh && settings.gpsRequired !== false) {
+    // Fast-path: If employee already has an active check-in on record, avoid stalling for 3s on GPS acquisition
+    if (!coords && !isApprovedWfh && settings.gpsRequired !== false && !existingRec?.checkInAt) {
       coords = await getCurrentPositionOrNull();
     }
     const finalLat = coords?.lat ?? lat;
@@ -6039,11 +6063,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
           const firestorePayload = cleanFirestorePayload({
-            checkOutAt: serverTimestamp(),
+            authUid: auth.currentUser.uid,
+            employeeUid: empUid,
+            uid: empUid,
+            employeeId: emp.id,
+            employeeCode: emp.employeeId,
+            email: emp.email || user?.email || '',
+            employeeEmail: emp.email || user?.email || '',
+            date: todayStr,
+            checkInAt: existingRec?.checkInAt || checkOutIso,
+            checkOutAt: checkOutIso,
             workingMinutes: resolvedRecord.workingMinutes,
             breaks: closedBreaks,
             totalBreakMinutes: finalBreakMins,
-            updatedAt: serverTimestamp()
+            updatedAt: checkOutIso
           });
           setDoc(doc(db, 'attendance', recordId), firestorePayload, { merge: true }).catch(() => {});
           if (canonicalId && canonicalId !== recordId) {
@@ -6165,7 +6198,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // The subsequent real snapshot will reconcile any minor timestamp drift.
       const checkOutIso = new Date().toISOString();
       setAttendance(prev => prev.map(a => {
-        if (a.id !== recordId) return a;
+        const isMatch = a.id === recordId || a.id === canonicalId ||
+          (a.date === todayStr && (a.employeeId === employeeId || a.employeeId === emp.id || a.employeeCode === emp.employeeId));
+        if (!isMatch) return a;
         return {
           ...a,
           checkOutAt: checkOutIso,
@@ -6176,7 +6211,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             ? txResult.data.breaks.map((b: any) => ({
                 type: b.type,
                 startAt: formatTimestampToISO(b.startAt || b.startTime) || '',
-                endAt: formatTimestampToISO(b.endAt || b.endTime),
+                endAt: formatTimestampToISO(b.endAt || b.endTime) || checkOutIso,
                 durationMinutes: Number(b.durationMinutes) || 0
               }))
             : a.breaks,
@@ -6186,6 +6221,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           updatedAt: checkOutIso
         };
       }));
+
+      if (canonicalId && canonicalId !== recordId && auth.currentUser) {
+        setDoc(doc(db, 'attendance', canonicalId), cleanFirestorePayload({
+          authUid: auth.currentUser.uid,
+          employeeUid: empUid,
+          uid: empUid,
+          employeeId: emp.id,
+          employeeCode: emp.employeeId,
+          email: emp.email || user?.email || '',
+          employeeEmail: emp.email || user?.email || '',
+          date: todayStr,
+          checkInAt: existingRec?.checkInAt || checkOutIso,
+          checkOutAt: checkOutIso,
+          workingMinutes: typeof txResult.data.workingMinutes === 'number' ? txResult.data.workingMinutes : 0,
+          breaks: txResult.data.breaks || [],
+          totalBreakMinutes: txResult.data.totalBreakMinutes || 0,
+          updatedAt: checkOutIso
+        }), { merge: true }).catch(() => {});
+      }
 
       if (getAuthToken()) {
         checkOutApi({
@@ -6333,9 +6387,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           });
           const updatedBreaks = [...curBreaks, confirmedBreak];
           const firestoreBreakPayload = cleanFirestorePayload({
+            authUid: auth.currentUser.uid,
+            employeeUid: empUid,
+            uid: empUid,
+            employeeId: emp?.id || employeeId,
+            employeeCode: emp?.employeeId || employeeId,
+            date: todayStr,
+            checkInAt: existingRec?.checkInAt || null,
             breaks: updatedBreaks,
             totalBreakMinutes: calculateTotalBreakMinutes(updatedBreaks),
-            updatedAt: serverTimestamp()
+            updatedAt: nowISO
           });
           setDoc(doc(db, 'attendance', recordId), firestoreBreakPayload, { merge: true }).catch(() => {});
           if (canonicalId && canonicalId !== recordId) {
@@ -6552,9 +6613,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
         const firestoreEndPayload = cleanFirestorePayload({
+          authUid: auth.currentUser.uid,
+          employeeUid: empUid,
+          uid: empUid,
+          employeeId: emp?.id || employeeId,
+          employeeCode: emp?.employeeId || employeeId,
+          date: todayStr,
+          checkInAt: existingRec?.checkInAt || null,
           breaks: closedBreaks,
           totalBreakMinutes: totalBreakMins,
-          updatedAt: serverTimestamp()
+          updatedAt: nowISO
         });
         setDoc(doc(db, 'attendance', recordId), firestoreEndPayload, { merge: true }).catch(() => {});
         if (canonicalId && canonicalId !== recordId) {
