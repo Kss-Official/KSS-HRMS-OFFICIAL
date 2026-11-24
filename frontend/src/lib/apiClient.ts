@@ -617,7 +617,7 @@ export async function applyLeaveApi(payload: {
 
 export async function reviewLeaveApi(
   leaveId: string, 
-  action: 'APPROVED' | 'REJECTED', 
+  action: 'APPROVED' | 'REJECTED' | 'WAITING_CEO' | 'CEO_APPROVAL_NEEDED', 
   notes?: string
 ): Promise<any> {
   return apiRequest(`/leaves/${encodeURIComponent(leaveId)}/review`, {

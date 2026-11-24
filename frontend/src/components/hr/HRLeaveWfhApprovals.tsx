@@ -277,7 +277,12 @@ export const HRLeaveWfhApprovals: React.FC = () => {
                     <span className={`px-2 py-0.5 rounded border ${ceoState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' : ceoState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' : 'bg-purple-950/60 text-purple-400 border-purple-500/30'}`}>
                       CEO: {ceoState}
                     </span>
-                    <span className={`px-2 py-0.5 rounded border ${ctoState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' : ctoState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' : 'bg-cyan-950/60 text-cyan-400 border-cyan-500/30'}`}>
+                    <span className={`px-2 py-0.5 rounded border ${
+                      ctoState === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
+                      ctoState === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
+                      ctoState === 'CEO Approval Needed' ? 'bg-amber-950/60 text-amber-400 border-amber-500/30 font-extrabold' :
+                      'bg-cyan-950/60 text-cyan-400 border-cyan-500/30'
+                    }`}>
                       CTO: {ctoState}
                     </span>
                   </div>

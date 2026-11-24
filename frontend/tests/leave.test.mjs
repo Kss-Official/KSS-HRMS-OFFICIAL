@@ -724,4 +724,73 @@ test('Leave: preserves employee-specific balances and adjustments (Asbin T S 10 
   assert.equal(totalRes.totalBalance, 10, 'Asbin Total Available Balance preserved at 10 Days');
 });
 
+// ── Test 22: CTO Approval Logic (Single-Slide & Double-Slide) ────────────────
+test('Leave: CTO Slide 1 sets "CEO Approval Needed" (remains Pending) and Slide 2 directly Approves (CEO Bypassed)', () => {
+  // Mock Leave Request in initial state
+  const req = {
+    id: 'req-cto-test-1',
+    employeeId: 'KSS2407010',
+    employeeName: 'Prahlad sharma',
+    type: 'WFH',
+    status: 'Pending',
+    ceoStatus: 'Pending',
+    ctoStatus: 'Pending'
+  };
+
+  // State tracker mimicking handleCtoSlideAction logic
+  let tracker = { time: 0, count: 0 };
+  let currentReq = { ...req };
+  const debounceMs = 350;
+  const doubleSlideWindowMs = 10000;
+
+  function simulateCtoSlide(timestamp) {
+    if (tracker.time > 0 && timestamp - tracker.time < debounceMs) {
+      return { action: 'DEBOUNCED', state: currentReq };
+    }
+
+    const isSecondSlide = (tracker.time > 0 && (timestamp - tracker.time < doubleSlideWindowMs) && tracker.count >= 1) ||
+                          currentReq.ctoStatus === 'CEO Approval Needed';
+
+    if (isSecondSlide) {
+      tracker = { time: timestamp, count: 2 };
+      currentReq = {
+        ...currentReq,
+        status: 'Approved',
+        ceoStatus: 'Approved',
+        ctoStatus: 'Approved',
+        reviewedBy: 'Gaurav Kumar Tripathi (CTO Direct Approval / CEO Bypassed)',
+        reviewNotes: 'Directly sanctioned by CTO (CEO approval bypassed)'
+      };
+      return { action: 'DIRECT_APPROVED', state: currentReq };
+    } else {
+      tracker = { time: timestamp, count: 1 };
+      currentReq = {
+        ...currentReq,
+        ctoStatus: 'CEO Approval Needed',
+        status: 'Pending'
+      };
+      return { action: 'WAITING_CEO', state: currentReq };
+    }
+  }
+
+  // 1. Accidental micro-bounce guard (< 350ms)
+  const t0 = 1000;
+  const slide1 = simulateCtoSlide(t0);
+  assert.equal(slide1.action, 'WAITING_CEO', 'First slide must set waiting CEO');
+  assert.equal(slide1.state.ctoStatus, 'CEO Approval Needed', 'ctoStatus must be "CEO Approval Needed"');
+  assert.equal(slide1.state.status, 'Pending', 'Overall status remains Pending');
+
+  const bounce = simulateCtoSlide(t0 + 100); // 100ms later (gesture bounce)
+  assert.equal(bounce.action, 'DEBOUNCED', 'Bounce within 350ms is discarded');
+  assert.equal(bounce.state.ctoStatus, 'CEO Approval Needed', 'State is unchanged on bounce');
+
+  // 2. Second slide within 10s -> Directly Approved, bypassing CEO
+  const t2 = t0 + 1200; // 1.2s later
+  const slide2 = simulateCtoSlide(t2);
+  assert.equal(slide2.action, 'DIRECT_APPROVED', 'Second slide must trigger direct approval');
+  assert.equal(slide2.state.status, 'Approved', 'Overall status must now be Approved');
+  assert.equal(slide2.state.ctoStatus, 'Approved', 'CTO status must be Approved');
+  assert.equal(slide2.state.ceoStatus, 'Approved', 'CEO status must be Approved (bypassed)');
+});
+
 

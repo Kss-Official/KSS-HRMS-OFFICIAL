@@ -24,6 +24,8 @@ class ExecutiveLeaveReview(BaseModel):
                 return ApprovalStatus.APPROVED
             if clean in ("REJECT", "REJECTED"):
                 return ApprovalStatus.REJECTED
+            if clean in ("WAITING_CEO", "CEO_APPROVAL_NEEDED", "CEO APPROVAL NEEDED"):
+                return ApprovalStatus.WAITING_CEO
         return v
 
 class LeaveReviewRequest(ExecutiveLeaveReview):

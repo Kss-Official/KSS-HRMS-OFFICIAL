@@ -313,3 +313,21 @@ test('the client tier ladder and the rules tier ladder agree', async () => {
   // The PM read clause is a literal, so it has to track TIER_EMPLOYEE too.
   assert.match(rules, new RegExp('resource\\.data\\.subjectTier == ' + hierarchy.TIER_EMPLOYEE));
 });
+
+test('CTO cross-device boot & refresh protection prevents employee portal flapping', async () => {
+  const authContext = await readRepoFile('frontend/src/context/AuthContext.tsx');
+  const appSrc = await readRepoFile('frontend/src/App.tsx');
+
+  // 1. Synchronous auth identity detection on boot
+  assert.match(authContext, /getActiveAuthIdentityOnBoot/);
+
+  // 2. Discarding stale mismatched employee cache when CTO logs in or boots
+  assert.match(authContext, /Mismatched cached employee detected on CTO boot/);
+
+  // 3. Fast-path resolution for CTO and CEO avoiding slow Firestore waterfall
+  assert.match(authContext, /Fast-path resolution for CTO and CEO/);
+
+  // 4. App.tsx sanitizes emp_* tabs away from SUPER_ADMIN & Executive Leadership
+  assert.match(appSrc, /tab\.startsWith\('emp_'\)/);
+  assert.match(appSrc, /roleToUse === 'SUPER_ADMIN'/);
+});

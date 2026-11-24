@@ -68,7 +68,6 @@ import { toISTTimeString, todayInIST } from '../../lib/absoluteTime';
 import { ResponsiveContainer, PieChart, Pie, Cell, Tooltip } from 'recharts';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
 import { useHaptic } from '../../hooks/useHaptic';
-import { PMAttendanceCycleSection } from './PMAttendanceCycleSection';
 import { PMLeaveManagement } from './PMLeaveManagement';
 import { PMWorkSchedule } from './PMWorkSchedule';
 
@@ -1393,10 +1392,6 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
           </table>
         </div>
       </div>
-
-      {/* ── 3.5. EXECUTIVE ATTENDANCE & SALARY DISBURSEMENT STATEMENT (26TH TO 26TH) ── */}
-      <PMAttendanceCycleSection />
-
 
       {/* ── 4. FULL LIVE WORKFORCE ROSTER TABLE MODAL ── */}
       {isRosterModalOpen && (

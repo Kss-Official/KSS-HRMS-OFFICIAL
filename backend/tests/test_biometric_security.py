@@ -261,6 +261,10 @@ async def test_biometric_end_to_end_security():
         finally:
             # CLEANUP: strictly delete ONLY the two test employees and their test records
             async with AsyncSessionLocal() as db:
+                from app.models.audit import AuditLog
+                await db.execute(delete(AuditLog).where(
+                    AuditLog.actor_id.in_([test_a_id, test_b_id])
+                ))
                 await db.execute(delete(AttendanceRecord).where(
                     AttendanceRecord.employee_id.in_([test_a_id, test_b_id])
                 ))

@@ -356,6 +356,7 @@ interface AuthContextType {
   submitLeaveRequest: (data: Omit<LeaveRequest, 'id' | 'status' | 'requestDate' | 'createdAt' | 'updatedAt'>) => Promise<{ success: boolean; id: string; message: string }>;
   updateLeaveRequestStatus: (id: string, status: 'Approved' | 'Rejected', reviewedBy: string, reviewNotes?: string, targetStage?: 'PM' | 'HR' | 'CEO' | 'CTO') => void;
   updateLeaveRequestStage: (id: string, stage: 'PM' | 'HR' | 'CEO' | 'CTO', decision: 'Approved' | 'Rejected', reviewerName: string, notes?: string, employeeId?: string, startDate?: string, endDate?: string) => Promise<void>;
+  markLeaveRequestCeoApprovalNeeded: (id: string) => Promise<void>;
   cancelLeaveRequest: (id: string, employeeId?: string, startDate?: string, endDate?: string) => Promise<void>;
   loginWithEmail: (email: string, pass: string) => Promise<{ success: boolean; message: string }>;
   quickDemoLogin: (role: UserRole | 'CEO' | 'CTO') => void;
@@ -534,9 +535,87 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     localStorage.removeItem('kss_v1_session_id');
     localStorage.removeItem('kss_v1_session_timestamp');
   };
+
+  // ── Synchronous Boot Identity Resolver (Prevents Cross-Device Portal Bleed) ──
+  const getActiveAuthIdentityOnBoot = (): {
+    email?: string;
+    uid?: string;
+    employeeCode?: string;
+    role?: UserRole;
+    isCtoOrCeo?: boolean;
+    isCto?: boolean;
+    isCeo?: boolean;
+  } | null => {
+    if (typeof window === 'undefined') return null;
+
+    // 1. Check FastAPI JWT token first
+    try {
+      const jwt = localStorage.getItem('kalpanaaa_jwt_token');
+      if (jwt && !isTokenExpired(jwt)) {
+        const payload = JSON.parse(atob(jwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
+        const email = payload.email?.toLowerCase()?.trim();
+        const code = payload.employee_code || (payload.sub && payload.sub.startsWith('KSS') ? payload.sub : undefined);
+        const isCto = code === 'KSS2407001' || code === 'CTO001' || email?.includes('founder') || email?.includes('gaurav') || email === 'cto@kalpanaaa.in';
+        const isCeo = code === 'KSS2407002' || code === 'CEO001' || email?.includes('akshit') || email === 'ceo@kalpanaaa.in';
+        return {
+          email,
+          uid: payload.sub,
+          employeeCode: code,
+          role: (isCto || isCeo) ? 'SUPER_ADMIN' : (payload.role as UserRole),
+          isCtoOrCeo: isCto || isCeo,
+          isCto,
+          isCeo
+        };
+      }
+    } catch {}
+
+    // 2. Check Firebase Auth local persistence (localStorage keys starting with firebase:authUser:)
+    try {
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key && key.startsWith('firebase:authUser:')) {
+          const raw = localStorage.getItem(key);
+          if (raw) {
+            const fbData = JSON.parse(raw);
+            if (fbData && (fbData.email || fbData.uid)) {
+              const email = fbData.email?.toLowerCase()?.trim();
+              const isCto = email?.includes('founder') || email?.includes('gaurav') || email === 'cto@kalpanaaa.in';
+              const isCeo = email?.includes('akshit') || email === 'ceo@kalpanaaa.in';
+              return {
+                email,
+                uid: fbData.uid,
+                role: (isCto || isCeo) ? 'SUPER_ADMIN' : undefined,
+                isCtoOrCeo: isCto || isCeo,
+                isCto,
+                isCeo
+              };
+            }
+          }
+        }
+      }
+    } catch {}
+
+    // 3. Fallback to kss_v1_session_email
+    const savedEmail = (localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
+    if (savedEmail) {
+      const isCto = savedEmail.includes('founder') || savedEmail.includes('gaurav') || savedEmail === 'cto@kalpanaaa.in';
+      const isCeo = savedEmail.includes('akshit') || savedEmail === 'ceo@kalpanaaa.in';
+      return {
+        email: savedEmail,
+        role: (isCto || isCeo) ? 'SUPER_ADMIN' : undefined,
+        isCtoOrCeo: isCto || isCeo,
+        isCto,
+        isCeo
+      };
+    }
+
+    return null;
+  };
+
   const isSessionValidOnBoot = (): boolean => {
     const savedSessionId = localStorage.getItem('kss_v1_session');
-    if (!savedSessionId) return false;
+    const authIdentity = getActiveAuthIdentityOnBoot();
+    if (!savedSessionId && !authIdentity) return false;
     const timestampStr = localStorage.getItem('kss_v1_session_timestamp');
     if (!timestampStr) {
       // If session exists without a timestamp, backfill current timestamp instead of destructive wipe
@@ -554,15 +633,84 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Synchronous session restore for activeEmployee
   const [activeEmployee, setActiveEmployee] = useState<Employee | null>(() => {
     if (!isSessionValidOnBoot()) return null;
+    const authIdentity = getActiveAuthIdentityOnBoot();
     const savedSessionId = localStorage.getItem('kss_v1_session');
-    const savedEmail = localStorage.getItem('kss_v1_session_email');
+    const savedEmail = (authIdentity?.email || localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
+
+    // 0. SPECIALIZED EXECUTIVE BOOT: If active authenticated identity is CTO (Gaurav Kumar Tripathi),
+    // immediately restore CTO profile at 0ms and purge any stale non-CTO cache (e.g. Akash SB)
+    if (
+      authIdentity?.isCto ||
+      savedEmail.includes('founder') ||
+      savedEmail.includes('gaurav') ||
+      savedEmail === 'cto@kalpanaaa.in' ||
+      savedSessionId === 'KSS2407001' ||
+      savedSessionId === 'emp-KSS2407001' ||
+      savedSessionId === 'CTO001'
+    ) {
+      // Discard any stale employee cache belonging to a different user
+      const cachedActiveStr = localStorage.getItem('kss_v1_cached_active_employee');
+      if (cachedActiveStr) {
+        try {
+          const parsed = JSON.parse(cachedActiveStr);
+          if (parsed && parsed.employeeId !== 'KSS2407001' && parsed.employeeId !== 'CTO001') {
+            console.warn('[Auth] Mismatched cached employee detected on CTO boot (purging stale cache):', parsed.fullName);
+            localStorage.removeItem('kss_v1_cached_active_employee');
+            localStorage.removeItem('kss_v1_attendance');
+            localStorage.setItem('kss_active_tab', 'dashboard');
+          }
+        } catch {}
+      }
+      const ctoProfile = INITIAL_EMPLOYEES.find(e => e.employeeId === 'KSS2407001') || INITIAL_EMPLOYEES[0];
+      const copy = { ...ctoProfile, role: 'SUPER_ADMIN' as UserRole };
+      try {
+        localStorage.setItem('kss_v1_session', copy.id);
+        localStorage.setItem('kss_v1_session_email', copy.email.toLowerCase());
+        localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(copy));
+      } catch {}
+      return copy;
+    }
+
+    // 0b. SPECIALIZED EXECUTIVE BOOT: CEO (Akshit Ujjain)
+    if (
+      authIdentity?.isCeo ||
+      savedEmail.includes('akshit') ||
+      savedEmail === 'ceo@kalpanaaa.in' ||
+      savedSessionId === 'KSS2407002' ||
+      savedSessionId === 'emp-KSS2407002' ||
+      savedSessionId === 'CEO001'
+    ) {
+      const cachedActiveStr = localStorage.getItem('kss_v1_cached_active_employee');
+      if (cachedActiveStr) {
+        try {
+          const parsed = JSON.parse(cachedActiveStr);
+          if (parsed && parsed.employeeId !== 'KSS2407002' && parsed.employeeId !== 'CEO001') {
+            localStorage.removeItem('kss_v1_cached_active_employee');
+            localStorage.removeItem('kss_v1_attendance');
+            localStorage.setItem('kss_active_tab', 'dashboard');
+          }
+        } catch {}
+      }
+      const ceoProfile = INITIAL_EMPLOYEES.find(e => e.employeeId === 'KSS2407002') || INITIAL_EMPLOYEES[1];
+      const copy = { ...ceoProfile, role: 'SUPER_ADMIN' as UserRole };
+      try {
+        localStorage.setItem('kss_v1_session', copy.id);
+        localStorage.setItem('kss_v1_session_email', copy.email.toLowerCase());
+        localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(copy));
+      } catch {}
+      return copy;
+    }
 
     // 1. Direct cached active employee profile (0ms instant boot)
     const cachedActive = localStorage.getItem('kss_v1_cached_active_employee');
     if (cachedActive) {
       try {
         const parsed = JSON.parse(cachedActive) as Employee;
-        if (parsed && (parsed.id === savedSessionId || parsed.employeeId === savedSessionId || (savedEmail && parsed.email?.toLowerCase() === savedEmail.toLowerCase()))) {
+        // Strict identity validation: Cached employee MUST match the authenticated identity!
+        if (authIdentity?.email && parsed.email && parsed.email.toLowerCase() !== authIdentity.email) {
+          console.warn('[Auth] Stale cached employee does not match authenticated identity on boot. Purging stale cache.');
+          localStorage.removeItem('kss_v1_cached_active_employee');
+        } else if (parsed && (parsed.id === savedSessionId || parsed.employeeId === savedSessionId || (savedEmail && parsed.email?.toLowerCase() === savedEmail))) {
           if (isFaceBiometricEnrolled(parsed)) {
             parsed.isFaceEnrolled = true;
           }
@@ -577,18 +725,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (savedSessionId && savedEmps) {
       try {
         const parsed = JSON.parse(savedEmps) as Employee[];
-        // Match by ID first, then by email backup key
         const found = parsed.find(e =>
           e.id === savedSessionId ||
           e.employeeId === savedSessionId ||
-          (savedEmail && e.email?.toLowerCase() === savedEmail.toLowerCase())
+          (savedEmail && e.email?.toLowerCase() === savedEmail)
         );
         if (found) {
-          if (isFaceBiometricEnrolled(found)) {
-            found.isFaceEnrolled = true;
+          if (authIdentity?.email && found.email && found.email.toLowerCase() !== authIdentity.email) {
+            // Stale cache from another user
+          } else {
+            if (isFaceBiometricEnrolled(found)) {
+              found.isFaceEnrolled = true;
+            }
+            found.profilePhotoUrl = getEmployeeAvatar(found);
+            return found;
           }
-          found.profilePhotoUrl = getEmployeeAvatar(found);
-          return found;
         }
       } catch (e) {}
     }
@@ -596,14 +747,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const foundInInitial = INITIAL_EMPLOYEES.find(e =>
         e.id === savedSessionId ||
         e.employeeId === savedSessionId ||
-        (savedEmail && e.email?.toLowerCase() === savedEmail.toLowerCase())
+        (savedEmail && e.email?.toLowerCase() === savedEmail)
       );
       if (foundInInitial) {
-        const copy = { ...foundInInitial };
-        if (isFaceBiometricEnrolled(copy)) {
-          copy.isFaceEnrolled = true;
+        if (authIdentity?.email && foundInInitial.email && foundInInitial.email.toLowerCase() !== authIdentity.email) {
+          // Stale cache from another user
+        } else {
+          const copy = { ...foundInInitial };
+          if (isFaceBiometricEnrolled(copy)) {
+            copy.isFaceEnrolled = true;
+          }
+          return copy;
         }
-        return copy;
       }
     }
     return null;
@@ -612,8 +767,19 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   // Synchronous role restore
   const [role, setRole] = useState<UserRole>(() => {
     if (!isSessionValidOnBoot()) return 'EMPLOYEE';
+    const authIdentity = getActiveAuthIdentityOnBoot();
+    if (authIdentity?.role) return authIdentity.role;
+    if (authIdentity?.isCtoOrCeo) return 'SUPER_ADMIN';
+
+    const savedEmail = (authIdentity?.email || localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
+    if (savedEmail.includes('founder') || savedEmail.includes('gaurav') || savedEmail === 'cto@kalpanaaa.in' || savedEmail.includes('akshit') || savedEmail === 'ceo@kalpanaaa.in') {
+      return 'SUPER_ADMIN';
+    }
+
     const savedSessionId = localStorage.getItem('kss_v1_session');
-    const savedEmail = localStorage.getItem('kss_v1_session_email');
+    if (savedSessionId === 'KSS2407001' || savedSessionId === 'KSS2407002' || savedSessionId === 'CTO001' || savedSessionId === 'CEO001') {
+      return 'SUPER_ADMIN';
+    }
 
     // Check cached active employee first
     const cachedActive = localStorage.getItem('kss_v1_cached_active_employee');
@@ -621,7 +787,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       try {
         const parsed = JSON.parse(cachedActive) as Employee;
         if (parsed?.role) {
-          if (parsed.employeeId === 'CEO001' || parsed.employeeId === 'CTO001') return 'SUPER_ADMIN';
+          if (parsed.employeeId === 'CEO001' || parsed.employeeId === 'CTO001' || parsed.employeeId === 'KSS2407001' || parsed.employeeId === 'KSS2407002') return 'SUPER_ADMIN';
           return parsed.role;
         }
       } catch {}
@@ -634,10 +800,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const found = parsed.find(e =>
           e.id === savedSessionId ||
           e.employeeId === savedSessionId ||
-          (savedEmail && e.email?.toLowerCase() === savedEmail.toLowerCase())
+          (savedEmail && e.email?.toLowerCase() === savedEmail)
         );
         if (found) {
-          if (found.employeeId === 'CEO001' || found.employeeId === 'CTO001') return 'SUPER_ADMIN';
+          if (found.employeeId === 'CEO001' || found.employeeId === 'CTO001' || found.employeeId === 'KSS2407001' || found.employeeId === 'KSS2407002') return 'SUPER_ADMIN';
           return found.role || 'EMPLOYEE';
         }
       } catch (e) {}
@@ -652,8 +818,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const [isDemoMode, setIsDemoMode] = useState(true);
   const [isFirestoreConnected, setIsFirestoreConnected] = useState(false);
   
-  // Ready immediately if session is valid on boot; otherwise waits for onAuthStateChanged
-  const [isSessionReady, setIsSessionReady] = useState<boolean>(() => isSessionValidOnBoot());
+  // Ready immediately if verified session exists on boot and matches identity; otherwise waits for auth to resolve
+  const [isSessionReady, setIsSessionReady] = useState<boolean>(() => {
+    const valid = isSessionValidOnBoot();
+    if (!valid) return true; // not logged in, ready to render AuthView
+    const authIdentity = getActiveAuthIdentityOnBoot();
+    const cachedActive = localStorage.getItem('kss_v1_cached_active_employee');
+    if (cachedActive) {
+      try {
+        const parsed = JSON.parse(cachedActive);
+        if (parsed && authIdentity?.email && parsed.email?.toLowerCase() !== authIdentity.email) {
+          // Identity mismatch in cache: hold clean loader until verified auth completes!
+          return false;
+        }
+      } catch {}
+    }
+    return true;
+  });
   const [attendanceSyncStatus, setAttendanceSyncStatus] = useState<'loading' | 'synced'>(() => {
     if (typeof window !== 'undefined') {
       if (localStorage.getItem('kalpanaaa_jwt_token') || localStorage.getItem('kss_v1_session')) {
@@ -1030,6 +1211,42 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
     const search = String(employeeIdOrEmp).trim().toLowerCase();
     const searchWithoutEmp = search.replace(/^emp-/, '');
+
+    // Direct mapping for Gaurav Kumar Tripathi (CTO & Founder & MD)
+    if (
+      search.includes('gaurav') ||
+      search.includes('founder') ||
+      search === 'kss2407001' ||
+      search === 'cto001' ||
+      search === 'founder@kalpanaaa.in' ||
+      search === 'founder@kalpanaaasoftwaresolutions.in' ||
+      search === 'cto@kalpanaaa.in' ||
+      search === 'cto@kalpanaaasoftwaresolutions.in'
+    ) {
+      const cto = employeesRef.current.find(e =>
+        e.employeeId === 'KSS2407001' ||
+        e.id === 'emp-KSS2407001' ||
+        (e.email && (e.email.toLowerCase().includes('founder') || e.email.toLowerCase().includes('gaurav')))
+      ) || INITIAL_EMPLOYEES.find(e => e.employeeId === 'KSS2407001' || e.id === 'emp-KSS2407001');
+      if (cto) return cto;
+    }
+
+    // Direct mapping for Akshit Ujjain (CEO & Co-Founder)
+    if (
+      search.includes('akshit') ||
+      search === 'kss2407002' ||
+      search === 'ceo001' ||
+      search === 'ceo@kalpanaaa.in' ||
+      search === 'ceo@kalpanaaasoftwaresolutions.in' ||
+      search === 'akshit.ujjain@kalpanaaasoftwaresolutions.in'
+    ) {
+      const ceo = employeesRef.current.find(e =>
+        e.employeeId === 'KSS2407002' ||
+        e.id === 'emp-KSS2407002' ||
+        (e.email && (e.email.toLowerCase().includes('akshit') || e.email.toLowerCase().includes('ceo')))
+      ) || INITIAL_EMPLOYEES.find(e => e.employeeId === 'KSS2407002' || e.id === 'emp-KSS2407002');
+      if (ceo) return ceo;
+    }
 
     // Direct mapping for D. Koushik (Project Manager) Auth UID
     if (search === 'vhklijcvzotncqvtmh14pambixk2') {
@@ -1986,7 +2203,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             
             for (const emp of fetched) {
               // Skip corrupted records with empty names or test/admin created users
-              if (!emp.fullName || emp.fullName.trim() === '' || emp.employeeId === 'NEW6dfc34f4' || emp.fullName.toLowerCase().includes('admin created user')) {
+              if (!emp.fullName || emp.fullName.trim() === '' || isTestEmployee(emp) || emp.employeeId === 'NEW6dfc34f4' || emp.fullName.toLowerCase().includes('admin created user')) {
                 continue;
               }
 
@@ -3688,12 +3905,83 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       }
       const cleanEmail = firebaseUser.email?.trim().toLowerCase();
+      const isCtoEmail = !!cleanEmail && (
+        cleanEmail.includes('founder') ||
+        cleanEmail.includes('gaurav') ||
+        cleanEmail === 'cto@kalpanaaa.in' ||
+        cleanEmail === 'cto@kalpanaaasoftwaresolutions.in' ||
+        cleanEmail.startsWith('cto@')
+      );
+      const isCeoEmail = !!cleanEmail && (
+        cleanEmail.includes('akshit') ||
+        cleanEmail === 'ceo@kalpanaaa.in' ||
+        cleanEmail === 'ceo@kalpanaaasoftwaresolutions.in' ||
+        cleanEmail.startsWith('ceo@')
+      );
+
+      // Check for cross-user account switch on shared devices (e.g. CTO refreshing on Akash's machine)
+      const previousSessionEmail = (localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
+      const isAccountSwitch = !!cleanEmail && !!previousSessionEmail && cleanEmail !== previousSessionEmail;
+      if (isAccountSwitch) {
+        console.warn(`[Auth] Account switch detected (${previousSessionEmail} -> ${cleanEmail}). Purging mismatched session cache.`);
+        localStorage.removeItem('kss_v1_cached_active_employee');
+        localStorage.removeItem('kss_v1_attendance');
+        localStorage.removeItem('kss_v1_leave_requests');
+        localStorage.removeItem('kss_v1_session');
+        if (isCtoEmail || isCeoEmail) {
+          localStorage.setItem('kss_active_tab', 'dashboard');
+        }
+      }
+
       const empList = (employeesRef.current && employeesRef.current.length > 0)
         ? employeesRef.current
         : (employees.length > 0 ? employees : INITIAL_EMPLOYEES);
 
+      // Fast-path resolution for CTO and CEO: eliminates 3-5s Firestore waterfall and prevents wrong portal flapping
+      if (isCtoEmail || isCeoEmail) {
+        const executiveTargetId = isCtoEmail ? 'KSS2407001' : 'KSS2407002';
+        const executiveMatch = empList.find(e => e.employeeId === executiveTargetId) ||
+          INITIAL_EMPLOYEES.find(e => e.employeeId === executiveTargetId);
+        if (executiveMatch) {
+          const resolvedExecutive: Employee = {
+            ...executiveMatch,
+            uid: firebaseUser.uid,
+            role: 'SUPER_ADMIN' as UserRole
+          };
+          setActiveEmployee(resolvedExecutive);
+          setRole('SUPER_ADMIN');
+          setIsAuthenticated(true);
+          setIsSessionReady(true);
+          localStorage.setItem('kss_v1_session', resolvedExecutive.id);
+          localStorage.setItem('kss_v1_session_email', cleanEmail || resolvedExecutive.email.toLowerCase());
+          localStorage.setItem('kss_v1_session_timestamp', Date.now().toString());
+          localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(resolvedExecutive));
+          fetchFastApiRecords(resolvedExecutive, true);
+
+          // Asynchronously sync user doc in Firestore without blocking UI render
+          if (USE_FIREBASE_FIRESTORE) {
+            setDoc(doc(db, 'users', firebaseUser.uid), {
+              uid: firebaseUser.uid,
+              email: cleanEmail || '',
+              role: 'SUPER_ADMIN',
+              employeeId: resolvedExecutive.employeeId,
+              employeeDocId: resolvedExecutive.id,
+              fullName: resolvedExecutive.fullName,
+              updatedAt: serverTimestamp()
+            }, { merge: true }).catch(err => {
+              console.warn('[Auth] Non-fatal executive users mapping sync:', err);
+            });
+          }
+          return;
+        }
+      }
+
       const isAuthEmail = (value?: string) =>
-        !!cleanEmail && typeof value === 'string' && value.trim().toLowerCase() === cleanEmail;
+        !!cleanEmail && typeof value === 'string' && (
+          value.trim().toLowerCase() === cleanEmail ||
+          (isCtoEmail && (value.toLowerCase().includes('founder') || value.toLowerCase().includes('gaurav'))) ||
+          (isCeoEmail && (value.toLowerCase().includes('akshit') || value.toLowerCase().includes('ceo')))
+        );
       const isAbhinayHrAlias = cleanEmail === 'abhinayav1919@kalpanaaa.in';
       const localCandidate = empList.find(e =>
         e.id === firebaseUser.uid ||
@@ -4359,6 +4647,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       'kss_v1_settings',
       'kss_v1_work_zone',
       'kss_v1_company_wfh_dates',
+      'kss_active_tab',
     ].forEach(key => {
       safeRemoveItem(key);
       try { localStorage.removeItem(key); } catch {}
@@ -6628,12 +6917,6 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const nowIso = new Date().toISOString();
     const isApproved = decision === 'Approved';
 
-    // Guard: CTO cannot approve a request before CEO approval has been granted!
-    if (stage === 'CTO' && isApproved && targetReq?.ceoStatus !== 'Approved') {
-      toast.error('CTO cannot approve request before CEO approval has been granted.');
-      return;
-    }
-
     // 1. INSTANT 0ms Optimistic State Update for ultra-fast, smooth UI
     setLeaveRequests(prev => {
       const updated = prev.map(req => {
@@ -6650,11 +6933,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           copy.ceoReviewedBy = revUid;
           copy.ceoReviewedAt = nowIso;
           copy.ceoNotes = notes || '';
-          if (isSuperAdmin && isApproved) {
+          if (isApproved && (req.ctoStatus === 'CEO Approval Needed' || req.ctoStatus === 'Approved' || isSuperAdmin)) {
+            // If CTO had marked "CEO Approval Needed", CEO approval completes the sanction
             copy.ctoStatus = 'Approved';
-            copy.ctoReviewedBy = revUid;
-            copy.ctoReviewedAt = nowIso;
-            copy.ctoNotes = notes || '';
+            copy.ctoReviewedBy = copy.ctoReviewedBy || revUid;
+            copy.ctoReviewedAt = copy.ctoReviewedAt || nowIso;
+            copy.ctoNotes = copy.ctoNotes || 'CTO sanction satisfied by CEO approval';
             copy.status = 'Approved';
           } else {
             copy.ctoStatus = isApproved ? 'Pending' : 'Waiting CEO';
@@ -6665,6 +6949,13 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           copy.ctoReviewedBy = revUid;
           copy.ctoReviewedAt = nowIso;
           copy.ctoNotes = notes || '';
+          if (isApproved && req.ceoStatus !== 'Approved') {
+            // CTO double-slide / direct approval bypassing CEO
+            copy.ceoStatus = 'Approved';
+            copy.ceoReviewedBy = revUid;
+            copy.ceoReviewedAt = nowIso;
+            copy.ceoNotes = 'Bypassed via CTO direct sanction';
+          }
           copy.status = isApproved ? 'Approved' : 'Rejected';
         }
 
@@ -6686,7 +6977,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     // 3. Persist to Neon PostgreSQL or Firestore
     if (!USE_FIREBASE_FIRESTORE || getAuthToken()) {
       try {
-        await reviewLeaveApi(id, isApproved ? 'APPROVED' : 'REJECTED', notes || `${stage} Review: ${decision}`);
+        const reviewNotes = (stage === 'CTO' && isApproved && targetReq?.ceoStatus !== 'Approved')
+          ? (notes || 'Direct CTO Approval (CEO Bypassed)')
+          : (notes || `${stage} Review: ${decision}`);
+        await reviewLeaveApi(id, isApproved ? 'APPROVED' : 'REJECTED', reviewNotes);
       } catch (e) {
         console.warn('[FastAPI] reviewLeaveApi note:', e);
       }
@@ -6794,6 +7088,66 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const targetReq = leaveRequests.find(r => r.id === id);
     updateLeaveRequestStage(id, stage, status, reviewedBy, reviewNotes, targetReq?.employeeId, targetReq?.startDate, targetReq?.endDate);
+  };
+
+  const markLeaveRequestCeoApprovalNeeded = async (id: string) => {
+    const revUid = user?.uid || activeEmployee?.uid || 'uid-cto';
+    const revName = activeEmployee?.fullName || 'Gaurav Kumar Tripathi (CTO)';
+    const nowIso = new Date().toISOString();
+
+    // 1. Instant 0ms Optimistic Update for live UI reflection
+    setLeaveRequests(prev => {
+      const updated = prev.map(r => {
+        if (r.id !== id) return r;
+        return {
+          ...r,
+          ctoStatus: 'CEO Approval Needed' as any,
+          ctoNotes: 'CEO Approval Needed',
+          ctoReviewedBy: revUid,
+          ctoReviewedAt: nowIso,
+          updatedAt: nowIso
+        };
+      });
+      try {
+        localStorage.setItem('kss_v1_leave_requests', JSON.stringify(updated.slice(0, 500)));
+      } catch {}
+      return updated;
+    });
+
+    // 2. Broadcast across tabs immediately
+    if (typeof window !== 'undefined' && 'BroadcastChannel' in window) {
+      try {
+        const channel = new BroadcastChannel('kss_app_events');
+        channel.postMessage({ type: 'UPDATE_LEAVE_REQUEST', payload: { id, ctoStatus: 'CEO Approval Needed' } });
+      } catch {}
+    }
+
+    // 3. Persist to Neon PostgreSQL
+    if (!USE_FIREBASE_FIRESTORE || getAuthToken()) {
+      try {
+        await reviewLeaveApi(id, 'WAITING_CEO', 'CEO Approval Needed');
+      } catch (e) {
+        console.warn('[FastAPI] reviewLeaveApi note:', e);
+      }
+      fetchFastApiRecords(activeEmployeeRef.current, true);
+    }
+
+    // 4. Persist to Firestore
+    if (USE_FIREBASE_FIRESTORE) {
+      try {
+        await setDoc(doc(db, 'leaveRequests', id), {
+          ctoStatus: 'CEO Approval Needed',
+          ctoNotes: 'CEO Approval Needed',
+          ctoReviewedBy: revUid,
+          ctoReviewedAt: nowIso,
+          updatedAt: nowIso
+        }, { merge: true });
+      } catch (fsErr) {
+        console.warn('[AuthContext] Firestore stage update error:', fsErr);
+      }
+    }
+
+    addAuditLog('LEAVE_STAGE_DECISION', revName, `CTO marked CEO Approval Needed for leave request ${id}`);
   };
 
   const cancelLeaveRequest = async (id: string, employeeId?: string, startDate?: string, endDate?: string) => {
@@ -7213,6 +7567,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       submitLeaveRequest,
       updateLeaveRequestStatus,
       updateLeaveRequestStage,
+      markLeaveRequestCeoApprovalNeeded,
       cancelLeaveRequest,
       addAuditLog,
       resetToDemoData,

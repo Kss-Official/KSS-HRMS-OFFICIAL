@@ -152,26 +152,70 @@ export function tierLabel(tier: number): string {
   return 'Employee';
 }
 
+const KNOWN_TEST_CODES = new Set([
+  'KSS8616457',
+  'KSS2648019',
+  'KSS7365410',
+  'KSS6950866',
+  'KSS1223182',
+  'KSS3491305',
+  'NEW2715092A',
+  'NEW6DFC34F4',
+  'ALICE001',
+  'TEST001',
+  'CTOBFC30256',
+  'EXEC49646BCF',
+  'TEST2715092A',
+  'KSS5909337',
+  'KSS9749394'
+]);
+
+const KNOWN_TEST_EMAILS = new Set([
+  'ceo@kalpanaaasoftwaresolutions.in',
+  'director@kalpanaaasoftwaresolutions.in',
+  'founder@kalpanaaa.in',
+  'superadmin@kalpanaaa.in',
+  'admin@kalpanaaasoftwaresolutions.in',
+  'akazz33333@gmail.com',
+  'new2715092a@kalpanaaa.in',
+  'cto_bfc30256@kalpanaaa.in',
+  'exec_49646bcf@kalpanaaa.in',
+  'test_2715092a@kalpanaaa.in',
+  'test@unknown.com',
+  'admin@kalpanaaa.in',
+  'alice@example.com'
+]);
+
 /**
  * Detects whether an employee record is a test account or transient test fixture.
  */
 export function isTestEmployee(emp: any): boolean {
   if (!emp) return true;
   const name = String(emp.fullName || emp.name || '').toLowerCase().trim();
-  const code = String(emp.employeeId || emp.employee_code || '').toUpperCase().trim();
+  const rawCode = String(emp.employeeId || emp.employee_code || '').toUpperCase().trim();
+  const code = rawCode.replace(/^KS2/, 'KSS2');
   const email = String(emp.email || '').toLowerCase().trim();
 
+  // 1. Explicit known test fixture identifiers
+  if (KNOWN_TEST_CODES.has(rawCode) || KNOWN_TEST_CODES.has(code) || KNOWN_TEST_EMAILS.has(email)) {
+    return true;
+  }
+
+  // 2. Prefix-based test identifiers
   if (
     code.startsWith('AUDIT') ||
     code.startsWith('CEO_') ||
     code.startsWith('CTO_') ||
     code.startsWith('TEST') ||
+    code.startsWith('EXEC') ||
+    code.startsWith('NEW') ||
     code === 'ALICE001' ||
     code === 'TEST001'
   ) {
     return true;
   }
 
+  // 3. Name-based test detection
   if (
     name.includes('test portal') ||
     name.includes('alice test') ||
@@ -179,11 +223,19 @@ export function isTestEmployee(emp: any): boolean {
     name.includes('audit employee') ||
     name.startsWith('test ') ||
     name.endsWith(' test') ||
-    name === 'test'
+    name === 'test' ||
+    name === 'akazz33333' ||
+    name.includes('admin created user') ||
+    name === 'ceo' ||
+    name === 'director' ||
+    name === 'founder' ||
+    name === 'superadmin' ||
+    name === 'admin'
   ) {
     return true;
   }
 
+  // 4. Email-based test detection
   if (
     email.includes('testportal') ||
     email.includes('test_portal') ||
@@ -191,6 +243,9 @@ export function isTestEmployee(emp: any): boolean {
     email.startsWith('audit_') ||
     email.startsWith('ceo_') ||
     email.startsWith('cto_') ||
+    email.startsWith('exec_') ||
+    email.startsWith('test_') ||
+    email.startsWith('demo_') ||
     email.endsWith('@test.com') ||
     email.endsWith('@example.com')
   ) {

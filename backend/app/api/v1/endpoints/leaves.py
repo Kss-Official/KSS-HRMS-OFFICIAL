@@ -284,15 +284,36 @@ async def review_leave(
         raise HTTPException(status_code=403, detail="You cannot review your own leave request")
 
     if is_cto:
-        if leave.ceo_status != ApprovalStatus.APPROVED:
-            raise HTTPException(status_code=400, detail="CTO cannot review leave before CEO has approved it")
-        leave.cto_status = payload.action
-        leave.cto_reviewed_by, leave.cto_reviewed_at, leave.cto_notes = current_user.id, now, payload.notes
+        is_bypass = bool(payload.notes and ("bypass" in payload.notes.lower() or "direct" in payload.notes.lower()))
+        if payload.action == ApprovalStatus.APPROVED:
+            if leave.ceo_status != ApprovalStatus.APPROVED:
+                if not is_bypass:
+                    raise HTTPException(status_code=400, detail="CTO cannot review leave before CEO has approved it")
+                # CTO double-slide / direct approval bypassing CEO
+                leave.ceo_status = ApprovalStatus.APPROVED
+                leave.ceo_reviewed_by = current_user.id
+                leave.ceo_reviewed_at = now
+                leave.ceo_notes = "Bypassed via CTO direct sanction"
+            leave.cto_status = ApprovalStatus.APPROVED
+            leave.cto_reviewed_by, leave.cto_reviewed_at, leave.cto_notes = current_user.id, now, payload.notes
+        elif payload.action == ApprovalStatus.WAITING_CEO:
+            # 1st slide: CTO marks as CEO Approval Needed
+            leave.cto_status = ApprovalStatus.WAITING_CEO
+            leave.cto_reviewed_by, leave.cto_reviewed_at, leave.cto_notes = current_user.id, now, payload.notes or "CEO Approval Needed"
+        elif payload.action == ApprovalStatus.REJECTED:
+            leave.cto_status = ApprovalStatus.REJECTED
+            leave.cto_reviewed_by, leave.cto_reviewed_at, leave.cto_notes = current_user.id, now, payload.notes
     elif is_ceo:
         leave.ceo_status = payload.action
         leave.ceo_reviewed_by, leave.ceo_reviewed_at, leave.ceo_notes = current_user.id, now, payload.notes
-        if payload.action == ApprovalStatus.APPROVED and leave.cto_status == ApprovalStatus.WAITING_CEO:
-            leave.cto_status = ApprovalStatus.PENDING
+        if payload.action == ApprovalStatus.APPROVED:
+            if leave.cto_status in (ApprovalStatus.WAITING_CEO, ApprovalStatus.PENDING):
+                # If CTO already marked "CEO Approval Needed", CEO's approval completes the sanction
+                if leave.cto_notes and "CEO Approval Needed" in leave.cto_notes:
+                    leave.cto_status = ApprovalStatus.APPROVED
+                    leave.cto_reviewed_at = now
+                else:
+                    leave.cto_status = ApprovalStatus.PENDING
     elif is_super_override:
         leave.ceo_status = leave.cto_status = payload.action
         leave.ceo_reviewed_by = leave.cto_reviewed_by = current_user.id

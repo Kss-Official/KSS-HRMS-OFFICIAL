@@ -14,6 +14,7 @@ import { Header } from './components/common/Header';
 import { Sidebar } from './components/common/Sidebar';
 import { MobileBottomNav } from './components/common/MobileBottomNav';
 import { isAuthorizedTechLead } from './lib/hierarchy';
+import { isExecutiveOrLeadership } from './lib/attendanceEngine';
 
 // ── Resilient Lazy imports with automatic Chunk Load Failure Recovery ──
 const DashboardView        = lazyWithRetry(() => import('./components/admin/DashboardView').then(m => ({ default: m.DashboardView })), 'DashboardView');
@@ -159,6 +160,19 @@ const MainLayout: React.FC = () => {
 
   // Synchronous tab sanitization per role to eliminate flash of wrong content (Fixes C15 Contract)
   const getSanitizedTabForRole = (tab: string, roleToUse: string): string => {
+    // 0. Super Admin / Executive Leadership (CTO, CEO, Managing Director): strictly prevent employee portal tabs
+    if (roleToUse === 'SUPER_ADMIN' || (activeEmployee && isExecutiveOrLeadership(activeEmployee))) {
+      const allowedAdminTabs = [
+        'dashboard', 'leave_approvals', 'employees', 'attendance', 'reports', 'documents',
+        'settings', 'audit_logs', 'feedback_hub', 'company_rules', 'notifications',
+        'my_profile', 'my_id_card'
+      ];
+      if (tab.startsWith('emp_') || !allowedAdminTabs.includes(tab)) {
+        return 'dashboard';
+      }
+      return tab;
+    }
+
     if (roleToUse === 'EMPLOYEE') {
       if (isAuthorizedTechLead(activeEmployee) && tab === 'feedback_hub') {
         return 'feedback_hub';
@@ -167,7 +181,7 @@ const MainLayout: React.FC = () => {
         return 'emp_dashboard';
       }
     } else if (roleToUse === 'PROJECT_MANAGER') {
-      const allowedPMTabs = ['pm_dashboard', 'pm_projects', 'pm_team', 'feedback_hub', 'pm_profile', 'notifications', 'dashboard', 'leave_approvals', 'employees', 'emp_directory', 'company_rules', 'reports', 'attendance'];
+      const allowedPMTabs = ['pm_dashboard', 'pm_projects', 'pm_team', 'feedback_hub', 'pm_profile', 'notifications', 'dashboard', 'leave_approvals', 'employees', 'emp_directory', 'company_rules', 'attendance'];
       if (!allowedPMTabs.includes(tab) || (tab.startsWith('emp_') && tab !== 'emp_directory')) {
         return 'pm_dashboard';
       }

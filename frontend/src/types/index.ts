@@ -68,7 +68,7 @@ export interface LeaveRequest {
   ceoReviewedBy?: string;
   ceoReviewedAt?: string;
 
-  ctoStatus?: 'Pending' | 'Approved' | 'Rejected' | 'Waiting CEO' | 'N/A' | 'Bypassed';
+  ctoStatus?: 'Pending' | 'Approved' | 'Rejected' | 'Waiting CEO' | 'CEO Approval Needed' | 'N/A' | 'Bypassed';
   ctoNotes?: string;
   ctoReviewedBy?: string;
   ctoReviewedAt?: string;

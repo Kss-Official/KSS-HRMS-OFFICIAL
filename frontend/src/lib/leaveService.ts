@@ -777,18 +777,6 @@ export class LeaveService {
     const nowIso = new Date().toISOString();
     const isApproved = decision === 'Approved';
 
-    // Security check: CTO cannot approve a request before CEO approval!
-    if (isApproved) {
-      const reqSnap = await getDoc(doc(db, 'leaveRequests', requestId));
-      if (!reqSnap.exists()) {
-        throw new Error(`Leave request ${requestId} not found.`);
-      }
-      const currentReqData = reqSnap.data() as LeaveRequest;
-      if (currentReqData.ceoStatus !== 'Approved') {
-        throw new Error('CTO cannot approve request before CEO approval has been granted.');
-      }
-    }
-
     const updates: Partial<LeaveRequest> = {
       ctoStatus: decision,
       ctoReviewedBy: reviewerUid,
@@ -799,6 +787,24 @@ export class LeaveService {
       reviewNotes: notes || (isApproved ? 'Final sanction granted by CTO' : 'Rejected at CTO stage'),
       updatedAt: nowIso,
     };
+
+    // If CTO approves directly before CEO, bypass CEO approval stage
+    if (isApproved) {
+      try {
+        const reqSnap = await getDoc(doc(db, 'leaveRequests', requestId));
+        if (reqSnap.exists()) {
+          const currentReqData = reqSnap.data() as LeaveRequest;
+          if (currentReqData.ceoStatus !== 'Approved') {
+            updates.ceoStatus = 'Approved';
+            updates.ceoReviewedBy = reviewerUid;
+            updates.ceoReviewedAt = nowIso;
+            updates.ceoNotes = 'Bypassed via CTO direct sanction';
+          }
+        }
+      } catch (err) {
+        console.warn('[LeaveService] getDoc check warning:', err);
+      }
+    }
 
     await setDoc(doc(db, 'leaveRequests', requestId), cleanFirestorePayload(updates), { merge: true });
 

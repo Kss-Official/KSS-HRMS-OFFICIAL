@@ -23,7 +23,7 @@ const hasTitle = (desig: string, word: string) =>
   new RegExp('\\b' + word.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\b').test(desig);
 
 export const LeaveApprovalsView: React.FC = () => {
-  const { leaveRequests, updateLeaveRequestStatus, activeEmployee, employees, settings, assignCompanyWideWfh, removeCompanyWideWfh, companyWideWfhDates, role } = useAuth();
+  const { leaveRequests, updateLeaveRequestStatus, markLeaveRequestCeoApprovalNeeded, activeEmployee, employees, settings, assignCompanyWideWfh, removeCompanyWideWfh, companyWideWfhDates, role } = useAuth();
   const { triggerHaptic } = useHaptic();
 
   const effectiveRole = activeEmployee?.role || role || 'SUPER_ADMIN';
@@ -33,10 +33,19 @@ export const LeaveApprovalsView: React.FC = () => {
   const [wfhDateInput, setWfhDateInput] = useState(todayStr);
   const [wfhFeedback, setWfhFeedback] = useState<{ success: boolean; message: string } | null>(null);
 
-  // Gates the company-wide WFH assignment panel below ("Executive Clearance").
-  // Was four `designation.toUpperCase().includes(...)` tests, so an uppercased
-  // "CONTRACTOR" satisfied the 'CTO' branch and got clearance to assign WFH for
-  // the whole company. Delegated to the shared whole-word matcher instead.
+  // CTO double-slide and execution debounce tracking
+  const ctoSlideTrackerRef = React.useRef<Record<string, { time: number; count: number }>>({});
+  const processingLeaveIds = React.useRef<Set<string>>(new Set());
+  const [ctoPendingSlideId, setCtoPendingSlideId] = useState<Record<string, boolean>>({});
+
+  const desig = (activeEmployee?.designation || '').toUpperCase();
+  const empId = activeEmployee?.employeeId || activeEmployee?.id || '';
+  const empName = (activeEmployee?.fullName || '').toLowerCase();
+  const execRole = activeEmployee?.executiveRole;
+
+  const isCto = execRole === 'CTO' || empName.includes('gaurav') || hasTitle(desig, 'CTO') || hasTitle(desig, 'CIO') || empId === 'CTO001' || empId === 'KSS2407001';
+  const isCeo = execRole === 'CEO' || empName.includes('akshit') || hasTitle(desig, 'CEO') || empId === 'CEO001' || empId === 'KSS2407002';
+
   const isCeoOrCto = isExecutiveOrLeadership(activeEmployee) ||
     activeEmployee?.employeeId === 'CEO001' ||
     activeEmployee?.employeeId === 'CTO001';
@@ -69,13 +78,6 @@ export const LeaveApprovalsView: React.FC = () => {
     if (isSelfRequest) return false;
 
     const userRole = activeEmployee?.role || effectiveRole;
-    const desig = (activeEmployee?.designation || '').toUpperCase();
-    const empId = activeEmployee?.employeeId || activeEmployee?.id || '';
-    const name = (activeEmployee?.fullName || '').toLowerCase();
-    const execRole = activeEmployee?.executiveRole;
-
-    const isCto = execRole === 'CTO' || name.includes('gaurav') || hasTitle(desig, 'CTO') || hasTitle(desig, 'CIO') || empId === 'CTO001' || empId === 'KSS2407001';
-    const isCeo = execRole === 'CEO' || name.includes('akshit') || hasTitle(desig, 'CEO') || empId === 'CEO001' || empId === 'KSS2407002';
 
     // PM and HR are strictly removed from approval authority
     if (!isCeo && !isCto && userRole !== 'SUPER_ADMIN') {
@@ -89,10 +91,11 @@ export const LeaveApprovalsView: React.FC = () => {
     }
 
     // 2. CTO Stage (Gaurav):
-    // CTO can approve ONLY after CEO has approved!
+    // CTO can always act on pending requests:
+    // - Slide 1: marks as "CEO Approval Needed" and keeps pending for CEO
+    // - Slide 2 (double slide): directly marks as Approved, bypassing CEO
     if (isCto) {
-      const isCeoPassed = req.ceoStatus === 'Approved';
-      return isCeoPassed && req.ctoStatus !== 'Approved';
+      return req.ctoStatus !== 'Approved';
     }
 
     // 3. Generic Super Admin (fallback)
@@ -102,6 +105,62 @@ export const LeaveApprovalsView: React.FC = () => {
     }
 
     return false;
+  };
+
+  const handleCtoSlideAction = async (req: LeaveRequest) => {
+    if (processingLeaveIds.current.has(req.id)) return;
+
+    const now = Date.now();
+    const tracker = ctoSlideTrackerRef.current[req.id];
+
+    // Accidental trigger guard: Ignore rapid swipe bounce (< 350ms) to ensure single physical gesture isn't double-counted
+    if (tracker && now - tracker.time < 350) {
+      return;
+    }
+
+    processingLeaveIds.current.add(req.id);
+
+    try {
+      // Second slide conditions:
+      // Either slid twice in succession (within 10s) OR already in 'CEO Approval Needed' OR CEO already approved
+      const isSecondSlide = (tracker && (now - tracker.time < 10000) && tracker.count >= 1) ||
+                            req.ctoStatus === 'CEO Approval Needed' ||
+                            ctoPendingSlideId[req.id] ||
+                            req.ceoStatus === 'Approved';
+
+      if (isSecondSlide) {
+        // SECOND SLIDE (DOUBLE SLIDE) -> DIRECT APPROVAL BYPASSING CEO
+        ctoSlideTrackerRef.current[req.id] = { time: now, count: 2 };
+        setCtoPendingSlideId(prev => ({ ...prev, [req.id]: false }));
+        triggerHaptic('success');
+
+        await updateLeaveRequestStatus(
+          req.id,
+          'Approved',
+          `${activeEmployee?.fullName || 'Gaurav Kumar Tripathi'} (CTO Direct Approval / CEO Bypassed)`,
+          'Directly sanctioned by CTO (CEO approval bypassed)',
+          'CTO'
+        );
+        toast.success(`✓ Leave request for ${req.employeeName} directly Approved by CTO (CEO bypassed).`);
+      } else {
+        // FIRST SLIDE -> CHANGE STATUS TO "CEO Approval Needed" AND REMAIN PENDING FOR CEO
+        ctoSlideTrackerRef.current[req.id] = { time: now, count: 1 };
+        setCtoPendingSlideId(prev => ({ ...prev, [req.id]: true }));
+        triggerHaptic('medium');
+
+        await markLeaveRequestCeoApprovalNeeded(req.id);
+        toast.info(`📋 Status updated to "CEO Approval Needed" for ${req.employeeName}. Slide again within 10s to directly Approve & bypass CEO.`, {
+          duration: 6000,
+        });
+      }
+    } catch (err) {
+      console.error('[LeaveApprovalsView] CTO slide error:', err);
+      toast.error('Failed to update leave request status.');
+    } finally {
+      setTimeout(() => {
+        processingLeaveIds.current.delete(req.id);
+      }, 350);
+    }
   };
 
   const handleApprove = (id: string, stage?: 'PM' | 'HR' | 'CEO' | 'CTO') => {
@@ -464,6 +523,7 @@ export const LeaveApprovalsView: React.FC = () => {
               req.ceoStatus === 'Rejected' ? 'Rejected' : 'Pending';
             const displayCtoStatus = req.ctoStatus === 'Approved' ? 'Approved' :
               req.ctoStatus === 'Rejected' ? 'Rejected' :
+              (req.ctoStatus === 'CEO Approval Needed' || ctoPendingSlideId[req.id]) ? 'CEO Approval Needed' :
               (displayCeoStatus === 'Approved' ? 'Pending' : 'Waiting CEO');
 
             return (
@@ -500,7 +560,11 @@ export const LeaveApprovalsView: React.FC = () => {
                   onDragEnd={(_, info) => {
                     if (req.status !== 'Pending') return;
                     if (info.offset.x > 50 || info.velocity.x > 150) {
-                      handleApprove(req.id);
+                      if (isCto) {
+                        handleCtoSlideAction(req);
+                      } else {
+                        handleApprove(req.id);
+                      }
                     } else if (info.offset.x < -50 || info.velocity.x < -150) {
                       handleReject(req.id);
                     }
@@ -509,9 +573,15 @@ export const LeaveApprovalsView: React.FC = () => {
                   style={{ borderLeftColor: isWfh ? 'var(--accent-violet)' : 'var(--accent-amber)' }}
                 >
                   {req.status === 'Pending' && (
-                    <div className="absolute top-4 right-4 flex items-center gap-2 opacity-50 hidden md:flex">
+                    <div className="absolute top-4 right-4 flex items-center gap-2 opacity-75 hidden md:flex">
                       <ChevronLeft className="w-4 h-4 text-[var(--accent-rose)]" />
-                      <span className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">Swipe to action</span>
+                      <span className="text-[10px] font-bold text-[var(--text-tertiary)] uppercase tracking-wider">
+                        {isCto
+                          ? (req.ctoStatus === 'CEO Approval Needed' || ctoPendingSlideId[req.id]
+                              ? 'Slide again to Approve (Bypass CEO)'
+                              : 'Slide once: CEO Approval Needed • Double slide: Direct Approve')
+                          : 'Swipe to action'}
+                      </span>
                       <ChevronRight className="w-4 h-4 text-[var(--accent-emerald)]" />
                     </div>
                   )}
@@ -553,6 +623,7 @@ export const LeaveApprovalsView: React.FC = () => {
                         <span className={`px-2 py-0.5 rounded-md border ${
                           displayCtoStatus === 'Approved' ? 'bg-emerald-950/60 text-emerald-400 border-emerald-500/30' :
                           displayCtoStatus === 'Rejected' ? 'bg-rose-950/60 text-rose-400 border-rose-500/30' :
+                          displayCtoStatus === 'CEO Approval Needed' ? 'bg-amber-950/60 text-amber-400 border-amber-500/30 font-extrabold animate-pulse' :
                           displayCtoStatus === 'Pending' ? 'bg-cyan-950/60 text-cyan-400 border-cyan-500/30' :
                           'bg-slate-900 text-slate-500 border-slate-800'
                         }`}>
@@ -599,10 +670,22 @@ export const LeaveApprovalsView: React.FC = () => {
                         <X className="w-4 h-4" /> Reject ({getActivePendingStage(req)} Stage)
                       </button>
                       <button
-                        onClick={() => handleApprove(req.id, getActivePendingStage(req))}
+                        onClick={() => {
+                          if (isCto) {
+                            handleCtoSlideAction(req);
+                          } else {
+                            handleApprove(req.id, getActivePendingStage(req));
+                          }
+                        }}
                         className="flex-1 py-3 bg-[var(--accent-emerald)]/10 text-[var(--accent-emerald)] border border-[var(--accent-emerald)]/20 rounded-xl font-bold text-sm flex items-center justify-center gap-2 active:scale-95 transition-all hover:bg-[var(--accent-emerald)]/20 cursor-pointer"
                       >
-                        <Check className="w-4 h-4" /> Approve ({getActivePendingStage(req)} Stage)
+                        <Check className="w-4 h-4" /> {
+                          isCto
+                            ? (req.ctoStatus === 'CEO Approval Needed' || ctoPendingSlideId[req.id]
+                                ? 'Approve (Bypass CEO)'
+                                : 'Slide 1: CEO Approval Needed')
+                            : `Approve (${getActivePendingStage(req)} Stage)`
+                        }
                       </button>
                     </div>
                   ) : isRequestFullyApproved(req) ? (
@@ -632,6 +715,10 @@ export const LeaveApprovalsView: React.FC = () => {
                       ) : role === 'PROJECT_MANAGER' || activeEmployee?.role === 'PROJECT_MANAGER' ? (
                         <span className="text-amber-400 flex items-center gap-1.5">
                           <ShieldCheck className="w-3.5 h-3.5" /> PM Observer Mode (Read-Only Status Ledger)
+                        </span>
+                      ) : (req.ctoStatus === 'CEO Approval Needed' || ctoPendingSlideId[req.id]) ? (
+                        <span className="text-amber-400 flex items-center gap-1.5 font-bold">
+                          <Clock className="w-3.5 h-3.5" /> ⏳ CEO Approval Needed — Pending CEO Sanction (Slide again to Approve &amp; Bypass CEO)
                         </span>
                       ) : req.ceoStatus !== 'Approved' ? (
                         <span className="text-purple-400 flex items-center gap-1.5">
