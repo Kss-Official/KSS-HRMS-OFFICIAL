@@ -337,7 +337,7 @@ export async function generatePayslipPdf(
   pdf.text('CIN: U72200KA2024PTC189000 | GSTIN: 29AAGCK1234F1Z5', 37, 23);
   pdf.text('Kalpanaaa Software Solutions Headquarters, 822, 9th Main,', 37, 28);
   pdf.text('1st C Cross, 1st Block, HRBR Layout, Kalyan Nagar, Bengaluru – 560043', 37, 33);
-  pdf.text('Official: https://www.kalpanaaasoftwaresolutions.in/ | hr@kalpanaaa.in', 37, 38);
+  pdf.text('Official: https://kss-hrms-official.vercel.app/ | hr@kalpanaaa.in', 37, 38);
 
   // 2. Reference & Date Bar
   let y = 54;

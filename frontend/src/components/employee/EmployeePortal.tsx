@@ -741,7 +741,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   // Generate Static QR Code for ID Card (Company Website)
   useEffect(() => {
     if (activeEmployee) {
-      const payload = 'https://www.kalpanaaasoftwaresolutions.in/';
+      const payload = 'https://kss-hrms-official.vercel.app/';
       QRCode.toDataURL(payload, {
         width: 320,
         margin: 2,

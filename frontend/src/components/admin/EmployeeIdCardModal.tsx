@@ -21,7 +21,7 @@ export const EmployeeIdCardModal: React.FC<EmployeeIdCardModalProps> = ({ employ
   const [isFlipped, setIsFlipped] = useState(false);
 
   useEffect(() => {
-    const websiteUrl = 'https://www.kalpanaaasoftwaresolutions.in/';
+    const websiteUrl = 'https://kss-hrms-official.vercel.app/';
     QRCode.toDataURL(websiteUrl, { 
       width: 400, margin: 1, errorCorrectionLevel: 'H',
       color: { dark: '#000000', light: '#FFFFFF' }

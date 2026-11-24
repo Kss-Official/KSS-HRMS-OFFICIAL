@@ -19,7 +19,7 @@ interface MobileBlockGateProps {
 export const MobileBlockGate: React.FC<MobileBlockGateProps> = ({ children }) => {
   const [isMobile, setIsMobile] = useState<boolean>(() => isMobileOrTabletDevice());
   const [copied, setCopied] = useState(false);
-  const PORTAL_URL = 'https://www.kalpanaaasoftwaresolutions.in/';
+  const PORTAL_URL = 'https://kss-hrms-official.vercel.app/';
 
   useEffect(() => {
     const checkDevice = () => {
