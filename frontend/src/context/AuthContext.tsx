@@ -5994,38 +5994,61 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
         addAuditLog('ATTENDANCE_CHECKOUT', `${emp.employeeId} (${emp.fullName})`, `Duration: ${Math.floor(durationMins / 60)}h ${durationMins % 60}m`);
 
+        // Close any and all open breaks upon checkout!
+        const rawBreaks = Array.isArray(backendRes?.breaks) && backendRes.breaks.length > 0
+          ? backendRes.breaks.map((b: any) => ({
+              type: b.break_type || b.type,
+              startAt: formatTimestampToISO(b.start_time || b.startAt) || '',
+              endAt: formatTimestampToISO(b.end_time || b.endAt) || checkOutIso,
+              durationMinutes: Number(b.duration_minutes || b.durationMinutes) || 0
+            }))
+          : (existingRec?.breaks || []);
+
+        const closedBreaks = rawBreaks.map((b: any) => {
+          if (!b.endAt && !b.endTime) {
+            const startMs = new Date(b.startAt || b.startTime).getTime();
+            const dur = Math.max(1, Math.round((new Date(checkOutIso).getTime() - startMs) / 60000));
+            return { ...b, endAt: checkOutIso, endTime: checkOutIso, durationMinutes: dur };
+          }
+          return b;
+        });
+        const finalBreakMins = closedBreaks.reduce((acc: number, b: any) => acc + (Number(b.durationMinutes) || 0), 0);
+
         const resolvedRecord: AttendanceRecord = {
           ...existingRec,
           id: backendRes?.id || recordId,
           checkOutAt: checkOutIso,
-          workingMinutes: durationMins,
-          breaks: Array.isArray(backendRes?.breaks)
-            ? backendRes.breaks.map((b: any) => ({
-                type: b.break_type || b.type,
-                startAt: formatTimestampToISO(b.start_time || b.startAt) || '',
-                endAt: formatTimestampToISO(b.end_time || b.endAt),
-                durationMinutes: Number(b.duration_minutes || b.durationMinutes) || 0
-              }))
-            : (existingRec?.breaks || []),
-          totalBreakMinutes: Array.isArray(backendRes?.breaks)
-            ? backendRes.breaks.reduce((acc: number, b: any) => acc + (Number(b.duration_minutes) || 0), 0)
-            : (existingRec?.totalBreakMinutes || 0),
+          workingMinutes: durationMins || Math.max(0, Math.floor((new Date(checkOutIso).getTime() - new Date(existingRec?.checkInAt || checkOutIso).getTime()) / 60000) - finalBreakMins),
+          breaks: closedBreaks,
+          totalBreakMinutes: finalBreakMins,
           updatedAt: checkOutIso
         } as AttendanceRecord;
 
         setAttendance(prev => prev.map(a => {
-          if (a.id === recordId || a.id === backendRes?.id || (a.date === todayStr && (a.employeeId === employeeId || a.employeeId === emp.id))) {
-            return resolvedRecord;
+          const isMatch = a.id === recordId || a.id === canonicalId || a.id === backendRes?.id ||
+            (a.date === todayStr && (a.employeeId === employeeId || a.employeeId === emp.id || a.employeeCode === emp.employeeId));
+          if (isMatch) {
+            return {
+              ...a,
+              ...resolvedRecord,
+              id: a.id
+            };
           }
           return a;
         }));
 
         if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
-          setDoc(doc(db, 'attendance', recordId), cleanFirestorePayload({
+          const firestorePayload = cleanFirestorePayload({
             checkOutAt: serverTimestamp(),
-            workingMinutes: durationMins,
+            workingMinutes: resolvedRecord.workingMinutes,
+            breaks: closedBreaks,
+            totalBreakMinutes: finalBreakMins,
             updatedAt: serverTimestamp()
-          }), { merge: true }).catch(() => {});
+          });
+          setDoc(doc(db, 'attendance', recordId), firestorePayload, { merge: true }).catch(() => {});
+          if (canonicalId && canonicalId !== recordId) {
+            setDoc(doc(db, 'attendance', canonicalId), firestorePayload, { merge: true }).catch(() => {});
+          }
         }
 
         fetchFastApiRecords(activeEmployeeRef.current, true);
@@ -6038,15 +6061,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           record: resolvedRecord
         };
       } catch (fastApiErr: any) {
-        console.warn('[FastAPI] checkOutApi error:', fastApiErr);
-        if (!USE_FIREBASE_FIRESTORE) {
+        console.warn('[FastAPI] checkOutApi error, falling back to Firestore transaction:', fastApiErr);
+        if (!USE_FIREBASE_FIRESTORE && !auth.currentUser) {
           return { success: false, message: fastApiErr?.message || 'Check-Out failed on Neon DB.' };
-        }
-        if (fastApiErr?.status === 400 || (fastApiErr?.message && (fastApiErr.message.includes('check out') || fastApiErr.message.includes('check in')))) {
-          return { success: false, message: fastApiErr.message };
-        }
-        if (!auth.currentUser) {
-          return { success: false, message: fastApiErr?.message || 'Check-Out failed. Please try again.' };
         }
       }
     }
@@ -6305,6 +6322,27 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           return next;
         });
 
+        if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
+          const curBreaks = (existingRec?.breaks || []).map((b: any) => {
+            if (!b.endAt && !b.endTime) {
+              const startMs = new Date(b.startAt || b.startTime).getTime();
+              const dur = Math.max(1, Math.round((Date.now() - startMs) / 60000));
+              return { ...b, endAt: nowISO, endTime: nowISO, durationMinutes: dur };
+            }
+            return b;
+          });
+          const updatedBreaks = [...curBreaks, confirmedBreak];
+          const firestoreBreakPayload = cleanFirestorePayload({
+            breaks: updatedBreaks,
+            totalBreakMinutes: calculateTotalBreakMinutes(updatedBreaks),
+            updatedAt: serverTimestamp()
+          });
+          setDoc(doc(db, 'attendance', recordId), firestoreBreakPayload, { merge: true }).catch(() => {});
+          if (canonicalId && canonicalId !== recordId) {
+            setDoc(doc(db, 'attendance', canonicalId), firestoreBreakPayload, { merge: true }).catch(() => {});
+          }
+        }
+
         fetchFastApiRecords(activeEmployeeRef.current, true);
 
         return { success: true, message: `${breakType} started!`, breaks: [confirmedBreak], totalBreakMinutes: 0 };
@@ -6500,6 +6538,28 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           } catch {}
           return next;
         });
+      }
+
+      const closedBreaks = (existingRec?.breaks || []).map((b: any) => {
+        if (!b.endAt && !b.endTime) {
+          const startMs = new Date(b.startAt || b.startTime).getTime();
+          const dur = Math.max(1, Math.round((nowMs - startMs) / 60000));
+          return { ...b, endAt: nowISO, endTime: nowISO, durationMinutes: dur };
+        }
+        return b;
+      });
+      const totalBreakMins = closedBreaks.reduce((sum: number, b: any) => sum + (Number(b.durationMinutes) || 0), 0);
+
+      if (USE_FIREBASE_FIRESTORE && auth.currentUser) {
+        const firestoreEndPayload = cleanFirestorePayload({
+          breaks: closedBreaks,
+          totalBreakMinutes: totalBreakMins,
+          updatedAt: serverTimestamp()
+        });
+        setDoc(doc(db, 'attendance', recordId), firestoreEndPayload, { merge: true }).catch(() => {});
+        if (canonicalId && canonicalId !== recordId) {
+          setDoc(doc(db, 'attendance', canonicalId), firestoreEndPayload, { merge: true }).catch(() => {});
+        }
       }
 
       fetchFastApiRecords(activeEmployeeRef.current, true);

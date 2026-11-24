@@ -718,7 +718,8 @@ export function isShiftComplete(
 ): boolean {
   if (!rec || !rec.checkInAt || !rec.checkOutAt) return false;
   const outMs = safeGetTimestampMillis(rec.checkOutAt);
-  return outMs !== null && outMs <= nowMs;
+  // Allow 60s tolerance for server timestamp clock skew
+  return outMs !== null && outMs <= (nowMs + 60000);
 }
 
 /**
@@ -1123,8 +1124,43 @@ export function resolveAttendanceRecord(
 
   const matches = attendance.filter(rec => isAttendanceForEmployee(rec, employeeOrUid, date) && (!rec.date || rec.date >= COMPANY_START_DATE));
 
+  const sanitizeResolved = (resolved: AttendanceRecord | undefined): AttendanceRecord | undefined => {
+    if (!resolved) return undefined;
+    // If another matching duplicate carries a valid checkout that the winner is missing,
+    // adopt that checkout so a real checkout is never masked by a lagging duplicate!
+    if (!resolved.checkOutAt) {
+      const checkedOutDuplicate = matches.find(m => !!m.checkOutAt && !isFabricatedCheckoutOnly(m.checkOutAt));
+      if (checkedOutDuplicate) {
+        resolved = {
+          ...resolved,
+          checkOutAt: checkedOutDuplicate.checkOutAt,
+          workingMinutes: Math.max(resolved.workingMinutes || 0, checkedOutDuplicate.workingMinutes || 0)
+        };
+      }
+    }
+    // When a shift is checked out, all breaks MUST be closed!
+    if (resolved.checkOutAt && Array.isArray(resolved.breaks)) {
+      const hasOpenBreak = resolved.breaks.some((b: any) => !b.endAt && !b.endTime);
+      if (hasOpenBreak) {
+        const coIso = formatTimestampToISO(resolved.checkOutAt) || new Date().toISOString();
+        resolved = {
+          ...resolved,
+          breaks: resolved.breaks.map((b: any) => {
+            if (!b.endAt && !b.endTime) {
+              const startIso = formatTimestampToISO(b.startAt || b.startTime) || coIso;
+              const dur = Math.max(1, Math.round((new Date(coIso).getTime() - new Date(startIso).getTime()) / 60000));
+              return { ...b, endAt: coIso, endTime: coIso, durationMinutes: dur };
+            }
+            return b;
+          })
+        };
+      }
+    }
+    return resolved;
+  };
+
   if (matches.length === 0) return undefined;
-  if (matches.length === 1) return matches[0];
+  if (matches.length === 1) return sanitizeResolved(matches[0]);
 
   const canonicalId = canonicalUid && date ? getAttendanceDocId(canonicalUid, date) : null;
 
@@ -1142,7 +1178,7 @@ export function resolveAttendanceRecord(
   //    workingMinutes. Anchoring on the canonical id removes the race entirely.
   if (canonicalId) {
     const canonicalCheckedIn = matches.find(rec => rec.id === canonicalId && !!rec.checkInAt);
-    if (canonicalCheckedIn) return canonicalCheckedIn;
+    if (canonicalCheckedIn) return sanitizeResolved(canonicalCheckedIn);
   }
 
   // 2. Otherwise prefer any record with real check-in data (never let a blank
@@ -1150,18 +1186,18 @@ export function resolveAttendanceRecord(
   const checkedIn = matches
     .filter(rec => !!rec.checkInAt)
     .sort((a, b) => (safeGetTimestampMillis(b.updatedAt || b.checkInAt) || 0) - (safeGetTimestampMillis(a.updatedAt || a.checkInAt) || 0));
-  if (checkedIn.length > 0) return checkedIn[0];
+  if (checkedIn.length > 0) return sanitizeResolved(checkedIn[0]);
 
   // 3. Exact canonical document ID, even without check-in data
   if (canonicalId) {
     const byCanonicalId = matches.find(rec => rec.id === canonicalId);
-    if (byCanonicalId) return byCanonicalId;
+    if (byCanonicalId) return sanitizeResolved(byCanonicalId);
   }
 
   // 3. Deterministic last resort: most recently updated among blanks
-  return matches
+  return sanitizeResolved(matches
     .slice()
-    .sort((a, b) => (safeGetTimestampMillis(b.updatedAt || b.createdAt) || 0) - (safeGetTimestampMillis(a.updatedAt || a.createdAt) || 0))[0];
+    .sort((a, b) => (safeGetTimestampMillis(b.updatedAt || b.createdAt) || 0) - (safeGetTimestampMillis(a.updatedAt || a.createdAt) || 0))[0]);
 }
 
 /**

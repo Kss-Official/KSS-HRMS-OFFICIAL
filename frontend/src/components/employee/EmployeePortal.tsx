@@ -961,6 +961,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     if (res.success) {
       triggerHaptic('success');
       toast.success(res.message || 'Checked out successfully.');
+      setActiveBreak(null);
+      lastBreakActionRef.current = null;
     } else {
       triggerHaptic('error');
       toast.error(res.message || 'Check-Out failed.');
@@ -1556,7 +1558,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
                   )}
 
                   {/* Break & Activity Actions (if checked in) */}
-                  {todayRecord?.checkInAt && !shiftComplete && (
+                  {todayRecord?.checkInAt && !shiftComplete && !todayRecord?.checkOutAt && (
                     <div className="w-full mt-4">
                       {activeBreak ? (() => {
                         const cfg = getBreakColorConfig(activeBreak.type);
@@ -2118,7 +2120,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
           )}
 
           {/* Break & Activity Management */}
-          {todayRecord?.checkInAt && !shiftComplete && (
+          {todayRecord?.checkInAt && !shiftComplete && !todayRecord?.checkOutAt && (
             <div className="bg-slate-900/90 rounded-2xl border border-slate-800/80 p-5 space-y-4 shadow-sm">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <div className="flex items-center gap-3">

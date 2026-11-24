@@ -396,7 +396,29 @@ async def check_out(
     if not record or not record.check_in_at:
         if payload.notes and "Auto-checked out" in payload.notes and record:
             return record
-        raise HTTPException(status_code=400, detail="Cannot check out without checking in first")
+        # Graceful auto-heal: If shift was started via Firebase or Neon record is missing,
+        # provision today's record and complete checkout seamlessly instead of hard blocking.
+        if not record:
+            cfg = await _load_company_settings(db)
+            today = company_now(cfg.timezone if cfg and cfg.timezone else None).date()
+            record = AttendanceRecord(
+                id=uuid.uuid4(),
+                employee_id=target_emp.id,
+                date=today,
+                check_in_at=now,
+                check_out_at=now,
+                working_minutes=0,
+                status=AttendanceStatus.PRESENT,
+                location_verified=True,
+                attendance_method=AttendanceMethod.PORTAL_1CLICK
+            )
+            db.add(record)
+            await db.commit()
+            await db.refresh(record)
+            invalidate_records_cache()
+            return record
+        elif not record.check_in_at:
+            record.check_in_at = now
 
     if record.check_out_at:
         # Idempotent: a retry/double-tap must not overwrite the real checkout time or inflate hours.
