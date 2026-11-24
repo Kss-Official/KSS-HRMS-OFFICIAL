@@ -134,7 +134,7 @@ async def login(credentials: LoginRequest, request: Request, db: AsyncSession = 
     _clear_failures(keys)
 
     return {
-        "access_token": create_access_token(subject=str(employee.id)),
+        "access_token": create_access_token(subject=str(employee.id), email=employee.email),
         "refresh_token": create_refresh_token(subject=str(employee.id)),
         "token_type": "bearer",
         "employee_id": employee.id,
@@ -171,7 +171,7 @@ async def refresh_access_token(payload: RefreshRequest, db: AsyncSession = Depen
     emp = (await db.execute(select(Employee).where(Employee.id == emp_id))).scalar_one_or_none()
     if emp is None or not emp.is_active:
         raise bad
-    return {"access_token": create_access_token(subject=str(emp.id)), "token_type": "bearer"}
+    return {"access_token": create_access_token(subject=str(emp.id), email=emp.email), "token_type": "bearer"}
 
 
 class FirebaseSyncRequest(BaseModel):
@@ -274,7 +274,7 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Inactive account")
 
     return {
-        "access_token": create_access_token(subject=str(emp.id)),
+        "access_token": create_access_token(subject=str(emp.id), email=emp.email),
         "refresh_token": create_refresh_token(subject=str(emp.id)),
         "token_type": "bearer",
         "employee_id": emp.id,

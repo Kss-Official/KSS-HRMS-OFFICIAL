@@ -1665,8 +1665,10 @@ export const PMDashboard: React.FC<PMDashboardProps> = ({ onNavigateTab }) => {
             <div className="flex items-center justify-between border-b border-slate-800 pb-4">
               <div className="flex items-center gap-3.5">
                 <img
-                  src={selectedEmployeeActivity.employee.profilePhotoUrl || `https://ui-avatars.com/api/?name=${encodeURIComponent(selectedEmployeeActivity.employee.fullName)}&background=0f172a&color=fff`}
+                  src={getEmployeeAvatar(selectedEmployeeActivity.employee)}
                   alt={selectedEmployeeActivity.employee.fullName}
+                  referrerPolicy="no-referrer"
+                  crossOrigin="anonymous"
                   className="w-12 h-12 rounded-2xl object-cover border-2 border-emerald-500/50 shadow-md"
                 />
                 <div>

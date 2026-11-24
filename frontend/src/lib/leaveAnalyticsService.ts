@@ -13,6 +13,7 @@
  */
 
 import { Employee, LeaveRequest, AttendanceRecord, CompanySettings } from '../types';
+import { getEmployeeAvatar } from './avatarHelper';
 import { 
   OFFICIAL_HOLIDAY_DATES_2026, 
   isNonWorkingDay, 
@@ -582,7 +583,7 @@ export function calculateLeaveAnalytics(
       fullName: emp.fullName || 'Unknown Employee',
       department: emp.department || 'General',
       designation: emp.designation || 'Staff',
-      avatarUrl: emp.profilePhotoUrl,
+      avatarUrl: getEmployeeAvatar(emp),
       status: emp.status,
       joiningDate: empJoinDate,
       lopDays: empLopDays,

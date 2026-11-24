@@ -149,7 +149,7 @@ const mapBackendToFrontendEmployee = (data: any): Employee => {
     phone: data.phone || '',
     gender: (data.gender as any) || 'Prefer not to say',
     dateOfBirth: data.date_of_birth || data.dateOfBirth || '',
-    profilePhotoUrl: data.profile_photo_url || data.profilePhotoUrl || getEmployeeAvatar(data),
+    profilePhotoUrl: getEmployeeAvatar(data),
     department: data.department || 'IT',
     designation: data.designation || 'Software Engineer',
     specialization: spec,
@@ -2380,22 +2380,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
               const resolvedWithAvatars = cleanDeduplicated.map(emp => {
                 const enrolled = emp.isFaceEnrolled || isFaceBiometricEnrolled(emp);
-                const memoryMatch = employeesRef.current.find(e => 
-                  (emp.employeeId && e.employeeId === emp.employeeId) ||
-                  (emp.id && e.id === emp.id) ||
-                  (emp.email && e.email?.toLowerCase() === emp.email.toLowerCase())
-                );
-                // Prefer authoritative Cloudinary URL from memory (hydrated from PostgreSQL)
-                const chosenPhoto = isCloudinary(emp.profilePhotoUrl)
-                  ? emp.profilePhotoUrl
-                  : isCloudinary(memoryMatch?.profilePhotoUrl)
-                  ? memoryMatch!.profilePhotoUrl
-                  : getEmployeeAvatar(emp);
-
-                // Auto-sync Cloudinary URL to Firestore if Firestore document lacks it and caller is permitted
-                if (canMigrate && isCloudinary(memoryMatch?.profilePhotoUrl) && !isCloudinary(emp.profilePhotoUrl) && emp.id) {
-                  setDoc(doc(db, 'employees', emp.id), { profilePhotoUrl: memoryMatch!.profilePhotoUrl }, { merge: true }).catch(() => { });
-                }
+                const chosenPhoto = getEmployeeAvatar(emp);
 
                 return {
                   ...emp,
@@ -2415,11 +2400,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                   return null;
                 }
                 const enrolled = fresh.isFaceEnrolled || prev.isFaceEnrolled || isFaceBiometricEnrolled(prev) || isFaceBiometricEnrolled(fresh);
-                const activePhoto = isCloudinary(fresh.profilePhotoUrl)
-                  ? fresh.profilePhotoUrl
-                  : isCloudinary(prev.profilePhotoUrl)
-                  ? prev.profilePhotoUrl
-                  : (fresh.profilePhotoUrl || getEmployeeAvatar(fresh));
+                const activePhoto = getEmployeeAvatar(fresh);
 
                 const updated = {
                   ...prev,
@@ -3777,7 +3758,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 ...fresh,
                 isFaceEnrolled: enrolled,
                 faceDescriptor: fresh.faceDescriptor || prev.faceDescriptor,
-                profilePhotoUrl: fresh.profilePhotoUrl || prev.profilePhotoUrl
+                profilePhotoUrl: getEmployeeAvatar(fresh)
               };
               try {
                 localStorage.setItem('kss_v1_cached_active_employee', JSON.stringify(updated));
@@ -3991,16 +3972,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       // Verify whether existing FastAPI JWT token belongs to this authenticated Firebase user
       const currentJwt = getAuthToken();
       let jwtMatchesUser = false;
+      const prevSessionEmail = (localStorage.getItem('kss_v1_session_email') || '').toLowerCase().trim();
+
       if (currentJwt && !isTokenExpired(currentJwt)) {
         try {
           const payload = JSON.parse(atob(currentJwt.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')));
-          if (payload.email && cleanEmail && payload.email.toLowerCase() === cleanEmail) {
+          const tokenEmail = payload.email ? String(payload.email).toLowerCase().trim() : '';
+          const tokenSub = String(payload.sub || '');
+
+          if (tokenEmail && cleanEmail && (tokenEmail === cleanEmail || cleanEmail.includes(tokenEmail) || tokenEmail.includes(cleanEmail))) {
+            jwtMatchesUser = true;
+          } else if (tokenSub && (tokenSub === firebaseUser.uid || tokenSub === cleanEmail)) {
+            jwtMatchesUser = true;
+          } else if (!tokenEmail && prevSessionEmail && cleanEmail && prevSessionEmail === cleanEmail) {
+            // Unexpired token matching ongoing authenticated user session
             jwtMatchesUser = true;
           }
         } catch {}
       }
       if (!jwtMatchesUser && currentJwt) {
-        console.warn('[Auth] Mismatched JWT token detected for Firebase user. Purging stale JWT.');
+        console.debug('[Auth] Mismatched JWT token detected for Firebase user. Purging stale JWT.');
         removeAuthToken();
       }
 

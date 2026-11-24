@@ -667,7 +667,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   // Sync profile state when active employee changes
   useEffect(() => {
     if (activeEmployee) {
-      setProfilePhoto(activeEmployee.profilePhotoUrl || AVATAR_PRESETS[0]);
+      setProfilePhoto(getEmployeeAvatar(activeEmployee));
       setFullName(activeEmployee.fullName);
       setPhone(activeEmployee.phone);
       setGender(activeEmployee.gender);
@@ -1226,8 +1226,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         <div className={`flex items-center gap-5 text-center md:text-left ${animations.stagger.item(1)}`}>
           <div className="relative group">
             <img
-              src={activeEmployee.profilePhotoUrl || profilePhoto || getEmployeeAvatar(activeEmployee)}
+              src={getEmployeeAvatar(activeEmployee)}
               alt={activeEmployee.fullName}
+              referrerPolicy="no-referrer"
+              crossOrigin="anonymous"
               onError={(e) => {
                 e.currentTarget.onerror = null;
                 e.currentTarget.src = `https://ui-avatars.com/api/?name=${encodeURIComponent(activeEmployee.fullName)}&background=0f172a&color=fff`;
@@ -2409,8 +2411,10 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
               <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-6 sm:p-8 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="flex flex-col sm:flex-row items-center gap-6 text-center sm:text-left">
                   <img
-                    src={profilePhoto || activeEmployee.profilePhotoUrl}
+                    src={getEmployeeAvatar(activeEmployee)}
                     alt={fullName}
+                    referrerPolicy="no-referrer"
+                    crossOrigin="anonymous"
                     className="w-24 h-24 sm:w-28 sm:h-28 rounded-3xl object-cover border-4 border-slate-800 shadow-2xl shadow-blue-500/20"
                   />
                   <div className="space-y-1.5">
