@@ -41,6 +41,7 @@ import {
   formatTimestampToISO,
   safeGetTimestampMillis,
   resolveAttendanceRecord,
+  isAttendanceForEmployee,
   calculateTotalBreakMinutes,
   MAX_BREAK_MINUTES,
   COMPANY_TIMEZONE,
@@ -2731,12 +2732,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               }
 
               // ROOT-LEVEL PURGE: Dummy / test leave requests (e.g. test, ghfgds, dummy-*, leave-*)
-              const isDummyReq = (raw.reason && (
+              const isPriyankaErasedReq = (
+                raw.id === 'LR_KSS2407009_2026-12-01_Sick Leave' || raw.id === 'a357b34f-c5c1-4838-9bef-a0633b4f797f' ||
+                raw.id === 'LR_KSS2407009_2026-12-28_WFH' || raw.id === '47fe8d9e-e6ae-4990-bcfd-479907678732' ||
+                raw.id === 'LR_KSS2407009_2026-12-02_WFH' || raw.id === 'fe24ef55-57cc-43d9-be4b-7102cd407a3e' ||
+                raw.id === 'LR_KSS2407009_2026-12-30_Sick Leave' || raw.id === '2a6cc5ac-6eab-4843-9478-359319968010' ||
+                raw.id === 'LR_KSS2407009_2026-11-12_WFH' || raw.id === '54e24c58-505c-4449-8aac-55f55ee8d09e' ||
+                (raw as any).requestCode === 'LR_KSS2407009_2026-12-01_Sick Leave' ||
+                (raw as any).requestCode === 'LR_KSS2407009_2026-12-28_WFH' ||
+                (raw as any).requestCode === 'LR_KSS2407009_2026-12-02_WFH' ||
+                (raw as any).requestCode === 'LR_KSS2407009_2026-12-30_Sick Leave' ||
+                (raw as any).requestCode === 'LR_KSS2407009_2026-11-12_WFH'
+              );
+
+              const isDummyReq = isPriyankaErasedReq || (raw.reason && (
                 raw.reason.toLowerCase().trim() === 'test' ||
                 raw.reason.toLowerCase().includes('dummy') ||
                 raw.reason.toLowerCase().includes('ghfgds') ||
                 raw.reason.toLowerCase().includes('test leave')
-              )) || raw.id.startsWith('dummy-') || raw.id.startsWith('test-') || raw.id.startsWith('leave-') || (raw as any).is_dummy === true || (raw as any).isDummy === true || raw.id === 'LR-UVLV1K5' || raw.id === 'LR_KSS2407014_2026-08-19_WFH';
+              )) || raw.id.startsWith('dummy-') || raw.id.startsWith('test-') || raw.id.startsWith('leave-') || (raw as any).is_dummy === true || (raw as any).isDummy === true || raw.id === 'LR-UVLV1K5' || raw.id === 'LR_KSS2407014_2026-08-19_WFH' || raw.id === 'LR-MWOYNFID' || raw.id === '6095b9e9-3a84-402a-8057-e2d8e9bf9d70';
 
               if (isDummyReq) {
                 if (roleRef.current === 'SUPER_ADMIN' || roleRef.current === 'HR_ADMIN') {
@@ -3343,8 +3357,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         (req.startDate && req.startDate <= '2026-09-05' && (req.endDate || req.startDate) >= '2026-08-27') ||
         ((req as any).fromDate && (req as any).fromDate <= '2026-09-05' && ((req as any).toDate || (req as any).fromDate) >= '2026-08-27')
       );
-      const isDummy = (req.reason && (req.reason.toLowerCase().includes('dummy') || req.reason.toLowerCase().includes('test leave') || req.reason.toLowerCase().trim() === 'test' || req.reason.toLowerCase().includes('ghfgds'))) ||
-        req.id.startsWith('dummy-') || req.id.startsWith('test-') || req.id.startsWith('leave-') || (req as any).is_dummy === true || (req as any).isDummy === true || req.id === 'LR-UVLV1K5' || req.id === 'LR_KSS2407014_2026-08-19_WFH';
+      const isPriyankaErased = (
+        req.id === 'LR_KSS2407009_2026-12-01_Sick Leave' || req.id === 'a357b34f-c5c1-4838-9bef-a0633b4f797f' ||
+        req.id === 'LR_KSS2407009_2026-12-28_WFH' || req.id === '47fe8d9e-e6ae-4990-bcfd-479907678732' ||
+        req.id === 'LR_KSS2407009_2026-12-02_WFH' || req.id === 'fe24ef55-57cc-43d9-be4b-7102cd407a3e' ||
+        req.id === 'LR_KSS2407009_2026-12-30_Sick Leave' || req.id === '2a6cc5ac-6eab-4843-9478-359319968010' ||
+        req.id === 'LR_KSS2407009_2026-11-12_WFH' || req.id === '54e24c58-505c-4449-8aac-55f55ee8d09e' ||
+        (req as any).requestCode === 'LR_KSS2407009_2026-12-01_Sick Leave' ||
+        (req as any).requestCode === 'LR_KSS2407009_2026-12-28_WFH' ||
+        (req as any).requestCode === 'LR_KSS2407009_2026-12-02_WFH' ||
+        (req as any).requestCode === 'LR_KSS2407009_2026-12-30_Sick Leave' ||
+        (req as any).requestCode === 'LR_KSS2407009_2026-11-12_WFH'
+      );
+      const isDummy = isPriyankaErased || (req.reason && (req.reason.toLowerCase().includes('dummy') || req.reason.toLowerCase().includes('test leave') || req.reason.toLowerCase().trim() === 'test' || req.reason.toLowerCase().includes('ghfgds'))) ||
+        req.id.startsWith('dummy-') || req.id.startsWith('test-') || req.id.startsWith('leave-') || (req as any).is_dummy === true || (req as any).isDummy === true || req.id === 'LR-UVLV1K5' || req.id === 'LR_KSS2407014_2026-08-19_WFH' || req.id === 'LR-MWOYNFID' || req.id === '6095b9e9-3a84-402a-8057-e2d8e9bf9d70';
       if ((isAccidental || isDummy) && req.id) {
         toRemoveLeaveIds.add(req.id);
         if (auth.currentUser) {
@@ -3690,7 +3716,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 updatedAt: r.updated_at || new Date().toISOString()
               };
             });
-            setAttendance(mappedAtt);
+            setAttendance(prev => {
+              // Preserve any active optimistic open breaks that were started locally
+              const next = mappedAtt.map(freshRec => {
+                const prevRec = prev.find(p => p.id === freshRec.id || (p.employeeId === freshRec.employeeId && p.date === freshRec.date));
+                if (prevRec && Array.isArray(prevRec.breaks)) {
+                  const prevOpenBreak = prevRec.breaks.find((b: any) => !b.endAt && !b.endTime);
+                  const freshOpenBreak = (freshRec.breaks || []).find((b: any) => !b.endAt && !b.endTime);
+                  // If prev had an open break that fresh doesn't have yet, keep it!
+                  if (prevOpenBreak && !freshOpenBreak) {
+                    const freshBreaks = freshRec.breaks || [];
+                    return {
+                      ...freshRec,
+                      breaks: [...freshBreaks, prevOpenBreak]
+                    };
+                  }
+                }
+                return freshRec;
+              });
+              return next;
+            });
             setAttendanceSyncStatus('synced');
             setTimeout(() => {
               try {
@@ -6174,6 +6219,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isToday = !r.date || r.date === todayStr;
       if (!isToday) return false;
       return r.id === recordId ||
+        isAttendanceForEmployee(r, emp || { id: employeeId, employeeId, uid: empUid }, todayStr) ||
         r.employeeId === employeeId ||
         (emp && (r.employeeId === emp.id || r.employeeId === emp.employeeId || r.employeeCode === emp.employeeId));
     };
@@ -6384,6 +6430,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const isToday = !r.date || r.date === todayStr;
       if (!isToday) return false;
       return r.id === recordId ||
+        isAttendanceForEmployee(r, emp || { id: employeeId, employeeId, uid: empUid }, todayStr) ||
         r.employeeId === employeeId ||
         (emp && (r.employeeId === emp.id || r.employeeId === emp.employeeId || r.employeeCode === emp.employeeId));
     };

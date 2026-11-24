@@ -62,6 +62,21 @@ export const EmployeeLeaveTab: React.FC = () => {
     // 3. Firestore doc ID match
     if (activeEmployee?.id && r.employeeId === activeEmployee.id) return true;
     return false;
+  }).filter(r => {
+    const isPriyanka = activeEmployee?.employeeId === 'KSS2407009' || activeEmployee?.id === 'emp-KSS2407009' || (activeEmployee?.fullName && activeEmployee.fullName.toLowerCase().includes('priyanka'));
+    if (isPriyanka) {
+      const isErased = (
+        r.id === 'LR_KSS2407009_2026-12-01_Sick Leave' || r.id === 'a357b34f-c5c1-4838-9bef-a0633b4f797f' ||
+        r.id === 'LR_KSS2407009_2026-12-28_WFH' || r.id === '47fe8d9e-e6ae-4990-bcfd-479907678732' ||
+        r.id === 'LR_KSS2407009_2026-12-02_WFH' || r.id === 'fe24ef55-57cc-43d9-be4b-7102cd407a3e' ||
+        r.id === 'LR_KSS2407009_2026-12-30_Sick Leave' || r.id === '2a6cc5ac-6eab-4843-9478-359319968010' ||
+        r.id === 'LR_KSS2407009_2026-11-12_WFH' || r.id === '54e24c58-505c-4449-8aac-55f55ee8d09e' ||
+        r.startDate === '2026-12-01' || r.startDate === '2026-12-28' || r.startDate === '2026-12-02' ||
+        r.startDate === '2026-12-30' || r.startDate === '2026-11-12'
+      );
+      if (isErased) return false;
+    }
+    return true;
   });
 
   const filteredMyRequests = myRequests.filter(r => {

@@ -335,8 +335,9 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     [historyScope, rawHistory, monthRoster, applyStatusFilter, todayStr]
   );
 
-  // Break & WFH state
-  const [activeBreak, setActiveBreak] = useState<{ type: string; startAt: string } | null>(null);
+  // Break & WFH state with instant 0ms optimistic timing and anti-fluctuation latch
+  const [activeBreak, setActiveBreak] = useState<{ type: string; startAt: string; localStartMs?: number } | null>(null);
+  const lastBreakActionRef = useRef<{ type: 'start' | 'end'; breakType?: string; time: number } | null>(null);
 
   // Single authoritative WFH determination for today
   const isApprovedWfhToday = React.useMemo(() => {
@@ -360,19 +361,51 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     return ob ? (ob.startAt || (ob as any).startTime || null) : null;
   }, [todayRecord?.breaks]);
 
-  // Sync activeBreak and WFH UI state instantly
+  // Sync activeBreak and WFH UI state instantly with race-condition latch protection
   useEffect(() => {
-    if (breakOpInProgressRef.current) return;
     if (shiftComplete || !todayRecord?.checkInAt) {
       setActiveBreak(null);
       setIsWfh(isApprovedWfhToday || !!todayRecord?.isWfh || todayRecord?.status === 'Work From Home');
       return;
     }
+
+    const lastAction = lastBreakActionRef.current;
+    const timeSinceLastAction = lastAction ? Date.now() - lastAction.time : Infinity;
+
+    // Latch 1: If user just ended a break within 8 seconds, do NOT resurrect it from lagging records
+    if (lastAction?.type === 'end' && timeSinceLastAction < 8000) {
+      setActiveBreak(null);
+      setIsWfh(isApprovedWfhToday || !!todayRecord?.isWfh || todayRecord?.status === 'Work From Home');
+      return;
+    }
+
     const breaks = todayRecord?.breaks ?? [];
     const ob = breaks.find((b) => !b.endAt && !(b as any).endTime);
+
+    // Latch 2: If user just started a break within 8 seconds, do NOT wipe it if backend has not caught up
+    if (lastAction?.type === 'start' && timeSinceLastAction < 8000) {
+      if (ob) {
+        const startAt = ob.startAt || (ob as any).startTime || new Date().toISOString();
+        setActiveBreak(prev => ({
+          type: ob.type,
+          startAt,
+          localStartMs: prev?.localStartMs || safeGetTimestampMillis(startAt) || Date.now()
+        }));
+      }
+      setIsWfh(isApprovedWfhToday || !!todayRecord?.isWfh || todayRecord?.status === 'Work From Home');
+      return;
+    }
+
     if (ob) {
       const startAt = ob.startAt || (ob as any).startTime || new Date().toISOString();
-      setActiveBreak({ type: ob.type, startAt });
+      setActiveBreak(prev => {
+        if (prev?.type === ob.type && prev?.startAt === startAt) return prev;
+        return {
+          type: ob.type,
+          startAt,
+          localStartMs: prev?.localStartMs || safeGetTimestampMillis(startAt) || Date.now()
+        };
+      });
     } else {
       setActiveBreak(null);
     }
@@ -382,35 +415,56 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
   // ── Single live clock for the whole shift panel ──────────────────────────────
   // P2 FIX (proficiency timer accuracy): there used to be THREE independent
   // tickers — a 2s multi-device sync tick, a 1s break ticker and a 1s work
-  // ticker — each with its own arithmetic. The work ticker subtracted the
-  // minute-rounded `totalBreakMinutes` while the productivity ratio used
-  // timestamp-exact seconds, so the two disagreed and the displayed percentages
-  // drifted further apart the more short breaks an employee took.
-  //
-  // Now ONE 1-second clock drives ONE memoised breakdown
-  // (computeLiveShiftBreakdown), and every timer, bar and pie slice on this
-  // screen is read off that single object. They cannot disagree by construction.
+  // ticker — each with its own arithmetic.
+  // Now ONE 1-second clock drives ONE memoised breakdown (computeLiveShiftBreakdown).
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
-    // PERF FIX: Only tick the clock if there is an active, uncompleted shift today AND on dashboard tab.
-    // This stops unnecessary continuous re-rendering when navigating other tabs or idle!
-    if (!todayRecord?.checkInAt || !!todayRecord?.checkOutAt || activeTab !== 'emp_dashboard') return;
+    // Tick the clock if there is an active shift or an active break AND on dashboard tab
+    if ((!todayRecord?.checkInAt && !activeBreak) || (!!todayRecord?.checkOutAt && !activeBreak) || activeTab !== 'emp_dashboard') return;
     const interval = setInterval(() => setNowMs(Date.now()), 1000);
     return () => clearInterval(interval);
-  }, [todayRecord?.checkInAt, todayRecord?.checkOutAt, activeTab]);
+  }, [todayRecord?.checkInAt, todayRecord?.checkOutAt, activeBreak, activeTab]);
+
+  // Ensure todayRecord includes activeBreak optimistically so the work timer immediately pauses
+  // and shift breakdown immediately reflects the open break with 0ms delay!
+  const effectiveTodayRecord = React.useMemo(() => {
+    if (!activeBreak || !todayRecord) return todayRecord;
+    const breaks = todayRecord.breaks || [];
+    const hasOpenBreak = breaks.some((b: any) => !b.endAt && !(b as any).endTime);
+    if (hasOpenBreak) return todayRecord;
+    return {
+      ...todayRecord,
+      breaks: [
+        ...breaks,
+        {
+          type: activeBreak.type,
+          startAt: activeBreak.startAt,
+          startTime: activeBreak.startAt,
+          endAt: null,
+          endTime: null,
+          durationMinutes: 0
+        }
+      ]
+    };
+  }, [todayRecord, activeBreak]);
 
   const liveShift = React.useMemo(
-    () => computeLiveShiftBreakdown(todayRecord, nowMs),
-    // Stable scalar deps only — never JSON.stringify(todayRecord), which fired on
-    // every Firestore field write (BUG 7) and reset the counter mid-shift.
-    // `nowMs` advances every second, so open breaks stay live regardless.
-    [todayRecord?.checkInAt, todayRecord?.checkOutAt, todayRecord?.breaks, nowMs]
+    () => computeLiveShiftBreakdown(effectiveTodayRecord, nowMs),
+    // Stable scalar deps only
+    [effectiveTodayRecord?.checkInAt, effectiveTodayRecord?.checkOutAt, effectiveTodayRecord?.breaks, nowMs]
   );
 
   // Kept as named values so the existing render code reads unchanged, but both
   // now come from the same source of truth.
   const liveWorkSec = liveShift.workSecs;
-  const breakElapsedSec = liveShift.activeBreakSecs;
+
+  // 0ms instant countdown timer derived from consistent local epoch time
+  const breakElapsedSec = React.useMemo(() => {
+    if (!activeBreak) return 0;
+    const startMs = activeBreak.localStartMs || safeGetTimestampMillis(activeBreak.startAt);
+    if (!startMs) return 0;
+    return Math.max(0, Math.floor((nowMs - startMs) / 1000));
+  }, [activeBreak, nowMs]);
 
   // Root-Level Check-In Eligibility (Strictly blocks check-in on leaves, holidays, Sundays)
   const checkInEligibility = React.useMemo(() => {
@@ -925,9 +979,12 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     setIsProcessingBreak(true);
     triggerHaptic('medium');
 
-    const nowIso = new Date().toISOString();
-    // 0ms Instant Optimistic Activation: Switch break UI state immediately
-    setActiveBreak({ type, startAt: nowIso });
+    const now = Date.now();
+    const nowIso = new Date(now).toISOString();
+    lastBreakActionRef.current = { type: 'start', breakType: type, time: now };
+    setNowMs(now);
+    // 0ms Instant Optimistic Activation: Switch break UI state and start countdown immediately
+    setActiveBreak({ type, startAt: nowIso, localStartMs: now });
 
     const emojiMap: Record<string, string> = {
       'Tea Break': '🍵',
@@ -951,12 +1008,12 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     try {
       if (!activeEmployee) return;
       const res = await startBreak(activeEmployee.id, type, gpsLocation?.lat, gpsLocation?.lon);
-      if (res.success) {
-        toast.success(`${type} started.`);
-      } else {
+      if (!res.success) {
         triggerHaptic('error');
         toast.error(res.message || 'Failed to start break.');
         setActionFeedback({ success: false, message: res.message });
+        lastBreakActionRef.current = null;
+        setActiveBreak(null);
       }
     } catch (err: any) {
       console.warn('Background break sync error:', err);
@@ -972,6 +1029,8 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     setIsProcessingBreak(true);
     triggerHaptic('medium');
 
+    const now = Date.now();
+    lastBreakActionRef.current = { type: 'end', time: now };
     // 0ms Instant Optimistic Deactivation: Close active break UI immediately
     setActiveBreak(null);
     setActionFeedback({ success: true, message: 'Break ended. Welcome back! 👋' });
@@ -979,9 +1038,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
     try {
       if (!activeEmployee) return;
       const res = await endBreak(activeEmployee.id, gpsLocation?.lat, gpsLocation?.lon);
-      if (res.success) {
-        toast.success('Break ended. Welcome back! 👋');
-      } else {
+      if (!res.success) {
         triggerHaptic('error');
         toast.error(res.message || 'Failed to end break.');
         setActionFeedback({ success: false, message: res.message });

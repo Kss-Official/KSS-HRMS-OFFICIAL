@@ -439,7 +439,10 @@ async def start_break(
         active_b = active_rows[0]
         if active_b.type == payload.break_type:
             return active_b
-        raise HTTPException(status_code=400, detail=f"Cannot start {payload.break_type.value}: An active {active_b.type.value} is already in progress. Please end it first.")
+        # Auto-close prior open break so the employee isn't blocked by an orphaned break
+        for b in active_rows:
+            b.end_time = now
+            b.duration_minutes = max(1, int((now - b.start_time).total_seconds() / 60.0))
 
     new_break = AttendanceBreak(id=uuid.uuid4(), attendance_id=att.id, type=payload.break_type, start_time=now, duration_minutes=0)
     db.add(new_break)
