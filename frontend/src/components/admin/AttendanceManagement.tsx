@@ -30,7 +30,7 @@ import {
   Coffee,
   ArrowUpDown
 } from 'lucide-react';
-import { generateAttendanceReportPdf } from '../../lib/pdfGenerator';
+import { generateAttendanceReportPdf, generateAttendanceLedgerPdf } from '../../lib/pdfGenerator';
 import { EmployeeMonthlyAttendanceModal } from '../common/EmployeeMonthlyAttendanceModal';
 import { useHaptic } from '../../hooks/useHaptic';
 import { isExecutiveOrLeadership, isAttendanceExempt, getWorkDate, formatShiftTiming, computeTotalLeaveBalances, computeEmploymentType, isLateCheckIn, isWfhType } from '../../lib/attendanceEngine';
@@ -366,6 +366,28 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
     }
   };
 
+  // ─── PDF Export for Attendance Ledger Master ────────────────────────────────
+  const handleExportLedgerPdf = () => {
+    triggerHaptic();
+    const presets = getCyclePresetList();
+    const activePreset = presets.find(p => p.isCurrent) || presets[0];
+    try {
+      generateAttendanceLedgerPdf({
+        employees: filteredEmployees,
+        attendance,
+        leaveRequests,
+        settings,
+        cycleLabel: activePreset.label,
+        preparedBy: activeEmployee?.fullName || 'Attendance Master',
+        leaveFilterPeriod
+      });
+      toast.success('✓ Attendance Ledger Master PDF exported successfully!');
+    } catch (err: any) {
+      console.error('Error exporting ledger PDF:', err);
+      toast.error(`PDF export failed: ${err?.message || 'Unknown error'}`);
+    }
+  };
+
   const handleSyncAllEmployeeShifts = async () => {
     if (!canEditShifts) return;
     triggerHaptic();
@@ -656,7 +678,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
             <span>Export Excel</span>
           </button>
           <button
-            onClick={() => generateAttendanceReportPdf(attendance, settings, 'Attendance Master Roster Statement')}
+            onClick={handleExportLedgerPdf}
             className="flex items-center justify-center gap-2 px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-md shadow-blue-900/40"
           >
             <FileDown className="w-4 h-4" />

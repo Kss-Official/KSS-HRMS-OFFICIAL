@@ -24,7 +24,8 @@ import {
   OFFICIAL_HOLIDAY_DATES_2026, 
   isNonWorkingDay, 
   isWfhType,
-  WEEKLY_OFF_DAYS 
+  WEEKLY_OFF_DAYS,
+  computeTotalLeaveBalances
 } from './attendanceEngine';
 import { todayInIST } from './absoluteTime';
 
@@ -54,6 +55,9 @@ export interface EmployeeLeaveLopItem {
   elDays: number;
   slDays: number;
   totalLeaveDays: number;
+  elBalance?: number;
+  slBalance?: number;
+  specialization?: string;
   leaveDays: LeaveLopDayDetail[];
 }
 
@@ -481,6 +485,9 @@ export function computeLeaveLopSummary(
     grandElDays += empEl;
     grandSlDays += empSl;
 
+    // Calculate balances at interval end date
+    const empBalances = computeTotalLeaveBalances(emp, rawLeaveRequests, new Date(`${interval.endDate}T23:59:59`));
+
     employeeItems.push({
       employeeId: emp.id,
       employeeCode: emp.employeeId || emp.id,
@@ -493,6 +500,8 @@ export function computeLeaveLopSummary(
       elDays: empEl,
       slDays: empSl,
       totalLeaveDays: empTotal,
+      elBalance: empBalances?.earnLeave?.balance ?? 0,
+      slBalance: empBalances?.sickLeave?.balance ?? 0,
       leaveDays: leaveDayDetails
     });
   }
@@ -659,7 +668,7 @@ export async function exportLeaveSummaryToExcel(
   titleRow.font = { name: 'Arial', size: 14, bold: true, color: { argb: 'FFFFFF' } };
   titleRow.alignment = { vertical: 'middle' };
   titleRow.height = 28;
-  ws.mergeCells('A1:I1');
+  ws.mergeCells('A1:K1');
   ws.getCell('A1').fill = {
     type: 'pattern',
     pattern: 'solid',
@@ -697,6 +706,8 @@ export async function exportLeaveSummaryToExcel(
     'EL Days',
     'SL Days',
     'Total Days',
+    'EL Balance',
+    'SL Balance',
     'Dates & Notes Detail'
   ]);
   tableHeader.font = { bold: true, color: { argb: 'FFFFFF' } };
@@ -721,6 +732,8 @@ export async function exportLeaveSummaryToExcel(
       emp.elDays,
       emp.slDays,
       emp.totalLeaveDays,
+      emp.elBalance ?? 0,
+      emp.slBalance ?? 0,
       detailsStr
     ]);
 
@@ -728,9 +741,14 @@ export async function exportLeaveSummaryToExcel(
     row.getCell(6).alignment = { horizontal: 'right' };
     row.getCell(7).alignment = { horizontal: 'right' };
     row.getCell(8).alignment = { horizontal: 'right' };
+    row.getCell(9).alignment = { horizontal: 'right' };
+    row.getCell(10).alignment = { horizontal: 'right' };
   }
 
   // Summary Reconciled Row
+  const totalElBal = summary.items.reduce((s, e) => s + (e.elBalance || 0), 0);
+  const totalSlBal = summary.items.reduce((s, e) => s + (e.slBalance || 0), 0);
+
   const totalRow = ws.addRow([
     'TOTAL',
     'ALL ACTIVE STAFF',
@@ -740,6 +758,8 @@ export async function exportLeaveSummaryToExcel(
     summary.totalElDays,
     summary.totalSlDays,
     summary.totalLeaveDays,
+    totalElBal,
+    totalSlBal,
     'Reconciled Overall Total'
   ]);
   totalRow.font = { bold: true };
@@ -750,6 +770,8 @@ export async function exportLeaveSummaryToExcel(
   totalRow.getCell(6).alignment = { horizontal: 'right' };
   totalRow.getCell(7).alignment = { horizontal: 'right' };
   totalRow.getCell(8).alignment = { horizontal: 'right' };
+  totalRow.getCell(9).alignment = { horizontal: 'right' };
+  totalRow.getCell(10).alignment = { horizontal: 'right' };
 
   // Set Column Widths
   ws.columns = [
@@ -761,6 +783,8 @@ export async function exportLeaveSummaryToExcel(
     { width: 12 }, // EL
     { width: 12 }, // SL
     { width: 14 }, // Total
+    { width: 13 }, // EL Bal
+    { width: 13 }, // SL Bal
     { width: 45 }  // Details
   ];
 

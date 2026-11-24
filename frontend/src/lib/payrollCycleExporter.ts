@@ -10,7 +10,8 @@ import {
   resolveAttendanceRecord,
   isWfhType,
   isApprovedWfhForEmployee,
-  getWorkDate
+  getWorkDate,
+  computeTotalLeaveBalances
 } from './attendanceEngine';
 import { toISTTimeString } from './absoluteTime';
 
@@ -42,6 +43,7 @@ export interface EmployeeCycleMetrics {
   department: string;
   designation: string;
   employmentType: string;
+  specialization: string;
   joiningDate: string;
   bankAccount: string;
   
@@ -54,7 +56,12 @@ export interface EmployeeCycleMetrics {
   wfhDays: number;
   halfDays: number;
   paidLeaveDays: number;
+  elDays: number;
+  slDays: number;
+  elBalance: number;
+  slBalance: number;
   lossOfPayDays: number;
+  totalLeaveDays: number;
   payableDays: number;
   attendanceRate: number; // percentage (0 - 100)
 
@@ -70,6 +77,47 @@ export interface EmployeeCycleMetrics {
 
   // Day-by-Day Map
   dailyDetails: Record<string, DayStatusDetail>;
+}
+
+/**
+ * Standard Specialization Resolver aligned with Attendance Ledger
+ */
+export function getEmployeeSpecialization(emp: Employee): string {
+  const desig = (emp.designation || '').toLowerCase();
+  const name = (emp.fullName || '').toLowerCase();
+  const empId = emp.employeeId || '';
+  const role = String(emp.role || '').toUpperCase();
+
+  if (role === 'PROJECT_MANAGER' || desig.includes('project manager') || empId === 'KSS2407003' || name.includes('koushik')) {
+    return 'Project Management';
+  }
+  if ((emp as any).isTechLead || role === 'TECH_LEAD' || desig.includes('tech lead') || desig.includes('technical lead') || empId === 'KSS2407011' || empId === 'KSS2407012' || name.includes('jason') || name.includes('satya ranjan')) {
+    return 'Technical Leadership';
+  }
+  if (empId === 'KSS2407014' || empId === 'KSS2407016' || name.includes('jigyansha') || name.includes('jingyasha')) {
+    return 'Generative AI';
+  }
+  if (empId === 'KSS2407004' || name.includes('asbin')) return 'Frontend Development';
+  if (empId === 'KSS2407005' || name.includes('thabeethal')) return 'Backend Development';
+  if (empId === 'KSS2407006' || name.includes('kuruva') || name.includes('mahesh')) return 'UI/UX Design';
+  if (empId === 'KSS2407007' || name.includes('ritish')) return 'UI/UX Design';
+  if (empId === 'KSS2407008' || name.includes('pratiksha')) return 'Full Stack Development';
+  if (empId === 'KSS2407009' || name.includes('priyanka')) return 'Full Stack Development';
+  if (empId === 'KSS2407010' || name.includes('prahlad')) return 'Frontend Development';
+  if (empId === 'KSS2407013' || name.includes('akash')) return 'Backend Development';
+  if (empId === 'KSS2407015' || name.includes('rahul kr pathak') || name.includes('pathak')) return 'Solution Architecture';
+  if (empId === 'KSS2407017' || name.includes('shruti')) return 'Full Stack Development';
+  if (name.includes('hr department') || (emp.department || '').toLowerCase().includes('hr')) return 'HR Operations';
+
+  if (emp.specialization && typeof emp.specialization === 'string' && emp.specialization.trim()) {
+    const s = emp.specialization.trim();
+    return (s === 'UI Design' || s === 'UX Design') ? 'UI/UX Design' : s;
+  }
+  if (Array.isArray(emp.skills) && emp.skills.length > 0) {
+    const s = emp.skills[0];
+    return (s === 'UI Design' || s === 'UX Design') ? 'UI/UX Design' : s;
+  }
+  return 'Full Stack Development';
 }
 
 export interface CycleExportOptions {
@@ -238,6 +286,8 @@ export function computeEmployeeCycleMetrics(
   let wfhDays = 0;
   let halfDays = 0;
   let paidLeaveDays = 0;
+  let elDays = 0;
+  let slDays = 0;
   let lossOfPayDays = 0;
 
   for (const dateStr of dates) {
@@ -292,36 +342,53 @@ export function computeEmployeeCycleMetrics(
     rosteredWorkingDays++;
 
     // 3. Check Approved Leaves (Earn Leave, Sick Leave, Casual Leave)
-    const hasApprovedLeave = hasApprovedLeaveOn(leaveRequests, emp, dateStr, EXCUSED_LEAVE_TYPES as unknown as string[]) ||
-      leaveRequests.some(r => {
-        if (!r || isWfhType(r.type) || isWfhType(r.leaveCategory)) return false;
-        const isApp = r.status === 'Approved' ||
-          ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') &&
-           (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'));
-        if (!isApp) return false;
-        const matchesEmp =
-          (!!r.employeeId && (r.employeeId === emp.employeeId || r.employeeId === emp.id || r.employeeId === emp.uid)) ||
-          (!!(r as any).employeeCode && ((r as any).employeeCode === emp.employeeId || (r as any).employeeCode === emp.id)) ||
-          (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id || r.employeeUid === emp.employeeId)) ||
-          (!!r.employeeName && !!emp.fullName && (
-            r.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase()
-          ));
-        if (!matchesEmp) return false;
-        const s = r.startDate || (r as any).fromDate;
-        const e = r.endDate || (r as any).toDate || s;
-        return s && e && dateStr >= s && dateStr <= e;
-      });
+    const matchedLeave = leaveRequests.find(r => {
+      if (!r || isWfhType(r.type) || isWfhType(r.leaveCategory)) return false;
+      const isApp = r.status === 'Approved' ||
+        ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') &&
+         (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'));
+      if (!isApp) return false;
+      const matchesEmp =
+        (!!r.employeeId && (r.employeeId === emp.employeeId || r.employeeId === emp.id || r.employeeId === emp.uid)) ||
+        (!!(r as any).employeeCode && ((r as any).employeeCode === emp.employeeId || (r as any).employeeCode === emp.id)) ||
+        (!!r.employeeUid && (r.employeeUid === emp.uid || r.employeeUid === emp.id || r.employeeUid === emp.employeeId)) ||
+        (!!r.employeeName && !!emp.fullName && (
+          r.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase()
+        ));
+      if (!matchesEmp) return false;
+      const s = r.startDate || (r as any).fromDate;
+      const e = r.endDate || (r as any).toDate || s;
+      return s && e && dateStr >= s && dateStr <= e;
+    });
+
+    const hasApprovedLeave = !!matchedLeave || hasApprovedLeaveOn(leaveRequests, emp, dateStr, EXCUSED_LEAVE_TYPES as unknown as string[]);
 
     if (hasApprovedLeave) {
       paidLeaveDays++;
-      dailyDetails[dateStr] = {
-        date: dateStr,
-        dayOfWeek,
-        dayNumber,
-        status: 'Approved Leave',
-        code: 'L',
-        notes: 'Sanctioned Paid Leave'
-      };
+      const typeStr = (matchedLeave?.type || matchedLeave?.leaveCategory || '').toLowerCase();
+      const reasonStr = (matchedLeave?.reason || '').toLowerCase();
+      const isSick = typeStr.includes('sick') || reasonStr.includes('sick');
+      if (isSick) {
+        slDays++;
+        dailyDetails[dateStr] = {
+          date: dateStr,
+          dayOfWeek,
+          dayNumber,
+          status: 'Sick Leave',
+          code: 'L',
+          notes: 'Sanctioned Sick Leave'
+        };
+      } else {
+        elDays++;
+        dailyDetails[dateStr] = {
+          date: dateStr,
+          dayOfWeek,
+          dayNumber,
+          status: 'Earn Leave',
+          code: 'L',
+          notes: 'Sanctioned Paid Leave'
+        };
+      }
       continue;
     }
 
@@ -480,6 +547,13 @@ export function computeEmployeeCycleMetrics(
   const empType = computeEmploymentType(emp);
   const bankAcc = (emp as any).bankAccountNumber || (emp as any).accountNumber ? `••••${String((emp as any).bankAccountNumber || (emp as any).accountNumber).slice(-4)}` : 'Verified on File';
 
+  // Compute live leave balances at cycle end
+  const balances = computeTotalLeaveBalances(emp, leaveRequests, new Date(`${endDate}T23:59:59`));
+  const elBalance = balances?.earnLeave?.balance ?? 0;
+  const slBalance = balances?.sickLeave?.balance ?? 0;
+  const totalLeaveDays = elDays + slDays + lossOfPayDays;
+  const specialization = getEmployeeSpecialization(emp);
+
   let remarks = 'Full Cycle Cleared';
   if (lossOfPayDays > 0) {
     remarks = `${lossOfPayDays} LOP day(s) deducted (-₹${lopDeduction.toLocaleString('en-IN')})`;
@@ -494,6 +568,7 @@ export function computeEmployeeCycleMetrics(
     department: emp.department || 'IT',
     designation: emp.designation || 'Software Engineer',
     employmentType: empType,
+    specialization,
     joiningDate: joinDate || '—',
     bankAccount: bankAcc,
     calendarDays,
@@ -504,7 +579,12 @@ export function computeEmployeeCycleMetrics(
     wfhDays,
     halfDays,
     paidLeaveDays,
+    elDays,
+    slDays,
+    elBalance,
+    slBalance,
     lossOfPayDays,
+    totalLeaveDays,
     payableDays,
     attendanceRate,
     baseSalary,
@@ -659,7 +739,7 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
   });
 
   // Top Title Banner
-  ws1.mergeCells('A1:Q1');
+  ws1.mergeCells('A1:V1');
   const titleCell = ws1.getCell('A1');
   titleCell.value = 'KALPANAAA SOFTWARE SOLUTIONS PVT. LTD.';
   titleCell.font = { name: 'Calibri', size: 16, bold: true, color: { argb: 'FFFFFF' } };
@@ -668,7 +748,7 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
   ws1.getRow(1).height = 30;
 
   // Subtitle Banner
-  ws1.mergeCells('A2:Q2');
+  ws1.mergeCells('A2:V2');
   const subCell = ws1.getCell('A2');
   subCell.value = `OFFICIAL ATTENDANCE ROSTER STATEMENT | FULL CYCLE: ${cycleLabel.toUpperCase()}`;
   subCell.font = { name: 'Calibri', size: 11, bold: true, color: { argb: '93C5FD' } };
@@ -677,7 +757,7 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
   ws1.getRow(2).height = 22;
 
   // Metadata Row
-  ws1.mergeCells('A3:Q3');
+  ws1.mergeCells('A3:V3');
   const metaCell = ws1.getCell('A3');
   const genDateStr = new Date().toLocaleDateString('en-IN', {
     day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit', hour12: true
@@ -691,48 +771,48 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
   // Blank spacer row
   ws1.getRow(4).height = 8;
 
-  // Executive KPI summary boxes (17 columns total: A-Q)
+  // Executive KPI summary boxes (22 columns total: A-V)
   const totalEmployeesCount = employeeMetricsList.length;
   const totalNetDisbursement = employeeMetricsList.reduce((sum, e) => sum + e.netPayableSalary, 0);
   const totalPayableDaysSum = employeeMetricsList.reduce((sum, e) => sum + e.payableDays, 0);
   const totalLopDaysSum = employeeMetricsList.reduce((sum, e) => sum + e.lossOfPayDays, 0);
   const avgAttendancePercent = (employeeMetricsList.reduce((sum, e) => sum + e.attendanceRate, 0) / (totalEmployeesCount || 1)).toFixed(1);
 
-  ws1.mergeCells('A5:C5');
+  ws1.mergeCells('A5:D5');
   ws1.getCell('A5').value = `Total Personnel: ${totalEmployeesCount}`;
   ws1.getCell('A5').font = { bold: true, size: 10, color: { argb: '1E3A8A' } };
   ws1.getCell('A5').alignment = { horizontal: 'center', vertical: 'middle' };
   ws1.getCell('A5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DBEAFE' } };
 
-  ws1.mergeCells('D5:F5');
-  ws1.getCell('D5').value = `Cycle Span: 30 Calendar Days (${startDate} to ${endDate})`;
-  ws1.getCell('D5').font = { bold: true, size: 10, color: { argb: '0F766E' } };
-  ws1.getCell('D5').alignment = { horizontal: 'center', vertical: 'middle' };
-  ws1.getCell('D5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'CCFBF1' } };
+  ws1.mergeCells('E5:I5');
+  ws1.getCell('E5').value = `Cycle Span: 30 Calendar Days (${startDate} to ${endDate})`;
+  ws1.getCell('E5').font = { bold: true, size: 10, color: { argb: '0F766E' } };
+  ws1.getCell('E5').alignment = { horizontal: 'center', vertical: 'middle' };
+  ws1.getCell('E5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'CCFBF1' } };
 
-  ws1.mergeCells('G5:J5');
-  ws1.getCell('G5').value = `Avg Attendance Compliance: ${avgAttendancePercent}%`;
-  ws1.getCell('G5').font = { bold: true, size: 10, color: { argb: '15803D' } };
-  ws1.getCell('G5').alignment = { horizontal: 'center', vertical: 'middle' };
-  ws1.getCell('G5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DCFCE7' } };
+  ws1.mergeCells('J5:M5');
+  ws1.getCell('J5').value = `Avg Attendance Compliance: ${avgAttendancePercent}%`;
+  ws1.getCell('J5').font = { bold: true, size: 10, color: { argb: '15803D' } };
+  ws1.getCell('J5').alignment = { horizontal: 'center', vertical: 'middle' };
+  ws1.getCell('J5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'DCFCE7' } };
 
-  ws1.mergeCells('K5:M5');
-  ws1.getCell('K5').value = `Total LOP / Absent Days: ${totalLopDaysSum}`;
-  ws1.getCell('K5').font = { bold: true, size: 10, color: { argb: 'BE123C' } };
-  ws1.getCell('K5').alignment = { horizontal: 'center', vertical: 'middle' };
-  ws1.getCell('K5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4E6' } };
-
-  ws1.mergeCells('N5:Q5');
-  ws1.getCell('N5').value = `Total Payable Days: ${totalPayableDaysSum}`;
-  ws1.getCell('N5').font = { bold: true, size: 10, color: { argb: 'FFFFFF' } };
+  ws1.mergeCells('N5:R5');
+  ws1.getCell('N5').value = `Total LOP / Absent Days: ${totalLopDaysSum}`;
+  ws1.getCell('N5').font = { bold: true, size: 10, color: { argb: 'BE123C' } };
   ws1.getCell('N5').alignment = { horizontal: 'center', vertical: 'middle' };
-  ws1.getCell('N5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE_HEADER } };
+  ws1.getCell('N5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4E6' } };
+
+  ws1.mergeCells('S5:V5');
+  ws1.getCell('S5').value = `Total Payable Days: ${totalPayableDaysSum}`;
+  ws1.getCell('S5').font = { bold: true, size: 10, color: { argb: 'FFFFFF' } };
+  ws1.getCell('S5').alignment = { horizontal: 'center', vertical: 'middle' };
+  ws1.getCell('S5').fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: BLUE_HEADER } };
   ws1.getRow(5).height = 24;
 
   // Spacer
   ws1.getRow(6).height = 8;
 
-  // Table Headers (Row 7)
+  // Table Headers (Row 7) - 22 columns with Specialization, EL/SL Taken, EL/SL Balance, and LOP
   const headersSheet1 = [
     'Sl. No',
     'Employee ID',
@@ -740,6 +820,7 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
     'Department',
     'Designation',
     'Employment Type',
+    'Specialization',
     'Joining Date',
     'Cycle Days',
     'Rostered Days',
@@ -748,8 +829,12 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
     'Office Present',
     'WFH Days',
     'Half Days',
-    'Paid Leaves',
+    'EL Taken',
+    'SL Taken',
+    'EL Balance',
+    'SL Balance',
     'LOP / Absent',
+    'Total Leaves Taken',
     'Payable Days'
   ];
 
@@ -784,6 +869,7 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
       m.department,
       m.designation,
       m.employmentType,
+      m.specialization,
       m.joiningDate,
       m.calendarDays,
       m.rosteredWorkingDays,
@@ -792,8 +878,12 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
       m.presentOfficeDays,
       m.wfhDays,
       m.halfDays,
-      m.paidLeaveDays,
+      m.elDays,
+      m.slDays,
+      m.elBalance,
+      m.slBalance,
       m.lossOfPayDays,
+      m.totalLeaveDays,
       m.payableDays
     ];
     row.height = 22;
@@ -812,15 +902,26 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
       // Specific column alignments & number formats
       if (colIdx === 0 || colIdx === 1) {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
-      } else if (colIdx === 2 || colIdx === 3 || colIdx === 4) {
+      } else if (colIdx === 2 || colIdx === 3 || colIdx === 4 || colIdx === 5 || colIdx === 6) {
         cell.alignment = { horizontal: 'left', vertical: 'middle' };
-      } else if (colIdx >= 7 && colIdx <= 16) {
+      } else if (colIdx >= 7 && colIdx <= 21) {
         cell.alignment = { horizontal: 'center', vertical: 'middle' };
-        if (colIdx === 15 && m.lossOfPayDays > 0) {
+        if (colIdx === 17) {
+          // EL Balance (Sky blue accent)
+          cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '0284C7' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'F0F9FF' } };
+        } else if (colIdx === 18) {
+          // SL Balance (Purple accent)
+          cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '7C3AED' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FAF5FF' } };
+        } else if (colIdx === 19 && m.lossOfPayDays > 0) {
           // Highlight LOP in bold red
           cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'BE123C' } };
           cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE4E6' } };
-        } else if (colIdx === 16) {
+        } else if (colIdx === 20) {
+          // Total Leaves Taken
+          cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '0F172A' } };
+        } else if (colIdx === 21) {
           // Highlight Payable Days in bold teal
           cell.font = { name: 'Calibri', size: 10, bold: true, color: { argb: '0F766E' } };
         }
@@ -837,23 +938,27 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
   summaryRow.height = 26;
 
   summaryRow.getCell(1).value = 'TOTAL';
-  ws1.mergeCells(`A${summaryRowIdx}:G${summaryRowIdx}`);
+  ws1.mergeCells(`A${summaryRowIdx}:H${summaryRowIdx}`);
   const mergedTotal = summaryRow.getCell(1);
   mergedTotal.font = { name: 'Calibri', size: 10, bold: true, color: { argb: 'FFFFFF' } };
   mergedTotal.alignment = { horizontal: 'right', vertical: 'middle' };
   mergedTotal.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: NAVY_HEADER } };
 
-  // Total formulas
-  summaryRow.getCell(8).value = { formula: `SUM(H8:H${lastDataRow})` };
-  summaryRow.getCell(9).value = { formula: `SUM(I8:I${lastDataRow})` };
-  summaryRow.getCell(10).value = { formula: `SUM(J8:J${lastDataRow})` };
-  summaryRow.getCell(11).value = { formula: `SUM(K8:K${lastDataRow})` };
-  summaryRow.getCell(12).value = { formula: `SUM(L8:L${lastDataRow})` };
-  summaryRow.getCell(13).value = { formula: `SUM(M8:M${lastDataRow})` };
-  summaryRow.getCell(14).value = { formula: `SUM(N8:N${lastDataRow})` };
-  summaryRow.getCell(15).value = { formula: `SUM(O8:O${lastDataRow})` };
-  summaryRow.getCell(16).value = { formula: `SUM(P8:P${lastDataRow})` };
-  summaryRow.getCell(17).value = { formula: `SUM(Q8:Q${lastDataRow})` };
+  // Total formulas across all numerical columns (I through V)
+  summaryRow.getCell(9).value = { formula: `SUM(I8:I${lastDataRow})` };   // Cycle Days
+  summaryRow.getCell(10).value = { formula: `SUM(J8:J${lastDataRow})` };  // Rostered Days
+  summaryRow.getCell(11).value = { formula: `SUM(K8:K${lastDataRow})` };  // Weekly Offs
+  summaryRow.getCell(12).value = { formula: `SUM(L8:L${lastDataRow})` };  // Holidays
+  summaryRow.getCell(13).value = { formula: `SUM(M8:M${lastDataRow})` };  // Office Present
+  summaryRow.getCell(14).value = { formula: `SUM(N8:N${lastDataRow})` };  // WFH Days
+  summaryRow.getCell(15).value = { formula: `SUM(O8:O${lastDataRow})` };  // Half Days
+  summaryRow.getCell(16).value = { formula: `SUM(P8:P${lastDataRow})` };  // EL Taken
+  summaryRow.getCell(17).value = { formula: `SUM(Q8:Q${lastDataRow})` };  // SL Taken
+  summaryRow.getCell(18).value = { formula: `SUM(R8:R${lastDataRow})` };  // EL Balance
+  summaryRow.getCell(19).value = { formula: `SUM(S8:S${lastDataRow})` };  // SL Balance
+  summaryRow.getCell(20).value = { formula: `SUM(T8:T${lastDataRow})` };  // LOP / Absent
+  summaryRow.getCell(21).value = { formula: `SUM(U8:U${lastDataRow})` };  // Total Leaves Taken
+  summaryRow.getCell(22).value = { formula: `SUM(V8:V${lastDataRow})` };  // Payable Days
 
   headersSheet1.forEach((_, cIdx) => {
     const cell = summaryRow.getCell(cIdx + 1);
@@ -862,20 +967,21 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
       top: { style: 'medium', color: { argb: NAVY_HEADER } },
       bottom: { style: 'double', color: { argb: NAVY_HEADER } }
     };
-    if (cIdx >= 7 && cIdx <= 16) {
+    if (cIdx >= 8 && cIdx <= 21) {
       cell.alignment = { horizontal: 'center', vertical: 'middle' };
       cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'E2E8F0' } };
     }
   });
 
-  // Auto-fit column widths for Sheet 1 (up to Payable Days)
+  // Auto-fit column widths for Sheet 1 (all 22 columns)
   ws1.columns = [
     { width: 8 },  // Sl. No
     { width: 14 }, // Emp ID
     { width: 24 }, // Name
-    { width: 18 }, // Dept
+    { width: 16 }, // Dept
     { width: 24 }, // Designation
     { width: 16 }, // Employment Type
+    { width: 22 }, // Specialization
     { width: 13 }, // Joining Date
     { width: 12 }, // Cycle Days
     { width: 13 }, // Rostered Days
@@ -884,8 +990,12 @@ export async function generateAndDownloadPayrollCycleExcel(options: CycleExportO
     { width: 14 }, // Office Present
     { width: 12 }, // WFH
     { width: 11 }, // Half Days
-    { width: 13 }, // Paid Leaves
+    { width: 11 }, // EL Taken
+    { width: 11 }, // SL Taken
+    { width: 12 }, // EL Balance
+    { width: 12 }, // SL Balance
     { width: 14 }, // LOP / Absent
+    { width: 16 }, // Total Leaves Taken
     { width: 14 }  // Payable Days
   ];
 
