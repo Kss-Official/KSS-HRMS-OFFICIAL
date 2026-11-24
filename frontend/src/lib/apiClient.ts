@@ -451,13 +451,23 @@ export async function loginApi(email: string, pass: string): Promise<ApiLoginRes
   return data;
 }
 
-export async function syncFirebaseSessionApi(email?: string | null, uid?: string | null, firebaseToken?: string | null): Promise<any> {
+export async function syncFirebaseSessionApi(
+  email?: string | null,
+  uid?: string | null,
+  firebaseToken?: string | null,
+  password?: string | null
+): Promise<any> {
   const cleanEndpoint = API_BASE_URL.endsWith('/api/v1') ? '' : '/api/v1';
   const url = `${API_BASE_URL}${cleanEndpoint}/auth/firebase-sync`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ email: email || null, uid: uid || null, firebase_token: firebaseToken || null })
+    body: JSON.stringify({
+      email: email || null,
+      uid: uid || null,
+      firebase_token: firebaseToken || null,
+      password: password || null
+    })
   });
   if (!res.ok) {
     throw new Error('Firebase session sync failed');

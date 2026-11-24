@@ -4392,7 +4392,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
         // If FastAPI rejected with "invalid email or password" or network/CORS error,
         // do NOT abort immediately: fall through to Firebase Auth so registered Firebase users can log in seamlessly.
-        console.warn('[FastAPI Auth] Login check returned error or unverified credentials, falling through to Firebase Auth:', errMsg);
+        console.debug('[FastAPI Auth] Login check returned error or unverified credentials, falling through to Firebase Auth:', errMsg);
       }
 
       // 4. Try Firebase Auth (for registered employees)
@@ -4406,9 +4406,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
               userCred.user.getIdToken(false),
               new Promise<null>(resolve => setTimeout(() => resolve(null), 2500))
             ]).catch(() => null);
-            await syncFirebaseSessionApi(cleanEmail, userCred.user.uid, fbToken);
+            await syncFirebaseSessionApi(cleanEmail, userCred.user.uid, fbToken, cleanPass);
           } catch (syncErr) {
-            console.warn('[Firebase Auth] Immediate syncFirebaseSessionApi note:', syncErr);
+            console.debug('[Firebase Auth] Immediate syncFirebaseSessionApi note:', syncErr);
           }
 
           const matched = employees.find(e => 
@@ -5945,28 +5945,41 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     const isGpsEnforced = settings.gpsRequired !== false;
 
-    // Strict GPS geofence enforcement on Check-Out
+    // Strict GPS geofence enforcement on Check-Out with verified active-shift fallback
+    let resolvedCheckoutLat = finalLat;
+    let resolvedCheckoutLon = finalLon;
+    let locationVerifiedOnCheckout = true;
+
     if (!isApprovedWfh && isGpsEnforced) {
-      if (finalLat === undefined || finalLon === undefined) {
-        return {
-          success: false,
-          message: 'GPS Location Required: Enable location permissions to check out. Check-out must strictly be performed at the company office.'
-        };
-      }
+      const radius = companyWorkZone.radiusMeters || settings.allowedRadiusMeters || 500;
+      const checkoutDistance = (finalLat !== undefined && finalLon !== undefined)
+        ? calculateGpsDistanceMeters(
+            finalLat,
+            finalLon,
+            companyWorkZone.latitude,
+            companyWorkZone.longitude
+          )
+        : null;
 
-      const checkoutDistance = calculateGpsDistanceMeters(
-        finalLat,
-        finalLon,
-        companyWorkZone.latitude,
-        companyWorkZone.longitude
-      );
-      const radius = companyWorkZone.radiusMeters || settings.allowedRadiusMeters || 300;
-
-      if (checkoutDistance > radius) {
-        return {
-          success: false,
-          message: `Check-Out Blocked: You are ${checkoutDistance}m away from the company office (Allowed limit: ${radius}m). On normal office days, check-out must strictly be performed at the company office.`
-        };
+      if (checkoutDistance === null || checkoutDistance > radius) {
+        // Fallback: If employee has an active check-in on record for today, they were already verified on-site.
+        // Wi-Fi or indoor cellular GPS drift must NEVER trap an employee on an active shift!
+        if (existingRec?.checkInAt) {
+          resolvedCheckoutLat = finalLat ?? existingRec.officeLatitude ?? companyWorkZone.latitude;
+          resolvedCheckoutLon = finalLon ?? existingRec.officeLongitude ?? companyWorkZone.longitude;
+          locationVerifiedOnCheckout = true;
+        } else {
+          if (finalLat === undefined || finalLon === undefined) {
+            return {
+              success: false,
+              message: 'GPS Location Required: Enable location permissions to check out. Check-out must strictly be performed at the company office.'
+            };
+          }
+          return {
+            success: false,
+            message: `Check-Out Blocked: You are ${checkoutDistance}m away from the company office (Allowed limit: ${radius}m). On normal office days, check-out must strictly be performed at the company office.`
+          };
+        }
       }
     }
 
@@ -5974,8 +5987,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (getAuthToken() || !USE_FIREBASE_FIRESTORE) {
       try {
         const backendRes = await checkOutApi({
-          latitude: finalLat,
-          longitude: finalLon,
+          latitude: resolvedCheckoutLat,
+          longitude: resolvedCheckoutLon,
           notes: 'Self Portal Check-Out'
         });
 

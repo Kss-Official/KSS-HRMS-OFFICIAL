@@ -45,10 +45,10 @@ class Settings(BaseSettings):
             return v
         return []
 
-    # Office Geofence & Location
-    GEOFENCE_LAT: float = 12.9121
-    GEOFENCE_LON: float = 77.6446
-    GEOFENCE_RADIUS_METERS: float = 100.0
+    # Office Geofence & Location (Kalpanaaa HQ: Kalyan Nagar, Bengaluru)
+    GEOFENCE_LAT: float = 13.014333
+    GEOFENCE_LON: float = 77.646000
+    GEOFENCE_RADIUS_METERS: float = 500.0
     COMPANY_TIMEZONE: str = "Asia/Kolkata"
     # Server-side geofence enforcement for on-site check-ins. OFF by default until the office
     # coordinates in company_settings are confirmed correct (wrong data would lock everyone out).

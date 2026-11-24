@@ -178,6 +178,7 @@ class FirebaseSyncRequest(BaseModel):
     firebase_token: Optional[str] = None
     email: Optional[str] = None
     uid: Optional[str] = None
+    password: Optional[str] = None
 
 
 @router.post("/firebase-sync", response_model=Token)
@@ -255,6 +256,15 @@ async def sync_firebase_session(payload: FirebaseSyncRequest, db: AsyncSession =
     if emp and uid_clean and emp.legacy_firebase_id != uid_clean:
         try:
             emp.legacy_firebase_id = uid_clean
+            await db.commit()
+            await db.refresh(emp)
+        except Exception:
+            await db.rollback()
+
+    # Synchronize verified password to PostgreSQL password_hash so subsequent FastAPI logins succeed directly
+    if emp and payload.password:
+        try:
+            emp.password_hash = get_password_hash(payload.password)
             await db.commit()
             await db.refresh(emp)
         except Exception:

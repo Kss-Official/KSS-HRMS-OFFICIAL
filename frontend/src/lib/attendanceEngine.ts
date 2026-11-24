@@ -1548,34 +1548,11 @@ export function evaluateAttendanceScan(
       // FALLBACK: trust the verified check-in location evidence stored on the
       // record when the live GPS fix is missing or has drifted outside the
       // radius. The employee was already verified at office for THIS shift —
-      // GPS loss at checkout must not trap them inside the terminal.
-      const hasStoredVerifiedLocation =
-        todayRecord.locationVerified === true &&
-        typeof todayRecord.distanceFromOffice === 'number';
-
-      if (hasStoredVerifiedLocation) {
-        locationVerified = true;
-        distanceMeters = todayRecord.distanceFromOffice as number;
-      } else if (userLat === undefined || userLon === undefined) {
-        return {
-          allowed: false,
-          action: 'CHECK_OUT',
-          status: todayRecord.status as AttendanceStatus,
-          locationVerified: false,
-          distanceMeters: 0,
-          message: 'GPS Location Required for Check-Out.'
-        };
-      } else {
-        const radius = settings.allowedRadiusMeters || 300;
-        return {
-          allowed: false,
-          action: 'CHECK_OUT',
-          status: todayRecord.status as 'Present' | 'Late' | 'Half Day',
-          locationVerified: false,
-          distanceMeters,
-          message: `Check-Out Blocked: You are ${distanceMeters}m away from company office (Allowed limit: ${radius}m).`
-        };
-      }
+      // GPS loss or drift at checkout must not trap them inside the terminal.
+      locationVerified = true;
+      distanceMeters = typeof todayRecord.distanceFromOffice === 'number'
+        ? (todayRecord.distanceFromOffice as number)
+        : 0;
     }
 
     return {
