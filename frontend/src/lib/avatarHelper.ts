@@ -26,14 +26,31 @@ export const LOCAL_AVATARS: Record<string, string> = {
 export const getEmployeeAvatar = (emp?: any): string => {
   if (!emp) return '/avatars/gaurav.jpeg';
 
+  // 1. Authoritative: Custom uploaded portrait (Base64 data URI, Cloudinary CDN, Firebase Storage, or local upload)
+  // If an employee or admin uploaded a custom photo, that user action MUST always take absolute precedence!
+  const candidates = [emp.profilePhotoUrl, emp.profile_photo_url, emp.avatar, emp.photoURL];
+  for (const candidate of candidates) {
+    if (candidate && typeof candidate === 'string') {
+      const trimmed = candidate.trim();
+      if (
+        trimmed.length > 0 &&
+        !trimmed.startsWith('/avatars/') &&
+        !trimmed.startsWith('avatars/') &&
+        !trimmed.startsWith('https://ui-avatars.com')
+      ) {
+        return trimmed;
+      }
+    }
+  }
+
   const code = (emp.employeeId || emp.employee_code || emp.id || '').toUpperCase().trim();
   const name = (emp.fullName || emp.full_name || emp.name || '').toLowerCase().trim();
 
-  // 1. Authoritative: Direct code lookup from official high-resolution local portraits
+  // 2. Default high-resolution local portraits for official employees without custom upload
   // (Instant 0ms delivery, 100% offline-ready, avoids browser Tracking Prevention blocks)
   if (code && LOCAL_AVATARS[code]) return LOCAL_AVATARS[code];
 
-  // 2. Strict name-based resolution from official local portraits
+  // 3. Strict name-based resolution from official local portraits
   if (name.includes('gaurav')) return '/avatars/gaurav.jpeg';
   if (name.includes('akshit')) return '/avatars/akshit.png';
   if (name.includes('koushik')) return '/avatars/koushik.png';
@@ -51,8 +68,8 @@ export const getEmployeeAvatar = (emp?: any): string => {
   if (name.includes('shruti') || name.includes('sahoo')) return '/avatars/shruti.jpg';
   if (name.includes('hr department') || name.includes('hr lead') || code.includes('HR')) return '/avatars/hr.jpg';
 
-  // 3. User upload or Cloudinary CDN URL for newly onboarded personnel
-  for (const candidate of [emp.profilePhotoUrl, emp.profile_photo_url, emp.avatar, emp.photoURL]) {
+  // 4. Any other candidate
+  for (const candidate of candidates) {
     if (candidate && typeof candidate === 'string') {
       const trimmed = candidate.trim();
       if (trimmed.length > 0 && !trimmed.startsWith('https://ui-avatars.com')) {
@@ -61,7 +78,7 @@ export const getEmployeeAvatar = (emp?: any): string => {
     }
   }
 
-  // 4. Fallback avatar initials
+  // 5. Fallback avatar initials
   const displayName = emp.fullName || emp.full_name || 'User';
   return `https://ui-avatars.com/api/?name=${encodeURIComponent(displayName)}&background=0f172a&color=fff`;
 };

@@ -1255,7 +1255,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
         <div className={`flex items-center gap-5 text-center md:text-left ${animations.stagger.item(1)}`}>
           <div className="relative group">
             <img
-              src={getEmployeeAvatar(activeEmployee)}
+              src={profilePhoto || getEmployeeAvatar(activeEmployee)}
               alt={activeEmployee.fullName}
               referrerPolicy="no-referrer"
               crossOrigin="anonymous"
@@ -2440,7 +2440,7 @@ export const EmployeePortal: React.FC<EmployeePortalProps> = ({ activeTab, setAc
               <div className="bg-slate-900/90 rounded-3xl border border-slate-800 p-6 sm:p-8 shadow-xl flex flex-col md:flex-row items-center justify-between gap-6">
                 <div className="flex flex-col sm:flex-row items-center gap-6 text-center sm:text-left">
                   <img
-                    src={getEmployeeAvatar(activeEmployee)}
+                    src={profilePhoto || getEmployeeAvatar(activeEmployee)}
                     alt={fullName}
                     referrerPolicy="no-referrer"
                     crossOrigin="anonymous"

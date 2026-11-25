@@ -18,7 +18,7 @@ try {
 }
 
 const OUT = mkdtempSync(join(baseDir, 'kss-regression-'));
-const entries = ['errors', 'safeStorage', 'attendanceEngine', 'hierarchy', 'leaveAnalyticsService', 'leaveHistorySummaryService', 'leaveLopSummaryService', 'deviceDetection'];
+const entries = ['errors', 'safeStorage', 'attendanceEngine', 'hierarchy', 'leaveAnalyticsService', 'leaveHistorySummaryService', 'leaveLopSummaryService', 'deviceDetection', 'avatarHelper'];
 
 for (const name of entries) {
   esbuild.buildSync({
@@ -42,7 +42,8 @@ const testFiles = [
   join('tests', 'leaveHistorySummary.test.mjs'),
   join('tests', 'leaveLopSummary.test.mjs'),
   join('tests', 'attendance_breaks.test.mjs'),
-  join('tests', 'checkout_and_breaks_e2e.test.mjs')
+  join('tests', 'checkout_and_breaks_e2e.test.mjs'),
+  join('tests', 'avatarHelper.test.mjs')
 ];
 
 const testRes = spawnSync(
