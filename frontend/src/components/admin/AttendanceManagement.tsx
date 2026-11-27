@@ -599,7 +599,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
       const updatedNotes = (record.notes ? record.notes + ' | ' : '') +
         `ADMIN FORCE UNDO: ${reason} (by ${activeEmployee?.fullName || 'Admin'} at ${new Date().toLocaleTimeString('en-IN', { timeZone: 'Asia/Kolkata', hour12: true })})`;
 
-      await updateAttendanceRecord(record.id, {
+      await applyAttendanceCorrection(record, {
         checkOutAt: null as any,
         workingMinutes: 0,
         status: 'Present',
@@ -614,7 +614,7 @@ export const AttendanceManagement: React.FC<AttendanceManagementProps> = () => {
             (!!r.uid && (r.uid === emp.uid || r.uid === emp.id)))
       );
       for (const dup of duplicates) {
-        updateAttendanceRecord(dup.id, {
+        applyAttendanceCorrection(dup, {
           checkOutAt: null as any,
           workingMinutes: 0,
           status: 'Present',

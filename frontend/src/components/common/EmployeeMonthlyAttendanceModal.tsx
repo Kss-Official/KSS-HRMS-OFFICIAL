@@ -756,9 +756,11 @@ const LeaveBalanceKpiBox: React.FC<{
                     return (
                       <div className="space-y-2.5">
                         {filtered.map((req: any) => {
-                          const isApproved = req.status === 'Approved' ||
-                            (req.ceoStatus === 'Approved' && req.ctoStatus === 'Approved');
-                          const isRejected = req.status === 'Rejected' || req.ceoStatus === 'Rejected' || req.ctoStatus === 'Rejected';
+                          const stUpper = String(req.status || '').toUpperCase();
+                          const ceoUpper = String(req.ceoStatus || '').toUpperCase();
+                          const ctoUpper = String(req.ctoStatus || '').toUpperCase();
+                          const isApproved = stUpper === 'APPROVED' || (ceoUpper === 'APPROVED' && ctoUpper === 'APPROVED');
+                          const isRejected = stUpper === 'REJECTED' || ceoUpper === 'REJECTED' || ctoUpper === 'REJECTED';
                           const rType = req.type || req.leaveCategory || 'Leave';
                           return (
                             <div key={req.id} className="bg-slate-900/90 border border-slate-800 hover:border-slate-700 rounded-xl p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 transition-colors">
@@ -961,8 +963,16 @@ export const EmployeeMonthlyAttendanceModal: React.FC<EmployeeMonthlyAttendanceM
         (!!req.employeeId && (req.employeeId === employee.employeeId || req.employeeId === employee.id)) ||
         (!!req.employeeUid && (req.employeeUid === employee.uid || req.employeeUid === employee.id)) ||
         (!!req.employeeName && !!employee.fullName && req.employeeName.trim().toLowerCase() === employee.fullName.trim().toLowerCase());
-      const isApproved = req.status === 'Approved';
-      const isMonthMatch = (req.startDate && req.startDate.startsWith(selectedYearMonth)) || (req.endDate && req.endDate.startsWith(selectedYearMonth));
+      const isApproved = req.status === 'Approved' || req.status === 'APPROVED' ||
+        ((req.ceoStatus === 'Approved' || req.ceoStatus === 'APPROVED' || req.ceoStatus === 'N/A' || req.ceoStatus === 'Bypassed') &&
+         (req.ctoStatus === 'Approved' || req.ctoStatus === 'APPROVED' || req.ctoStatus === 'N/A' || req.ctoStatus === 'Bypassed'));
+      const reqStart = req.startDate || (req as any).fromDate;
+      const reqEnd = req.endDate || (req as any).toDate || reqStart;
+      const monthStart = `${selectedYearMonth}-01`;
+      const monthEnd = `${selectedYearMonth}-${String(daysInMonth).padStart(2, '0')}`;
+      const isMonthMatch = (reqStart && reqEnd)
+        ? (reqStart <= monthEnd && reqEnd >= monthStart)
+        : ((req.startDate && req.startDate.startsWith(selectedYearMonth)) || (req.endDate && req.endDate.startsWith(selectedYearMonth)));
       return isEmpMatch && isApproved && isMonthMatch;
     });
   }, [leaveRequests, employee, selectedYearMonth]);

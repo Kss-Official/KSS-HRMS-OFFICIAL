@@ -195,11 +195,12 @@ export function computeEmployeeLeaveBalance(
   // CRITICAL: Exclude Sick Leave (e.g. Akash 25th Aug, Jason 22nd Aug) and WFH from Earn Leave
   const approvedLeavesTaken = (leaveRequests || []).filter(l => {
     if (!isMatchingEmp(l)) return false;
-    const isApproved = l.status === 'Approved' ||
-      (l.ceoStatus === 'Approved' && l.ctoStatus === 'Approved');
-    const isSick = l.type === 'Sick Leave' || (l as any).leaveCategory === 'Sick Leave' || (l.reason && l.reason.toLowerCase().includes('sick'));
+    const isApproved = l.status === 'Approved' || l.status === 'APPROVED' ||
+      ((l.ceoStatus === 'Approved' || l.ceoStatus === 'APPROVED' || l.ceoStatus === 'N/A' || l.ceoStatus === 'Bypassed') &&
+       (l.ctoStatus === 'Approved' || l.ctoStatus === 'APPROVED' || l.ctoStatus === 'N/A' || l.ctoStatus === 'Bypassed'));
+    const isSick = l.type === 'Sick Leave' || l.type === 'SICK_LEAVE' || (l as any).leaveCategory === 'Sick Leave' || (l as any).leaveCategory === 'SICK_LEAVE' || (l.reason && l.reason.toLowerCase().includes('sick'));
     const isWfh = isWfhType(l.type) || isWfhType((l as any).leaveCategory) || String(l.id || '').toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd' || (l.reason && l.reason.toLowerCase().includes('work from home'));
-    const isEarnLeave = !isSick && !isWfh && (l.type === 'Leave' || l.type === 'Earn Leave' || (l as any).leaveCategory === 'Earn Leave');
+    const isEarnLeave = !isSick && !isWfh && (l.type === 'Leave' || l.type === 'Earn Leave' || l.type === 'EARN_LEAVE' || (l as any).leaveCategory === 'Earn Leave' || (l as any).leaveCategory === 'EARN_LEAVE');
     return isApproved && isEarnLeave;
   }).length;
 
@@ -344,9 +345,10 @@ export function computeSickLeaveBalance(
   };
 
   const isApprovedSickLeave = (l: any) => {
-    const isApproved = l.status === 'Approved' ||
-      (l.ceoStatus === 'Approved' && l.ctoStatus === 'Approved');
-    const isSickLeave = l.type === 'Sick Leave' || (l as any).leaveCategory === 'Sick Leave' || (l.reason && l.reason.toLowerCase().includes('sick'));
+    const isApproved = l.status === 'Approved' || l.status === 'APPROVED' ||
+      ((l.ceoStatus === 'Approved' || l.ceoStatus === 'APPROVED' || l.ceoStatus === 'N/A' || l.ceoStatus === 'Bypassed') &&
+       (l.ctoStatus === 'Approved' || l.ctoStatus === 'APPROVED' || l.ctoStatus === 'N/A' || l.ctoStatus === 'Bypassed'));
+    const isSickLeave = l.type === 'Sick Leave' || l.type === 'SICK_LEAVE' || (l as any).leaveCategory === 'Sick Leave' || (l as any).leaveCategory === 'SICK_LEAVE' || (l.reason && l.reason.toLowerCase().includes('sick'));
     return isApproved && isSickLeave;
   };
 
@@ -428,9 +430,10 @@ export function computeCasualLeaveBalance(
       (!!l.employeeId && (l.employeeId === emp.id || l.employeeId === emp.employeeId)) ||
       (!!l.employeeUid && (l.employeeUid === emp.uid || l.employeeUid === emp.id)) ||
       (!!l.employeeName && !!emp.fullName && l.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase());
-    const isApproved = l.status === 'Approved' ||
-      (l.ceoStatus === 'Approved' && l.ctoStatus === 'Approved');
-    const isCasual = l.type === 'Casual Leave' || (l as any).leaveCategory === 'Casual Leave';
+    const isApproved = l.status === 'Approved' || l.status === 'APPROVED' ||
+      ((l.ceoStatus === 'Approved' || l.ceoStatus === 'APPROVED' || l.ceoStatus === 'N/A' || l.ceoStatus === 'Bypassed') &&
+       (l.ctoStatus === 'Approved' || l.ctoStatus === 'APPROVED' || l.ctoStatus === 'N/A' || l.ctoStatus === 'Bypassed'));
+    const isCasual = l.type === 'Casual Leave' || l.type === 'CASUAL_LEAVE' || (l as any).leaveCategory === 'Casual Leave' || (l as any).leaveCategory === 'CASUAL_LEAVE';
     return isEmp && isApproved && isCasual;
   }).length;
 
@@ -483,10 +486,11 @@ export function computeTotalLeaveBalances(
       (!!lCode && (lCode === empId || lCode === empCode)) ||
       (!!lUid && (lUid === empId || lUid === empCode)) ||
       (!!lName && !!empName && (lName.trim() === empName.trim() || empName.includes(lName.trim())));
-    const isApproved = l.status === 'Approved' ||
-      (l.ceoStatus === 'Approved' && l.ctoStatus === 'Approved');
+    const isApproved = l.status === 'Approved' || l.status === 'APPROVED' ||
+      ((l.ceoStatus === 'Approved' || l.ceoStatus === 'APPROVED' || l.ceoStatus === 'N/A' || l.ceoStatus === 'Bypassed') &&
+       (l.ctoStatus === 'Approved' || l.ctoStatus === 'APPROVED' || l.ctoStatus === 'N/A' || l.ctoStatus === 'Bypassed'));
     const isWfh = isWfhType(l.type) || isWfhType((l as any).leaveCategory) || String(l.id || '').toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd';
-    const isEarnLeave = !isWfh && (l.type === 'Leave' || l.type === 'Earn Leave' || (l as any).leaveCategory === 'Earn Leave');
+    const isEarnLeave = !isWfh && (l.type === 'Leave' || l.type === 'Earn Leave' || l.type === 'EARN_LEAVE' || (l as any).leaveCategory === 'Earn Leave' || (l as any).leaveCategory === 'EARN_LEAVE');
     const isInMonth = l.startDate ? l.startDate.startsWith(currentMonthPrefix) : false;
     return isEmp && isApproved && isEarnLeave && isInMonth;
   }).length;
@@ -1732,9 +1736,10 @@ export function hasApprovedLeaveOn(
   if (!Array.isArray(leaveRequests) || !emp) return false;
   return leaveRequests.some(r => {
     if (!r) return false;
-    const isApproved = r.status === 'Approved' ||
-      ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') &&
-       (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'));
+    const isStatusApproved = r.status === 'Approved' || r.status === 'APPROVED';
+    const isCeoApproved = r.ceoStatus === 'Approved' || r.ceoStatus === 'APPROVED' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed';
+    const isCtoApproved = r.ctoStatus === 'Approved' || r.ctoStatus === 'APPROVED' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed';
+    const isApproved = isStatusApproved || (isCeoApproved && isCtoApproved);
     if (!isApproved) return false;
 
     if (types) {
@@ -1855,9 +1860,9 @@ export function buildDailyRoster(
     const hasApprovedLeave = hasApprovedLeaveOn(leaveRequests, emp, dateStr, EXCUSED_LEAVE_TYPES as unknown as string[]) ||
       leaveRequests.some(r => {
         if (!r || isWfhType(r.type) || isWfhType(r.leaveCategory)) return false;
-        const isApproved = r.status === 'Approved' ||
-          ((r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') &&
-           (r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'));
+        const isApproved = r.status === 'Approved' || r.status === 'APPROVED' ||
+          ((r.ceoStatus === 'Approved' || r.ceoStatus === 'APPROVED' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed') &&
+           (r.ctoStatus === 'Approved' || r.ctoStatus === 'APPROVED' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed'));
         if (!isApproved) return false;
         const matchesEmployee =
           (!!r.employeeId && (r.employeeId === emp.employeeId || r.employeeId === emp.id || r.employeeId === emp.uid)) ||

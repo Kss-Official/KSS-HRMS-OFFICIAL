@@ -305,9 +305,9 @@ export const SettingsView: React.FC = () => {
             {/* Interactive Map Preview with Draggable Marker */}
             <div className="pt-2">
               <WorkZoneMapPreview
-                latitude={Number(formState.officeLatitude) || 17.385044}
-                longitude={Number(formState.officeLongitude) || 78.486671}
-                radiusMeters={Number(formState.allowedRadiusMeters) || 100}
+                latitude={Number(formState.officeLatitude) || 13.014361}
+                longitude={Number(formState.officeLongitude) || 77.645888}
+                radiusMeters={Number(formState.allowedRadiusMeters) || 500}
                 officeName={formState.officeName || 'Kalpanaaa Software Solutions HQ'}
                 onChangeLocation={(lat, lon) => {
                   setFormState(prev => ({

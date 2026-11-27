@@ -89,7 +89,9 @@ import {
   removeAuthToken,
   clearApiCache,
   changePasswordApi,
-  syncFirebaseSessionApi
+  syncFirebaseSessionApi,
+  deleteAttendanceRecordApi,
+  undoCheckoutApi
 } from '../lib/apiClient';
 import { resetAllLocalFaceDescriptors, clearEmployeeDescriptor, saveEmployeeDescriptor, isFaceBiometricEnrolled } from '../lib/faceDescriptorStore';
 import { getEmployeeAvatar, LOCAL_AVATARS } from '../lib/avatarHelper';
@@ -2824,23 +2826,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             });
           }
 
-          // Build authoritative list from Firestore only — no INITIAL_LEAVE_REQUESTS injection.
-          // Using a Map keyed by doc ID deduplicates any repeated Firestore snapshot events.
-          const reqMap = new Map<string, LeaveRequest>();
-          fetched.forEach(r => {
-            reqMap.set(r.id, r);
+          // Merge Firestore leaves with existing state so FastAPI records are never clobbered
+          setLeaveRequests(prev => {
+            const reqMap = new Map<string, LeaveRequest>();
+            (prev || []).forEach(r => {
+              if (r && r.id) reqMap.set(r.id, r);
+            });
+            fetched.forEach(r => {
+              if (r && r.id) reqMap.set(r.id, r);
+            });
+            const mergedList = Array.from(reqMap.values());
+            mergedList.sort((a, b) => {
+              const timeA = new Date(a.requestDate || (a as any).createdAt || a.startDate || 0).getTime() || 0;
+              const timeB = new Date(b.requestDate || (b as any).createdAt || b.startDate || 0).getTime() || 0;
+              return timeB - timeA;
+            });
+            try {
+              localStorage.setItem('kss_v1_leave_requests', JSON.stringify(mergedList));
+            } catch {}
+            return mergedList;
           });
-          const authoritativeList = Array.from(reqMap.values());
-          authoritativeList.sort((a, b) => {
-            const timeA = new Date(a.requestDate || (a as any).createdAt || a.startDate || 0).getTime() || 0;
-            const timeB = new Date(b.requestDate || (b as any).createdAt || b.startDate || 0).getTime() || 0;
-            return timeB - timeA;
-          });
-
-          setLeaveRequests(authoritativeList);
-          try {
-            localStorage.setItem('kss_v1_leave_requests', JSON.stringify(authoritativeList));
-          } catch {}
         }, (error) => {
           handleFirestoreError(error, OperationType.LIST, 'leaveRequests');
         });
@@ -3609,7 +3614,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     fastApiFetchPromiseRef.current = (async () => {
       try {
-        const isSuperOrHr = currentEmp ? (currentEmp.role === 'SUPER_ADMIN' || currentEmp.role === 'HR_ADMIN') : (role === 'SUPER_ADMIN' || role === 'HR_ADMIN');
+        const isSuperOrHr = currentEmp
+          ? (currentEmp.role === 'SUPER_ADMIN' || currentEmp.role === 'HR_ADMIN' || currentEmp.role === 'PROJECT_MANAGER')
+          : (role === 'SUPER_ADMIN' || role === 'HR_ADMIN' || role === 'PROJECT_MANAGER');
 
         // Fast O(1) employee lookup map for rapid mapping
         const getEmpMap = () => {
@@ -3627,7 +3634,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         // 1. Attendance Hydration (High priority for immediate Shift Active display)
-        const recordLimit = isSuperOrHr ? 500 : 365;
+        const recordLimit = isSuperOrHr ? 3500 : 365;
         const attPromise = getAttendanceRecordsApi(recordLimit, force).then((attList) => {
           if (Array.isArray(attList) && attList.length > 0) {
             const empMap = getEmpMap();
@@ -3798,7 +3805,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }).catch(() => {});
 
         // 3. Leaves Hydration
-        const leavePromise = getLeavesApi(100).then((leaveList) => {
+        const leavePromise = getLeavesApi(1000).then((leaveList) => {
           if (Array.isArray(leaveList) && leaveList.length > 0) {
             const empMap = getEmpMap();
             const mappedLeaves: LeaveRequest[] = leaveList.map((l: any) => {
@@ -3832,10 +3839,25 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 requestDate: l.created_at || l.start_date
               };
             });
-            setLeaveRequests(mappedLeaves);
-            try {
-              localStorage.setItem('kss_v1_leave_requests', JSON.stringify(mappedLeaves));
-            } catch {}
+            setLeaveRequests(prev => {
+              const reqMap = new Map<string, LeaveRequest>();
+              (prev || []).forEach(r => {
+                if (r && r.id) reqMap.set(r.id, r);
+              });
+              mappedLeaves.forEach(r => {
+                if (r && r.id) reqMap.set(r.id, r);
+              });
+              const merged = Array.from(reqMap.values());
+              merged.sort((a, b) => {
+                const timeA = new Date(a.requestDate || (a as any).createdAt || a.startDate || 0).getTime() || 0;
+                const timeB = new Date(b.requestDate || (b as any).createdAt || b.startDate || 0).getTime() || 0;
+                return timeB - timeA;
+              });
+              try {
+                localStorage.setItem('kss_v1_leave_requests', JSON.stringify(merged));
+              } catch {}
+              return merged;
+            });
           }
         }).catch(() => {});
 
@@ -6733,6 +6755,26 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setAttendance(prev => prev.map(a => (a.id === recordId ? { ...a, ...updates, updatedAt: new Date().toISOString() } : a)));
     addAuditLog('ATTENDANCE_CORRECTION', `Record ${recordId}`, `Updated fields: ${Object.keys(updates).join(', ')}`);
 
+    // Sync to FastAPI Neon PostgreSQL
+    const isRealUuid = Boolean(recordId && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(recordId));
+    if (updates.checkOutAt === null) {
+      undoCheckoutApi({ record_id: isRealUuid ? recordId : undefined, notes: updates.notes }).catch(err => {
+        console.warn('[FastAPI] Undo checkout sync failed:', err);
+      });
+    } else {
+      correctAttendanceApi({
+        record_id: isRealUuid ? recordId : undefined,
+        check_in_at: updates.checkInAt !== undefined ? updates.checkInAt : undefined,
+        check_out_at: updates.checkOutAt !== undefined ? updates.checkOutAt : undefined,
+        status: updates.status,
+        working_minutes: updates.workingMinutes,
+        notes: updates.notes,
+        clear_check_out: updates.checkOutAt === null
+      }).catch(err => {
+        console.warn('[FastAPI] updateAttendanceRecord sync failed:', err);
+      });
+    }
+
     // Best-effort Cloud Firestore sync when Firebase Auth session is active
     if (auth.currentUser) {
       const cleanUpdates = cleanFirestorePayload({ ...updates, updatedAt: serverTimestamp() });
@@ -6856,7 +6898,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           check_out_at: updates.checkOutAt !== undefined ? updates.checkOutAt : record.checkOutAt,
           status: updates.status || record.status,
           working_minutes: updates.workingMinutes !== undefined ? updates.workingMinutes : record.workingMinutes,
-          notes: updates.notes || record.notes
+          notes: updates.notes || record.notes,
+          clear_check_out: updates.checkOutAt === null
         });
 
         if (apiRes && apiRes.id) {
@@ -6899,7 +6942,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   /**
    * Unmark attendance record for an employee on a given date.
-   * Completely removes the record from Firestore and React state,
+   * Completely removes the record from PostgreSQL (Neon), Firestore, and React state,
    * restoring the date to its default unmarked/pre-joining state.
    */
   const unmarkAttendanceRecord = async (
@@ -6912,7 +6955,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const canonicalUid = emp ? getCanonicalEmployeeUid(emp, undefined) : employeeId;
       const targetDocId = recordId || getAttendanceDocId(canonicalUid, date);
 
-      // 1. Delete document from Firestore
+      // 1. Delete from FastAPI Neon PostgreSQL
+      const empCode = emp?.employeeId || employeeId;
+      const empUuid = emp?.id && !emp.id.startsWith('emp-') ? emp.id : undefined;
+      try {
+        await deleteAttendanceRecordApi({
+          record_id: recordId,
+          employee_id: empUuid,
+          employee_code: empCode,
+          date: date
+        });
+      } catch (apiErr) {
+        console.warn('[FastAPI] Unmark delete failed or offline:', apiErr);
+      }
+
+      // 2. Delete document from Firestore
       await deleteDoc(doc(db, 'attendance', targetDocId)).catch(() => {});
 
       // Proactively delete alternative doc ID formats (legacy code/id prefixes)
@@ -6923,16 +6980,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         await deleteDoc(doc(db, 'attendance', `${emp.id}_${date}`)).catch(() => {});
       }
 
-      // 2. Remove from local attendance state immediately
+      // 3. Remove from local attendance state immediately
       setAttendance(prev => prev.filter(a => {
-        if (a.id === targetDocId) return false;
+        if (a.id === targetDocId || (recordId && a.id === recordId)) return false;
         const matchesEmp = a.employeeId === employeeId || 
                            a.employeeCode === employeeId || 
                            (emp && (a.employeeId === emp.id || a.employeeCode === emp.employeeId));
         return !(matchesEmp && a.date === date);
       }));
 
-      // 3. Remove from approvedWfhDates if present
+      // 4. Remove from approvedWfhDates if present
       if (emp?.approvedWfhDates && emp.approvedWfhDates.includes(date)) {
         const cleaned = emp.approvedWfhDates.filter(d => d !== date);
         updateEmployee(emp.id, { approvedWfhDates: cleaned });

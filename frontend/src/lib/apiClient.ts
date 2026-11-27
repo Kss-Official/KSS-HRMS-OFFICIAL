@@ -501,7 +501,7 @@ export async function getEmployeesApi(limit = 200): Promise<any[]> {
   return apiRequest(`/employees/?limit=${limit}`);
 }
 
-export async function getAttendanceRecordsApi(limit = 200, forceFresh = false): Promise<any[]> {
+export async function getAttendanceRecordsApi(limit = 3500, forceFresh = false): Promise<any[]> {
   return apiRequest(`/attendance/records?limit=${limit}`, forceFresh ? { headers: { 'X-Bypass-Cache': 'true' } } : {});
 }
 
@@ -541,10 +541,61 @@ export async function correctAttendanceApi(params: {
   status?: string;
   working_minutes?: number;
   notes?: string;
+  clear_check_out?: boolean;
 }): Promise<any> {
   return apiRequest('/attendance/correction', {
     method: 'POST',
     body: JSON.stringify(params)
+  });
+}
+
+export async function undoCheckoutApi(params: {
+  record_id?: string;
+  employee_id?: string;
+  employee_code?: string;
+  date?: string;
+  notes?: string;
+}): Promise<any> {
+  const isRealUuid = Boolean(params.record_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.record_id));
+  if (isRealUuid) {
+    return apiRequest(`/attendance/records/${params.record_id}/undo-checkout`, {
+      method: 'POST',
+      body: JSON.stringify({
+        clear_check_out: true,
+        notes: params.notes
+      })
+    });
+  }
+  return apiRequest('/attendance/correction', {
+    method: 'POST',
+    body: JSON.stringify({
+      ...params,
+      clear_check_out: true,
+      status: 'Present',
+      working_minutes: 0
+    })
+  });
+}
+
+export async function deleteAttendanceRecordApi(params: {
+  record_id?: string;
+  employee_id?: string;
+  employee_code?: string;
+  date?: string;
+}): Promise<any> {
+  const isRealUuid = Boolean(params.record_id && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(params.record_id));
+  if (isRealUuid) {
+    return apiRequest(`/attendance/records/${params.record_id}`, {
+      method: 'DELETE'
+    });
+  }
+  const query = new URLSearchParams();
+  if (params.record_id) query.set('record_id', params.record_id);
+  if (params.employee_id) query.set('employee_id', params.employee_id);
+  if (params.employee_code) query.set('employee_code', params.employee_code);
+  if (params.date) query.set('date', params.date);
+  return apiRequest(`/attendance/record?${query.toString()}`, {
+    method: 'DELETE'
   });
 }
 

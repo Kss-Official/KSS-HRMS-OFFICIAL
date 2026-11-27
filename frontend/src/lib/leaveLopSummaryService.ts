@@ -192,15 +192,18 @@ export function resolveDateFilterInterval(
  */
 export function isAuthoritativeApprovedLeave(r: LeaveRequest): boolean {
   if (!r) return false;
-  if (r.status === 'Rejected' || r.status === 'Cancelled') return false;
-  if (r.status === 'Approved') return true;
+  const statusUpper = String(r.status || '').toUpperCase();
+  if (statusUpper === 'REJECTED' || statusUpper === 'CANCELLED') return false;
+  if (statusUpper === 'APPROVED') return true;
 
   // Direct CEO -> CTO completed status check
-  const ceoOk = r.ceoStatus === 'Approved' || r.ceoStatus === 'N/A' || r.ceoStatus === 'Bypassed';
-  const ctoOk = r.ctoStatus === 'Approved' || r.ctoStatus === 'N/A' || r.ctoStatus === 'Bypassed';
+  const ceoUpper = String(r.ceoStatus || '').toUpperCase();
+  const ctoUpper = String(r.ctoStatus || '').toUpperCase();
+  const ceoOk = ceoUpper === 'APPROVED' || ceoUpper === 'N/A' || ceoUpper === 'BYPASSED';
+  const ctoOk = ctoUpper === 'APPROVED' || ctoUpper === 'N/A' || ctoUpper === 'BYPASSED';
 
-  const hasAnyPending = r.ceoStatus === 'Pending' || r.ctoStatus === 'Pending';
-  const hasAnyRejected = r.ceoStatus === 'Rejected' || r.ctoStatus === 'Rejected';
+  const hasAnyPending = ceoUpper === 'PENDING' || ctoUpper === 'PENDING';
+  const hasAnyRejected = ceoUpper === 'REJECTED' || ctoUpper === 'REJECTED';
 
   return ceoOk && ctoOk && !hasAnyPending && !hasAnyRejected;
 }

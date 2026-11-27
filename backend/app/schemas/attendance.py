@@ -91,6 +91,7 @@ class AttendanceCorrectionRequest(BaseModel):
     status: Optional[str] = None
     working_minutes: Optional[int] = None
     notes: Optional[str] = None
+    clear_check_out: Optional[bool] = False
 
 class BiometricMatchResponse(BaseModel):
     matched: bool

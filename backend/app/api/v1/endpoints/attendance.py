@@ -665,7 +665,12 @@ async def _apply_attendance_correction(
     # 4. Apply updates
     if payload.check_in_at is not None:
         rec.check_in_at = payload.check_in_at
-    if payload.check_out_at is not None:
+    if payload.clear_check_out:
+        rec.check_out_at = None
+        rec.working_minutes = 0
+        if not payload.status:
+            rec.status = AttendanceStatus.PRESENT
+    elif payload.check_out_at is not None:
         rec.check_out_at = payload.check_out_at
     if payload.status:
         st = map_attendance_status(payload.status)
@@ -673,9 +678,9 @@ async def _apply_attendance_correction(
             rec.status = st
             if st == AttendanceStatus.WORK_FROM_HOME:
                 rec.is_wfh = True
-    if payload.working_minutes is not None:
+    if payload.working_minutes is not None and not payload.clear_check_out:
         rec.working_minutes = payload.working_minutes
-    elif rec.check_in_at and rec.check_out_at:
+    elif not payload.clear_check_out and rec.check_in_at and rec.check_out_at:
         gross_secs = (rec.check_out_at - rec.check_in_at).total_seconds()
         rec.working_minutes = max(0, int(gross_secs / 60))
     if payload.notes:
@@ -713,3 +718,86 @@ async def correct_attendance_patch(
     current_user: Employee = Depends(get_current_user)
 ):
     return await _apply_attendance_correction(payload, record_id, db, current_user)
+
+
+@router.post("/records/{record_id}/undo-checkout", response_model=AttendanceRecordOut)
+async def undo_checkout_post(
+    record_id: UUID,
+    payload: Optional[AttendanceCorrectionRequest] = None,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    req_payload = payload or AttendanceCorrectionRequest()
+    req_payload.clear_check_out = True
+    return await _apply_attendance_correction(req_payload, record_id, db, current_user)
+
+
+@router.delete("/records/{record_id}")
+async def delete_attendance_record(
+    record_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    rec = (await db.execute(
+        select(AttendanceRecord).where(AttendanceRecord.id == record_id).options(selectinload(AttendanceRecord.breaks))
+    )).scalar_one_or_none()
+    if not rec:
+        return {"success": True, "message": "Attendance record not found or already deleted."}
+
+    await db.delete(rec)
+    await db.commit()
+    invalidate_records_cache()
+    return {"success": True, "message": f"Attendance record {record_id} successfully deleted."}
+
+
+@router.delete("/record")
+async def delete_attendance_record_by_date(
+    record_id: Optional[str] = None,
+    employee_id: Optional[str] = None,
+    employee_code: Optional[str] = None,
+    date_str: Optional[str] = Query(None, alias="date"),
+    db: AsyncSession = Depends(get_db),
+    current_user: Employee = Depends(get_current_user)
+):
+    rec = None
+    # 1. Try by record_id UUID
+    if record_id:
+        try:
+            rid = uuid.UUID(record_id)
+            rec = (await db.execute(
+                select(AttendanceRecord).where(AttendanceRecord.id == rid).options(selectinload(AttendanceRecord.breaks))
+            )).scalar_one_or_none()
+        except ValueError:
+            pass
+
+    # 2. If not found by UUID, find by employee + date
+    if not rec and date_str:
+        try:
+            target_date = datetime.strptime(date_str, "%Y-%m-%d").date()
+        except Exception:
+            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
+
+        target_emp = None
+        if employee_code:
+            target_emp = (await db.execute(select(Employee).where(Employee.employee_code.ilike(employee_code.strip())))).scalar_one_or_none()
+        if not target_emp and employee_id:
+            try:
+                emp_uuid = uuid.UUID(employee_id)
+                target_emp = (await db.execute(select(Employee).where(Employee.id == emp_uuid))).scalar_one_or_none()
+            except ValueError:
+                target_emp = (await db.execute(select(Employee).where(Employee.employee_code.ilike(employee_id.strip())))).scalar_one_or_none()
+
+        if target_emp:
+            rec = (await db.execute(
+                select(AttendanceRecord).where(
+                    and_(AttendanceRecord.employee_id == target_emp.id, AttendanceRecord.date == target_date)
+                ).options(selectinload(AttendanceRecord.breaks))
+            )).scalar_one_or_none()
+
+    if not rec:
+        return {"success": True, "message": "Attendance record not found or already deleted."}
+
+    await db.delete(rec)
+    await db.commit()
+    invalidate_records_cache()
+    return {"success": True, "message": "Attendance record successfully deleted."}

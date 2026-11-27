@@ -458,14 +458,23 @@ export function calcApprovedWfhUsed(
   employeeId: string,
   monthKey: string
 ): number {
+  const cleanEmpId = (employeeId || '').toLowerCase().replace(/^emp-/i, '').trim();
   const wfhReqs = leaveRequests.filter((r) => {
-    if (r.employeeId !== employeeId && r.employeeUid !== employeeId) return false;
-    if (r.status !== 'Approved') return false;
+    const rId = (r.employeeId || '').toLowerCase().replace(/^emp-/i, '').trim();
+    const rUid = (r.employeeUid || '').toLowerCase().replace(/^emp-/i, '').trim();
+    if (rId !== cleanEmpId && rUid !== cleanEmpId) return false;
+
+    const stUpper = String(r.status || '').toUpperCase();
+    const isApp = stUpper === 'APPROVED' || (String((r as any).ceoStatus || '').toUpperCase() === 'APPROVED' && String((r as any).ctoStatus || '').toUpperCase() === 'APPROVED');
+    if (!isApp) return false;
+
     const isWfh =
       r.type === 'WFH' ||
+      r.type === 'WORK_FROM_HOME' ||
       r.leaveCategory === 'WFH' ||
       (r.type || '').toLowerCase().includes('wfh') ||
-      (r.leaveCategory || '').toLowerCase().includes('wfh');
+      (r.leaveCategory || '').toLowerCase().includes('wfh') ||
+      (r.type || '').toLowerCase().includes('home');
     return isWfh;
   });
 

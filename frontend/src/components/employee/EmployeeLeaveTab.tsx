@@ -2,7 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { 
   Check, X, Clock, CalendarDays, Plus, Send, Calendar, ChevronRight, 
-  Palmtree, Stethoscope, Info, ArrowUpRight, History, TrendingUp, TrendingDown, RotateCcw
+  Palmtree, Stethoscope, Info, ArrowUpRight, History, TrendingUp, TrendingDown, RotateCcw, Laptop
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useHaptic } from '../../hooks/useHaptic';
@@ -55,12 +55,17 @@ export const EmployeeLeaveTab: React.FC = () => {
   // Priority: UID match → employee code match → employee doc ID match.
   // Name match is intentionally omitted to avoid leaking records to employees with similar names.
   const myRequests = leaveRequests.filter(r => {
-    // 1. Firebase Auth UID match (most reliable — canonical anchor)
-    if (r.employeeUid && activeEmployee?.uid && r.employeeUid === activeEmployee.uid) return true;
-    // 2. Employee corporate code match (e.g. KSS2407004)
-    if (activeEmployee?.employeeId && r.employeeId === activeEmployee.employeeId) return true;
-    // 3. Firestore doc ID match
-    if (activeEmployee?.id && r.employeeId === activeEmployee.id) return true;
+    const aCode = (activeEmployee?.employeeId || '').toLowerCase().replace(/^emp-/i, '').trim();
+    const aId = (activeEmployee?.id || '').toLowerCase().replace(/^emp-/i, '').trim();
+    const aUid = (activeEmployee?.uid || '').toLowerCase().trim();
+
+    const rCode = (r.employeeId || (r as any).employee_code || '').toLowerCase().replace(/^emp-/i, '').trim();
+    const rUid = ((r.employeeUid || (r as any).employee_id || '') as string).toLowerCase().replace(/^emp-/i, '').trim();
+
+    if (aUid && (rUid === aUid || rCode === aUid)) return true;
+    if (aCode && (rCode === aCode || rUid === aCode)) return true;
+    if (aId && (rCode === aId || rUid === aId)) return true;
+    if (r.employeeName && activeEmployee?.fullName && r.employeeName.trim().toLowerCase() === activeEmployee.fullName.trim().toLowerCase()) return true;
     return false;
   }).filter(r => {
     const isPriyanka = activeEmployee?.employeeId === 'KSS2407009' || activeEmployee?.id === 'emp-KSS2407009' || (activeEmployee?.fullName && activeEmployee.fullName.toLowerCase().includes('priyanka'));
@@ -83,11 +88,14 @@ export const EmployeeLeaveTab: React.FC = () => {
     // Normalise legacy 'Leave' type to 'Earn Leave', Loss of Pay, and ensure WFH is correctly recognized
     const isWfh = r.type === 'WFH' || r.type === 'WORK_FROM_HOME' || isWfhType(r.type) || String(r.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd';
     const isLop = r.type === 'Loss of Pay' || r.type === 'LOP' || r.type === 'LOSS_OF_PAY' || r.leaveCategory === 'Loss of Pay' || r.leaveCategory === 'LOP' || r.leaveCategory === 'LOSS_OF_PAY';
-    const normalisedType = isWfh ? 'WFH' : isLop ? 'Loss of Pay' : (r.type === 'Leave' ? 'Earn Leave' : r.type);
+    const isSick = r.type === 'Sick Leave' || r.type === 'SICK_LEAVE' || r.leaveCategory === 'Sick Leave' || r.leaveCategory === 'SICK_LEAVE';
+    const isEarn = r.type === 'Earn Leave' || r.type === 'EARN_LEAVE' || r.type === 'Leave' || r.leaveCategory === 'Earn Leave' || r.leaveCategory === 'EARN_LEAVE';
+    const normalisedType = isWfh ? 'WFH' : isLop ? 'Loss of Pay' : isSick ? 'Sick Leave' : isEarn ? 'Earn Leave' : r.type;
 
     if (filterType !== 'All' && normalisedType !== filterType) {
       return false;
     }
+    const stUpper = String(r.status || '').toUpperCase();
     if (timeFilter === 'Today') {
       const isActiveToday = r.startDate <= todayStr && r.endDate >= todayStr;
       const isSubmittedToday = r.requestDate?.startsWith(todayStr);
@@ -97,13 +105,13 @@ export const EmployeeLeaveTab: React.FC = () => {
       return r.startDate > todayStr;
     }
     if (timeFilter === 'Previous') {
-      return r.endDate < todayStr || r.status === 'Approved' || r.status === 'Rejected' || r.status === 'Cancelled';
+      return r.endDate < todayStr || stUpper === 'APPROVED' || stUpper === 'REJECTED' || stUpper === 'CANCELLED';
     }
     if (timeFilter === 'Approved') {
-      return r.status === 'Approved';
+      return stUpper === 'APPROVED';
     }
     if (timeFilter === 'Rejected') {
-      return r.status === 'Rejected';
+      return stUpper === 'REJECTED';
     }
     return true;
   });
@@ -186,9 +194,36 @@ export const EmployeeLeaveTab: React.FC = () => {
     myRequests.forEach(r => {
       const t = (r.type || '').toLowerCase();
       const cat = ((r as any).leaveCategory || '').toLowerCase();
-      const isLop = t === 'loss of pay' || t === 'lop' || cat === 'loss of pay' || cat === 'lop';
-      const isApproved = r.status === 'Approved' || (r.ceoStatus === 'Approved' && r.ctoStatus === 'Approved');
+      const isLop = t === 'loss of pay' || t === 'lop' || t === 'loss_of_pay' || cat === 'loss of pay' || cat === 'lop' || cat === 'loss_of_pay';
+      const st = String(r.status || '').toUpperCase();
+      const ceo = String(r.ceoStatus || '').toUpperCase();
+      const cto = String(r.ctoStatus || '').toUpperCase();
+      const isApproved = st === 'APPROVED' || (ceo === 'APPROVED' && cto === 'APPROVED');
       if (isLop && isApproved && r.startDate) {
+        const start = new Date(r.startDate);
+        const end = new Date(r.endDate || r.startDate);
+        if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
+          let days = 0;
+          for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
+            if (d.getDay() !== 0) days++; // Skip Sundays
+          }
+          count += Math.max(1, days);
+        }
+      }
+    });
+    return count;
+  }, [myRequests]);
+
+  // Approved WFH Days taken
+  const myWfhDays = useMemo(() => {
+    let count = 0;
+    myRequests.forEach(r => {
+      const isWfh = r.type === 'WFH' || r.type === 'WORK_FROM_HOME' || isWfhType(r.type) || String(r.id).toLowerCase() === 'f375f719-c980-490d-89c7-933167db42bd';
+      const st = String(r.status || '').toUpperCase();
+      const ceo = String(r.ceoStatus || '').toUpperCase();
+      const cto = String(r.ctoStatus || '').toUpperCase();
+      const isApproved = st === 'APPROVED' || (ceo === 'APPROVED' && cto === 'APPROVED');
+      if (isWfh && isApproved && r.startDate) {
         const start = new Date(r.startDate);
         const end = new Date(r.endDate || r.startDate);
         if (!isNaN(start.getTime()) && !isNaN(end.getTime())) {
@@ -248,8 +283,8 @@ export const EmployeeLeaveTab: React.FC = () => {
         </div>
       </div>
 
-      {/* ── Leave Quota Cards (Earn Leave & Sick Leave) ── */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5">
+      {/* ── Leave Quota Cards (Earn Leave, Sick Leave, WFH & Total Leaves) ── */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3.5">
         
         {/* Card 1: Interactive Earn Leave Balance Card */}
         <button
@@ -270,13 +305,13 @@ export const EmployeeLeaveTab: React.FC = () => {
                 {displayedElBalance} {displayedElBalance === 1 ? 'Day' : 'Days'} Left
               </span>
               <span className="text-[10px] text-purple-400/80 font-semibold group-hover:text-purple-300 flex items-center gap-1 mt-0.5">
-                <span>View Monthly Credit History</span>
+                <span>View Credit History</span>
                 <ArrowUpRight className="w-3 h-3" />
               </span>
             </div>
           </div>
           <span className="text-[10px] text-slate-500 font-medium hidden sm:inline text-right">
-            1 day/mo (1st date)
+            1 d/mo
           </span>
         </button>
 
@@ -299,17 +334,46 @@ export const EmployeeLeaveTab: React.FC = () => {
                 {displayedSlBalance} {displayedSlBalance === 1 ? 'Day' : 'Days'} Left
               </span>
               <span className="text-[10px] text-rose-400/80 font-semibold group-hover:text-rose-300 flex items-center gap-1 mt-0.5">
-                <span>1 day / 3 months ({mySickLeave.taken} used)</span>
+                <span>{mySickLeave.taken} used</span>
                 <ArrowUpRight className="w-3 h-3" />
               </span>
             </div>
           </div>
           <span className="text-[10px] text-slate-500 font-medium hidden sm:inline text-right">
-            Traineeship + Qrtly
+            Quarterly
           </span>
         </button>
 
-        {/* Card 3: Total Approved Leaves Taken */}
+        {/* Card 3: Interactive WFH Requests & Approvals Card */}
+        <button
+          type="button"
+          onClick={() => { triggerHaptic(); setFilterType('WFH'); }}
+          className="bg-slate-950/70 hover:bg-slate-950 border border-sky-500/30 hover:border-sky-500/60 rounded-2xl p-4 flex items-center justify-between text-left transition-all group cursor-pointer shadow-lg shadow-sky-950/20 active:scale-[0.99]"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-sky-500/10 border border-sky-500/20 flex items-center justify-center text-sky-400 group-hover:scale-110 transition-transform">
+              <Laptop className="w-5 h-5" />
+            </div>
+            <div>
+              <div className="flex items-center gap-1.5">
+                <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">WFH Requests</span>
+                <span className="text-[9px] text-sky-400 font-bold bg-sky-500/10 px-1.5 py-0.2 rounded border border-sky-500/20">Remote</span>
+              </div>
+              <span className="text-sm sm:text-base font-black text-sky-300 font-mono block mt-0.5">
+                {myWfhDays} {myWfhDays === 1 ? 'Day' : 'Days'} Approved
+              </span>
+              <span className="text-[10px] text-sky-400/80 font-semibold group-hover:text-sky-300 flex items-center gap-1 mt-0.5">
+                <span>Filter WFH Requests</span>
+                <ArrowUpRight className="w-3 h-3" />
+              </span>
+            </div>
+          </div>
+          <span className="text-[10px] text-slate-500 font-medium hidden sm:inline text-right">
+            Approved
+          </span>
+        </button>
+
+        {/* Card 4: Total Approved Leaves Taken */}
         <div className="bg-slate-950/70 border border-slate-800 rounded-2xl p-4 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-amber-500/10 border border-amber-500/20 flex items-center justify-center text-amber-400">
@@ -321,12 +385,12 @@ export const EmployeeLeaveTab: React.FC = () => {
                 {myEarnLeave.taken + mySickLeave.taken + myLopDays} Days Taken
               </span>
               <span className="text-[10px] text-slate-400 font-medium block mt-0.5">
-                EL: {myEarnLeave.taken} • SL: {mySickLeave.taken} • LOP: {myLopDays}
+                EL: {myEarnLeave.taken} • SL: {mySickLeave.taken} • WFH: {myWfhDays} • LOP: {myLopDays}
               </span>
             </div>
           </div>
           <span className="text-[10px] text-slate-500 font-medium hidden sm:inline text-right">
-            Approved only
+            All Cycles
           </span>
         </div>
       </div>
