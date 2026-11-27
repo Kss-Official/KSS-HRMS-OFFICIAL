@@ -327,6 +327,10 @@ export function computeSickLeaveBalance(
   const cycleStartDate = activePeriod ? activePeriod.startDate : '2026-07-01';
   const cycleEndDate = activePeriod ? activePeriod.endDate : '2026-09-30';
 
+  const empName = ((emp?.fullName || emp?.name || emp?.employeeName || '') as string).toLowerCase();
+  const empCode = ((emp?.employeeId || emp?.employeeCode || '') as string).toLowerCase();
+  const empId = ((emp?.id || emp?.uid || '') as string).toLowerCase();
+
   const isJingyasha = emp.id === '8RxH6z3ZzUTmM26iqta1DhCPa8l1' || emp.employeeId === 'KSS2407014' || (emp.fullName && (emp.fullName.toLowerCase().includes('jigy') || emp.fullName.toLowerCase().includes('jing')));
   const isJason = !isJingyasha && (emp.id === 'KfAB95lpbJOeylpKQaWX4GXOPGt2' || emp.employeeId === 'KSS2407011' || (emp.fullName && emp.fullName.toLowerCase().includes('jason')));
   const isAkash = emp.id === 'emp-KSS2407013' || emp.employeeId === 'KSS2407013' || (emp.fullName && emp.fullName.toLowerCase().includes('akash'));
@@ -334,13 +338,17 @@ export function computeSickLeaveBalance(
 
   const isMatchingEmp = (l: any) => {
     if (!l) return false;
+    const lId = ((l.employeeId || l.employeeCode || '') as string).toLowerCase();
+    const lUid = ((l.employeeUid || l.uid || l.id || '') as string).toLowerCase();
+    const lName = ((l.employeeName || l.name || '') as string).toLowerCase();
+
     const isEmp = 
-      (!!l.employeeId && (l.employeeId === emp.id || l.employeeId === emp.employeeId)) ||
-      (!!l.employeeUid && (l.employeeUid === emp.uid || l.employeeUid === emp.id)) ||
-      (!!l.employeeName && !!emp.fullName && l.employeeName.trim().toLowerCase() === emp.fullName.trim().toLowerCase());
+      (!!lId && (lId === empId || lId === empCode || empCode.includes(lId) || (lId.length > 3 && empId.includes(lId)))) ||
+      (!!lUid && (lUid === empId || lUid === empCode || (lUid.length > 5 && empId.includes(lUid)))) ||
+      (!!lName && !!empName && (lName.trim() === empName.trim() || empName.includes(lName.trim()) || lName.includes(empName.trim())));
     const isMatchedKnown = 
-      (isJason && (l.employeeId === 'KSS2407011' || l.employeeUid === 'KfAB95lpbJOeylpKQaWX4GXOPGt2' || (l.employeeName && l.employeeName.toLowerCase().includes('jason')))) ||
-      (isAkash && (l.employeeId === 'KSS2407013' || l.employeeId === 'emp-KSS2407013' || (l.employeeName && l.employeeName.toLowerCase().includes('akash'))));
+      (isJason && (lId.includes('kss2407011') || lUid.includes('kfab95') || lName.includes('jason'))) ||
+      (isAkash && (lId.includes('kss2407013') || lName.includes('akash')));
     return isEmp || isMatchedKnown;
   };
 
@@ -375,7 +383,7 @@ export function computeSickLeaveBalance(
   const isMahesh = emp.id === 'emp-KSS2407006' || emp.employeeId === 'KSS2407006' || (emp.fullName && emp.fullName.toLowerCase().includes('mahesh'));
   const isThabeethal = emp.id === 'emp-KSS2407005' || emp.employeeId === 'KSS2407005' || (emp.fullName && emp.fullName.toLowerCase().includes('thabeethal'));
   const isKoushik = emp.id === 'emp-KSS2407003' || emp.employeeId === 'KSS2407003' || (emp.fullName && emp.fullName.toLowerCase().includes('koushik'));
-  const isKnownEarnLeaveOnlyTaker = isAsbin || isMahesh || isThabeethal || isKoushik || isJingyasha;
+  const isKnownEarnLeaveOnlyTaker = isAsbin || isThabeethal || isKoushik || isJingyasha;
 
   // ── PM / MASTER PORTAL BALANCE SYNCHRONIZATION ──
   // If the PM portal has a configured or edited sickLeaveBalance, respect it directly as master truth.
@@ -383,7 +391,7 @@ export function computeSickLeaveBalance(
     const bal = Math.max(0, emp.sickLeaveBalance);
     return {
       // Policy: max 1 SL credited for all employees
-      credited: Math.min(1, Math.max(bal + totalApprovedLeavesTaken, 1)),
+      credited: 1,
       taken: totalApprovedLeavesTaken,
       balance: bal,
       history

@@ -129,7 +129,7 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     createdAt: '2024-02-15T10:00:00Z',
     updatedAt: new Date().toISOString(),
     earnLeaveBalance: 0,
-    sickLeaveBalance: 1,
+    sickLeaveBalance: 0,
     profilePhotoUrl: '/avatars/koushik.png'
   },
   {
@@ -202,7 +202,7 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     createdAt: '2024-03-01T10:00:00Z',
     updatedAt: new Date().toISOString(),
     earnLeaveBalance: 0,
-    sickLeaveBalance: 1,
+    sickLeaveBalance: 0,
     profilePhotoUrl: '/avatars/thabeethal.jpg'
   },
   {
@@ -236,7 +236,7 @@ export const INITIAL_EMPLOYEES: Employee[] = [
     updatedAt: new Date().toISOString(),
     approvedWfhDates: ['2026-08-27', '2026-08-29'],
     earnLeaveBalance: 0,
-    sickLeaveBalance: 1,
+    sickLeaveBalance: 0,
     profilePhotoUrl: '/avatars/kuruva.jpg'
   },
   {

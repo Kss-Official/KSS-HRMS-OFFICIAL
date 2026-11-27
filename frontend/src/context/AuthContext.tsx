@@ -3634,7 +3634,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         };
 
         // 1. Attendance Hydration (High priority for immediate Shift Active display)
-        const recordLimit = isSuperOrHr ? 3500 : 365;
+        const recordLimit = 3500;
         const attPromise = getAttendanceRecordsApi(recordLimit, force).then((attList) => {
           if (Array.isArray(attList) && attList.length > 0) {
             const empMap = getEmpMap();
@@ -6985,7 +6985,12 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (a.id === targetDocId || (recordId && a.id === recordId)) return false;
         const matchesEmp = a.employeeId === employeeId || 
                            a.employeeCode === employeeId || 
-                           (emp && (a.employeeId === emp.id || a.employeeCode === emp.employeeId));
+                           (emp && (
+                             a.employeeId === emp.id || 
+                             a.employeeCode === emp.employeeId ||
+                             a.employeeId === emp.employeeId ||
+                             a.employeeCode === emp.id
+                           ));
         return !(matchesEmp && a.date === date);
       }));
 

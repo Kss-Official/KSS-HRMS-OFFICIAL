@@ -151,8 +151,11 @@ async def list_leaves(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user),
 ):
-    # Plain employees only ever see their own requests (an employee_id param for someone else is ignored).
-    target_emp_id = current_user.id if current_user.role == UserRole.EMPLOYEE else employee_id
+    # Privileged roles (SUPER_ADMIN, HR_ADMIN, PROJECT_MANAGER) can view all or filter by employee_id.
+    # Regular employees and Tech Leads are scoped strictly to their own requests.
+    PRIVILEGED_ROLES = (UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER)
+    is_privileged = bool(current_user and current_user.role in PRIVILEGED_ROLES)
+    target_emp_id = employee_id if is_privileged else current_user.id
     cache_key = f"{target_emp_id}:{status}:{limit}"
     now_ts = time.time()
     cached = _LEAVES_CACHE.get(cache_key)

@@ -542,8 +542,11 @@ async def get_records(
     db: AsyncSession = Depends(get_db),
     current_user: Employee = Depends(get_current_user)
 ):
-    # Plain employees are always scoped to their own records; the employee_id filter is ignored for them.
-    target_emp_id = current_user.id if current_user.role == UserRole.EMPLOYEE else employee_id
+    # Privileged roles (SUPER_ADMIN, HR_ADMIN, PROJECT_MANAGER) can view all or filter by employee_id.
+    # Regular employees and Tech Leads are scoped strictly to their own records.
+    PRIVILEGED_ROLES = (UserRole.SUPER_ADMIN, UserRole.HR_ADMIN, UserRole.PROJECT_MANAGER)
+    is_privileged = bool(current_user and current_user.role in PRIVILEGED_ROLES)
+    target_emp_id = employee_id if is_privileged else current_user.id
     cache_key = f"{target_emp_id}:{start_date}:{end_date}:{limit}"
     now_ts = time.time()
     cached = _RECORDS_CACHE.get(cache_key)
@@ -678,9 +681,11 @@ async def _apply_attendance_correction(
             rec.status = st
             if st == AttendanceStatus.WORK_FROM_HOME:
                 rec.is_wfh = True
-    if payload.working_minutes is not None and not payload.clear_check_out:
+    if payload.clear_check_out:
+        rec.working_minutes = 0
+    elif payload.working_minutes is not None:
         rec.working_minutes = payload.working_minutes
-    elif not payload.clear_check_out and rec.check_in_at and rec.check_out_at:
+    elif rec.check_in_at and rec.check_out_at:
         gross_secs = (rec.check_out_at - rec.check_in_at).total_seconds()
         rec.working_minutes = max(0, int(gross_secs / 60))
     if payload.notes:
@@ -779,13 +784,29 @@ async def delete_attendance_record_by_date(
 
         target_emp = None
         if employee_code:
-            target_emp = (await db.execute(select(Employee).where(Employee.employee_code.ilike(employee_code.strip())))).scalar_one_or_none()
+            code_val = employee_code.strip().lower()
+            target_emp = (await db.execute(
+                select(Employee).where(
+                    or_(
+                        func.lower(Employee.employee_code) == code_val,
+                        func.lower(Employee.legacy_firebase_id) == code_val
+                    )
+                )
+            )).scalar_one_or_none()
         if not target_emp and employee_id:
             try:
                 emp_uuid = uuid.UUID(employee_id)
                 target_emp = (await db.execute(select(Employee).where(Employee.id == emp_uuid))).scalar_one_or_none()
             except ValueError:
-                target_emp = (await db.execute(select(Employee).where(Employee.employee_code.ilike(employee_id.strip())))).scalar_one_or_none()
+                code_val = employee_id.strip().lower()
+                target_emp = (await db.execute(
+                    select(Employee).where(
+                        or_(
+                            func.lower(Employee.employee_code) == code_val,
+                            func.lower(Employee.legacy_firebase_id) == code_val
+                        )
+                    )
+                )).scalar_one_or_none()
 
         if target_emp:
             rec = (await db.execute(
