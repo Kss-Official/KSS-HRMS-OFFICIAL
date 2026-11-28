@@ -994,8 +994,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         if (Array.isArray(parsed)) {
           const filtered = parsed.filter((r: any) => {
             if (!r || !r.id) return false;
-            const isDummy = (r.reason && (r.reason.toLowerCase().includes('dummy') || r.reason.toLowerCase().includes('test leave'))) ||
-              r.id.startsWith('dummy-') || r.id.startsWith('test-') || r.id.startsWith('leave-') || r.is_dummy === true || r.isDummy === true;
+            const isDummy = (r.reason && (r.reason.toLowerCase().includes('dummy') || r.reason.toLowerCase().includes('test leave') || r.reason.toLowerCase().trim() === 'testing' || r.reason.toLowerCase().trim() === 'test')) ||
+              r.id.startsWith('dummy-') || r.id.startsWith('test-') || r.id.startsWith('leave-') || r.is_dummy === true || r.isDummy === true ||
+              r.id === 'f5ff7b9f-8bf2-434f-830c-f4c7075464c0' || r.id === 'LR-MX01IDBY';
             return !isDummy;
           });
           base = filtered;
@@ -1374,20 +1375,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       localStorage.setItem('kss_v1_settings', JSON.stringify(settings));
       localStorage.setItem('kss_v1_work_zone', JSON.stringify(companyWorkZone));
 
-      let mergedLeaves = leaveRequests;
-      const savedLeaves = localStorage.getItem('kss_v1_leave_requests');
-      if (savedLeaves) {
-        try {
-          const parsed = JSON.parse(savedLeaves);
-          if (Array.isArray(parsed) && parsed.length > 0) {
-            const map = new Map<string, LeaveRequest>();
-            parsed.forEach((r: any) => map.set(r.id, r));
-            leaveRequests.forEach((r: any) => map.set(r.id, r));
-            mergedLeaves = Array.from(map.values());
-          }
-        } catch {}
-      }
-      localStorage.setItem('kss_v1_leave_requests', JSON.stringify(mergedLeaves));
+      const cleanLeaves = leaveRequests.filter(r => r && r.id && r.id !== 'f5ff7b9f-8bf2-434f-830c-f4c7075464c0' && r.id !== 'LR-MX01IDBY' && (r.reason || '').toLowerCase().trim() !== 'testing');
+      localStorage.setItem('kss_v1_leave_requests', JSON.stringify(cleanLeaves));
     }, 500);
     return () => clearTimeout(handler);
   }, [employees, attendance, auditLogs, settings, companyWorkZone, leaveRequests]);
@@ -2756,10 +2745,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
               const isDummyReq = isPriyankaErasedReq || (raw.reason && (
                 raw.reason.toLowerCase().trim() === 'test' ||
+                raw.reason.toLowerCase().trim() === 'testing' ||
                 raw.reason.toLowerCase().includes('dummy') ||
                 raw.reason.toLowerCase().includes('ghfgds') ||
                 raw.reason.toLowerCase().includes('test leave')
-              )) || raw.id.startsWith('dummy-') || raw.id.startsWith('test-') || raw.id.startsWith('leave-') || (raw as any).is_dummy === true || (raw as any).isDummy === true || raw.id === 'LR-UVLV1K5' || raw.id === 'LR_KSS2407014_2026-08-19_WFH' || raw.id === 'LR-MWOYNFID' || raw.id === '6095b9e9-3a84-402a-8057-e2d8e9bf9d70';
+              )) || raw.id.startsWith('dummy-') || raw.id.startsWith('test-') || raw.id.startsWith('leave-') || (raw as any).is_dummy === true || (raw as any).isDummy === true || raw.id === 'LR-UVLV1K5' || raw.id === 'LR_KSS2407014_2026-08-19_WFH' || raw.id === 'LR-MWOYNFID' || raw.id === '6095b9e9-3a84-402a-8057-e2d8e9bf9d70' || raw.id === 'f5ff7b9f-8bf2-434f-830c-f4c7075464c0' || raw.id === 'LR-MX01IDBY';
 
               if (isDummyReq) {
                 if (roleRef.current === 'SUPER_ADMIN' || roleRef.current === 'HR_ADMIN') {
@@ -3839,15 +3829,17 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                 requestDate: l.created_at || l.start_date
               };
             });
+            const cleanMapped = mappedLeaves.filter(r => r && r.id && r.id !== 'f5ff7b9f-8bf2-434f-830c-f4c7075464c0' && r.id !== 'LR-MX01IDBY' && (r.reason || '').toLowerCase().trim() !== 'testing');
             setLeaveRequests(prev => {
-              const reqMap = new Map<string, LeaveRequest>();
-              (prev || []).forEach(r => {
-                if (r && r.id) reqMap.set(r.id, r);
+              const serverIds = new Set(cleanMapped.map(r => r.id));
+              const now = Date.now();
+              const recentOptimistic = (prev || []).filter(r => {
+                if (!r || !r.id || serverIds.has(r.id)) return false;
+                if (r.id === 'f5ff7b9f-8bf2-434f-830c-f4c7075464c0' || r.id === 'LR-MX01IDBY' || (r.reason || '').toLowerCase().trim() === 'testing') return false;
+                const reqTime = new Date(r.requestDate || (r as any).createdAt || 0).getTime();
+                return now - reqTime < 30000;
               });
-              mappedLeaves.forEach(r => {
-                if (r && r.id) reqMap.set(r.id, r);
-              });
-              const merged = Array.from(reqMap.values());
+              const merged = [...cleanMapped, ...recentOptimistic];
               merged.sort((a, b) => {
                 const timeA = new Date(a.requestDate || (a as any).createdAt || a.startDate || 0).getTime() || 0;
                 const timeB = new Date(b.requestDate || (b as any).createdAt || b.startDate || 0).getTime() || 0;

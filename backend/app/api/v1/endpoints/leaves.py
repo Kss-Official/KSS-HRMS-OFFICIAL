@@ -275,8 +275,12 @@ async def review_leave(
     if not leave:
         raise HTTPException(status_code=404, detail="Leave request not found")
 
-    if leave.status != LeaveStatus.PENDING:
-        raise HTTPException(status_code=409, detail=f"This request is already {leave.status.value.lower()} and can no longer be reviewed")
+    if leave.status == LeaveStatus.CANCELLED:
+        raise HTTPException(status_code=409, detail="This request was cancelled by the employee and cannot be reviewed")
+
+    if leave.status == LeaveStatus.APPROVED and payload.action == ApprovalStatus.APPROVED:
+        # Idempotent re-approval
+        return await _to_out(db, leave)
 
     is_ceo = current_user.executive_tier == ExecutiveTier.CEO
     is_cto = current_user.executive_tier == ExecutiveTier.CTO
@@ -344,6 +348,7 @@ async def review_leave(
                 reference_id=leave.request_code, notes=f"Approved leave deduction for {leave.request_code}"))
             leave.deduction_applied = True
         leave.status = LeaveStatus.APPROVED
+        leave.rejection_reason = None
 
     add_audit(db, current_user.id, f"LEAVE_{payload.action.value}", target=leave.request_code,
               details=(payload.notes or "")[:500], entity_type="leave", entity_id=str(leave.id), request=request)

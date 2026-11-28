@@ -568,13 +568,13 @@ export const LeaveApprovalsView: React.FC = () => {
                   whileDrag={{ scale: 1.01 }}
                   onDragEnd={(_, info) => {
                     if (req.status !== 'Pending') return;
-                    if (info.offset.x > 50 || info.velocity.x > 150) {
+                    if (info.offset.x > 80 || (info.offset.x > 40 && info.velocity.x > 200)) {
                       if (isCto) {
                         handleCtoSlideAction(req);
                       } else {
                         handleApprove(req.id);
                       }
-                    } else if (info.offset.x < -50 || info.velocity.x < -150) {
+                    } else if (info.offset.x < -100 && info.velocity.x < -200) {
                       handleReject(req.id);
                     }
                   }}
@@ -709,7 +709,23 @@ export const LeaveApprovalsView: React.FC = () => {
                       <span className="flex items-center gap-1.5">
                         <XCircle className="w-4 h-4 text-rose-400" /> ✕ Request Rejected
                       </span>
-                      <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">Rejected</span>
+                      <div className="flex items-center gap-2">
+                        {(isCeo || isCto || effectiveRole === 'SUPER_ADMIN') && (
+                          <button
+                            onClick={() => {
+                              if (isCto) {
+                                handleCtoSlideAction(req);
+                              } else {
+                                handleApprove(req.id, getActivePendingStage(req));
+                              }
+                            }}
+                            className="px-2.5 py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer"
+                          >
+                            <Check className="w-3.5 h-3.5" /> Overturn &amp; Approve
+                          </button>
+                        )}
+                        <span className="text-[10px] px-2.5 py-0.5 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/40">Rejected</span>
+                      </div>
                     </div>
                   ) : (
                     <div className="mt-2 p-3 rounded-xl bg-slate-950/60 border border-slate-800/80 text-[11px] font-bold text-slate-400 flex items-center justify-between">
